@@ -53,7 +53,7 @@ def build_item_table(articles, plan):
     a["pgroup"] = a["product_group_name"].map(_invert(plan["product_groups"]))
     pattern_re = re.compile(plan["pattern_keywords_regex"], re.IGNORECASE)
     desc = a["detail_desc"].fillna("")
-    a["desc_mentions_pattern"] = desc.str.contains(pattern_re)
+    a["desc_mentions_pattern"] = desc.map(lambda s: pattern_re.search(s) is not None)
     a["text"] = (a["prod_name"].fillna("") + ". " + a["product_type_name"].fillna("") + ". "
                  + a["colour_group_name"].fillna("") + ". " + desc).str.strip()
     return a

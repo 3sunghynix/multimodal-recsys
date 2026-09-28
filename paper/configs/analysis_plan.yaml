@@ -2,15 +2,17 @@
 # status가 draft인 동안은 01 노트북의 데이터 준비가 실행되지 않는다.
 # 확정 절차: 01 노트북의 '값 확인' 셀 결과와 아래 목록을 대조 → 빠진 값 추가 → status: final → 커밋.
 
-status: draft
+status: final   # 2026-09-28 확정: H&M articles.csv 실제 값 30종 / 19종 대조 완료, 매핑 누락 없음
 
-# graphical_appearance_name → 외관 그룹 (값 목록은 알려진 H&M 값 기준, 실제 값으로 확인 필요)
+# graphical_appearance_name → 외관 그룹 (H&M 실제 값 기준)
+# pattern: 원단 전체나 일부에 무늬·프린트가 있는 것
+# texture: 질감·소재·장식 (무늬가 아니라 원단 표면이나 부착 장식으로 구분되는 것)
 appearance_groups:
   solid: [Solid]
   pattern: [Stripe, Check, Dot, All over pattern, Front print, Placement print, Colour blocking,
-            Embroidery, Argyle, Other pattern, Mixed solid/pattern, Contrast, Application/3D]
+            Embroidery, Argyle, Other pattern, Mixed solid/pattern]
   texture: [Denim, Melange, Lace, Jacquard, Mesh, Chambray, Glittering/Metallic, Metallic, Sequin,
-            Transparent, Other structure, Neps, Slub, Treatment, Hologram]
+            Transparent, Other structure, Neps, Slub, Treatment, Hologram, Contrast, Application/3D]
 appearance_exclude: [Unknown]
 
 # product_group_name → 상품군 (층화 기준)

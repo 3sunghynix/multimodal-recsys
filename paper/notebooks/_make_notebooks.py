@@ -55,14 +55,36 @@ save("01_data_embeddings.ipynb", nb(
     "01. 데이터 준비 + 임베딩 (한 번만, 드라이브 소유자 계정으로)",
     "공유 폴더 소유자(결제한 계정)가 한 번만 실행한다. 원본은 Colab 로컬 디스크에만 받고, "
     "드라이브에는 CSV 2개와 축소 이미지 zip, 가공 파일만 올린다.\n\n"
-    "준비: Colab 왼쪽 🔑(보안 비밀)에 `KAGGLE_USERNAME`, `KAGGLE_KEY` 등록, H&M 대회 규칙 동의. "
+    "준비: Colab 왼쪽 🔑(보안 비밀)에 `kaggle_username`, `kaggle_key` 등록 (새 방식 KGAT_ 토큰도 가능), H&M 대회 규칙 동의. "
     "런타임은 GPU.",
     [SETUP,
      '''# @title 1. Kaggle에서 원본 zip 받기 (Colab 로컬 디스크, 드라이브 아님)
 import os, glob
 from google.colab import userdata
-os.environ["KAGGLE_USERNAME"] = userdata.get("KAGGLE_USERNAME")
-os.environ["KAGGLE_KEY"] = userdata.get("KAGGLE_KEY")
+
+def secret(*names):
+    for n in names:
+        try:
+            v = userdata.get(n)
+        except Exception:
+            continue
+        if v:
+            return v.strip().strip('"').strip("'")
+    raise KeyError(f"보안 비밀 {names} 없음")
+
+user = secret("kaggle_username", "KAGGLE_USERNAME")
+key = secret("kaggle_key", "KAGGLE_KEY")
+for k in ("KAGGLE_USERNAME", "KAGGLE_KEY", "KAGGLE_API_TOKEN"):
+    os.environ.pop(k, None)
+if key.startswith("KGAT_"):                 # 새 방식 API 토큰
+    os.environ["KAGGLE_API_TOKEN"] = key
+else:                                        # 기존 kaggle.json 방식
+    os.environ["KAGGLE_USERNAME"] = user
+    os.environ["KAGGLE_KEY"] = key
+print("사용자:", user, "| 키 형식:", "새 API 토큰" if key.startswith("KGAT_") else "기존 키", "| 길이:", len(key))
+
+!pip -q install -U kaggle
+!kaggle competitions files -c h-and-m-personalized-fashion-recommendations | head -5   # 로그인 확인
 !df -h /content | tail -1
 !mkdir -p /content/hm && kaggle competitions download -c h-and-m-personalized-fashion-recommendations -p /content/hm
 ZIP = glob.glob("/content/hm/*.zip")[0]
