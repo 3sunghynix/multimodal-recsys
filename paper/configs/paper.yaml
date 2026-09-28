@@ -1,0 +1,36 @@
+# 논문 실험 공통 설정. 세 명 모두 이 파일(같은 커밋)만 사용한다.
+
+drive_root: /content/drive/MyDrive/msrs_paper   # 공유 폴더 바로가기를 '내 드라이브'에 추가한 경로
+
+data:
+  window_weeks: 26          # 학습 기간 (검증·테스트 주 제외)
+  min_user_purchases: 5     # 학습 기간 구매 건수 기준 고객 필터
+  alt_shift_weeks: 1        # 실험 C의 '다른 테스트 주' 분할: 테스트 주를 몇 주 앞당길지
+  image_max_side: 512       # 드라이브에 저장할 이미지 축소 크기 (인코더 입력은 224)
+
+embedding:
+  pca_dim: 256
+  batch_size: 128
+  text_model: sentence-transformers/all-MiniLM-L6-v2
+  image_models:
+    marqo: {kind: open_clip, name: "hf-hub:Marqo/marqo-fashionSigLIP", pretrained: null}
+    resnet50: {kind: torchvision_resnet50}
+    clipb32: {kind: open_clip, name: ViT-B-32, pretrained: openai}
+  shuffle_seeds: [42, 43, 44]
+
+train:
+  # 튜닝(02_tuning) 후 선택한 값을 default에 반영하고 tuned: true로 바꿔 커밋한다.
+  # tuned가 false이면 03_train_group이 실행되지 않는다. 이후 모든 실험은 default만 쓴다.
+  tuned: false
+  default: {hidden: 512, emb_dim: 128, dropout: 0.1, lr: 0.001, weight_decay: 0.0, temperature: 0.05,
+            batch_size: 2048, epochs: 5, label_weeks: 6, max_hist: 50}
+  candidates:
+    h1: {}
+    h2: {lr: 0.0005, epochs: 8}
+    h3: {temperature: 0.1, emb_dim: 256}
+
+eval:
+  k: 300
+  ndcg_k: 12
+  bootstrap: 1000
+  bootstrap_seed: 42

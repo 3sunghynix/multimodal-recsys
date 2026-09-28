@@ -1,0 +1,45 @@
+# 분석 계획 사전 등록. 결과를 보기 전에 확정하고 커밋한다. 이후 바꾸지 않는다.
+# status가 draft인 동안은 01 노트북의 데이터 준비가 실행되지 않는다.
+# 확정 절차: 01 노트북의 '값 확인' 셀 결과와 아래 목록을 대조 → 빠진 값 추가 → status: final → 커밋.
+
+status: draft
+
+# graphical_appearance_name → 외관 그룹 (값 목록은 알려진 H&M 값 기준, 실제 값으로 확인 필요)
+appearance_groups:
+  solid: [Solid]
+  pattern: [Stripe, Check, Dot, All over pattern, Front print, Placement print, Colour blocking,
+            Embroidery, Argyle, Other pattern, Mixed solid/pattern, Contrast, Application/3D]
+  texture: [Denim, Melange, Lace, Jacquard, Mesh, Chambray, Glittering/Metallic, Metallic, Sequin,
+            Transparent, Other structure, Neps, Slub, Treatment, Hologram]
+appearance_exclude: [Unknown]
+
+# product_group_name → 상품군 (층화 기준)
+product_groups:
+  upper: [Garment Upper body]
+  lower: [Garment Lower body]
+  full: [Garment Full body]
+  shoes: [Shoes]
+  accessories: [Accessories, Bags]
+  other: [Underwear, Socks & Tights, Nightwear, Underwear/nightwear, Swimwear]
+product_group_exclude: [Items, Unknown, Cosmetic, Interior textile, Furniture, Garment and Shoe care,
+                        Fun, Stationery]
+
+# detail_desc에 패턴 언급이 있는지 (축 3)
+pattern_keywords_regex: "\\b(stripe[sd]?|print(ed|s)?|check(ed)?|pattern(ed)?|dot(s|ted)?|polka|floral|flower(s|ed)?|logo|graphic|motif|plaid|tartan|leopard|animal|camouflage|paisley|tie-dye|slogan|text|embroider(ed|y))\\b"
+
+# 셀(상품군 × 외관) 최소 테스트 구매 수. 미달 셀이 있는 상품군은 해당 비교에서 제외
+min_cell_purchases: 300
+
+# 주 검정 하나 (논문의 주장 근거). 나머지 비교는 모두 탐색적 분석으로 표시
+main_test:
+  group: A
+  split: main
+  family: marqo
+  measure: fine            # fine = real − shuffle_type, content = real − shuffle_global, img = real − text_only
+  segment: non_repurchase  # all | non_repurchase | new_item
+  contrast: [pattern, solid]
+  strata: product_group
+  weight: purchases        # 상품군별 (pattern + solid) 테스트 구매 수
+  seeds: [42, 43, 44]
+  ci: 0.95
+  decision: "부트스트랩 95% 구간 하한 > 0 이면 H1·H2 지지"
