@@ -226,18 +226,21 @@ save("05_analysis.ipynb", nb(
     [SETUP, VERIFY,
      '''# @title 2. 전체 채점과 분석
 from msrs_paper import analysis
-t1, contrib, mt = analysis.run_all(cfg, exps, plan, paths)
+t1, contrib, overall, mt = analysis.run_all(cfg, exps, plan, paths)
 print("주 검정:", mt)
 t1''',
      '''# @title 3. 기여도 표 (주 검정 조건)
 m = plan["main_test"]
 contrib[(contrib["measure"] == m["measure"]) & (contrib["segment"] == m["segment"])]''',
-     '''# @title 4. 그림 1
+     '''# @title 4. 전체 이미지 기여도 (인코더 × 구간, 부트스트랩 95% 구간)
+overall''',
+     '''# @title 5. 그림 1 · 그림 2
 from IPython.display import Image, display
-display(Image(str(paths.results / "fig1.png")))''',
+display(Image(str(paths.results / "fig1.png")))
+display(Image(str(paths.results / "fig2.png")))''',
      "MD: ## 라벨 표본 검사 (한 번만)\n외관 그룹별 이미지 40장 격자와 확인표(`results/label_check/label_check.csv`)를 만든다. "
      "격자를 보고 csv의 `label_correct`에 1/0을 채운 뒤 일치율을 논문에 적는다.",
-     '''# @title 5. 라벨 표본 검사 자료 만들기
+     '''# @title 6. 라벨 표본 검사 자료 만들기
 import shutil
 from msrs_paper.data_prep import load_items
 from msrs_paper.inspect_images import label_sample
@@ -246,4 +249,52 @@ shutil.copy(paths.raw / "images_subset.zip", IMG_ZIP)
 out = paths.results / "label_check"; out.mkdir(parents=True, exist_ok=True)
 label_sample(load_items(paths), IMG_ZIP, out)
 !ls "{out}"''']))
+save("06_run_all.ipynb", nb(
+    "06. 전체 실행 (한 사람이 한 GPU로 A·B·C·D + 베이스라인 + 분석)",
+    "모든 묶음을 한 세션에서 차례로 돌린다. 이미 끝난 실험은 건너뛰므로, 설정에 묶음이나 seed가 추가되면 "
+    "이 노트북을 다시 모두 실행하면 새로 추가된 것만 돈다. **다른 사람이 같은 묶음을 동시에 돌리지 않게** 먼저 공지한다.\n\n"
+    "D 묶음(인기도 입력)과 B·C의 seed 43·44는 결과 확인 후 추가한 분석이다 (사전 등록 아님).",
+    [SETUP, VERIFY,
+     '''# @title 2. 전체 진행 현황
+assert cfg["train"]["tuned"] and plan["status"] == "final"
+GROUPS = list(exps["groups"])
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+status()''',
+     '''# @title 3. 전체 학습 (끊기면 0번 셀부터 다시 모두 실행하면 이어서)
+import time
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "run_all.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+for g in GROUPS:
+    log(f"===== 묶음 {g} =====")
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+    log(f"===== 묶음 {g} 완료 ({(time.time() - t0) / 60:.1f}분 경과) =====")
+status()''',
+     '''# @title 4. 베이스라인 B1 · B2, 학습 없는 방식 K0 · K2
+from msrs_paper import baselines
+for name in ["B1", "B2", "K0", "K2"]:
+    baselines.run(cfg, paths, name, "main", group="C", log=log)''',
+     '''# @title 5. 전체 채점 · 분석 (100회마다 진행 표시)
+from msrs_paper import analysis
+t1, contrib, overall, mt = analysis.run_all(cfg, exps, plan, paths, log=log)
+print("\\n주 검정:", mt)
+t1''',
+     '''# @title 6. 전체 이미지 기여도 (인코더 × 구간)
+overall''',
+     '''# @title 7. 주 검정 조건의 층화 기여도 (패턴 − 무지)
+m = plan["main_test"]
+contrib[(contrib["measure"] == m["measure"]) & (contrib["segment"] == m["segment"])]''',
+     '''# @title 8. 그림 1 · 그림 2
+from IPython.display import Image, display
+display(Image(str(paths.results / "fig1.png")))
+display(Image(str(paths.results / "fig2.png")))''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

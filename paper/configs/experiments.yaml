@@ -15,20 +15,30 @@ conditions:
   C10: {text: true,  image: clipb32,  shuffle: null}
   C11: {text: true,  image: clipb32,  shuffle: global}
   C12: {text: true,  image: clipb32,  shuffle: type}
+  # 추가 분석 (2026-09-29, 결과 확인 후 추가 — 사전 등록 아님): 상품 타워에 인기도 입력
+  P0:  {text: true,  image: null,     shuffle: null,   pop: true}
+  P2:  {text: true,  image: marqo,    shuffle: null,   pop: true}
+  P3:  {text: true,  image: marqo,    shuffle: global, pop: true}
+  P4:  {text: true,  image: marqo,    shuffle: type,   pop: true}
 
 # 인코더별 조건 묶음 (분석에서 기여도 계산에 사용)
 families:
   marqo:    {text_only: C0, image_only: C1, real: C2, shuffle_global: C3, shuffle_type: C4}
   resnet50: {text_only: C0, image_only: C5, real: C6, shuffle_global: C7, shuffle_type: C8}
   clipb32:  {text_only: C0, image_only: C9, real: C10, shuffle_global: C11, shuffle_type: C12}
+  marqo_pop: {text_only: P0, real: P2, shuffle_global: P3, shuffle_type: P4}
 
 # 실험 묶음: 한 묶음은 한 사람의 GPU에서 전부 돌린다 (직접 비교하는 조건은 같은 컴퓨터).
 groups:
   A:   # 주 검정 (Marqo), 13회
     - {conds: [C0, C2, C3, C4], seeds: [42, 43, 44], split: main}
     - {conds: [C1], seeds: [42], split: main}
-  B:   # 인코더 비교 (ResNet-50), 5회
+  B:   # 인코더 비교 (ResNet-50), 5회 + 추가 seed 10회
     - {conds: [C0, C5, C6, C7, C8], seeds: [42], split: main}
-  C:   # 인코더 비교 (CLIP) + 다른 테스트 주, 9회. 베이스라인·비학습 방식은 04_baselines
+    - {conds: [C0, C5, C6, C7, C8], seeds: [43, 44], split: main}    # 추가 (2026-09-29)
+  C:   # 인코더 비교 (CLIP) + 다른 테스트 주, 9회 + 추가 seed 10회. 베이스라인·비학습 방식은 04_baselines
     - {conds: [C0, C9, C10, C11, C12], seeds: [42], split: main}
     - {conds: [C0, C2, C3, C4], seeds: [42], split: alt}
+    - {conds: [C0, C9, C10, C11, C12], seeds: [43, 44], split: main}  # 추가 (2026-09-29)
+  D:   # 추가 분석 (2026-09-29): 인기도 입력 버전으로 주 검정 조건 반복, 12회
+    - {conds: [P0, P2, P3, P4], seeds: [42, 43, 44], split: main}

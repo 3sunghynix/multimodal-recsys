@@ -7,6 +7,10 @@
 학습 표본: 주 단위. 각 라벨 주의 구매를 정답으로, 그 주 이전 구매를 고객 이력으로 쓴다 (미래 정보 누수 없음).
 - tune 모드: 라벨 주가 검증 주 직전에서 끝나고, 검증 주로 채점한다.
 - final 모드: 라벨 주에 검증 주까지 포함하고, 테스트 주 후보를 만든다.
+
+인기도 입력 (조건 spec의 pop: true, 추가 분석): 상품 타워 입력에 [직전 1주, 직전 4주 판매량의 log1p를 z-점수화]
+2개를 붙인다. 라벨 주마다 그 주 시작 이전 판매량으로 따로 계산하므로 정답 주의 판매가 섞이지 않는다.
+고객 타워 입력은 그대로(콘텐츠 임베딩 평균)다.
 """
 import time
 
@@ -46,8 +50,20 @@ def user_history(rows, users, max_hist):
     return flat, offsets, counts
 
 
+def pop_features(history, starts, n_items, windows=(1, 4)):
+    """(len(starts), n_items, len(windows)). 각 시작 시점 이전 판매량의 log1p를 z-점수화."""
+    out = np.zeros((len(starts), n_items, len(windows)), dtype=np.float32)
+    t = history["t_dat"]
+    for i, s in enumerate(starts):
+        for j, weeks in enumerate(windows):
+            m = (t >= s - pd.Timedelta(weeks=weeks)) & (t < s)
+            v = np.log1p(np.bincount(history.loc[m, "item_idx"].values, minlength=n_items)).astype(np.float32)
+            out[i, :, j] = (v - v.mean()) / (v.std() + 1e-6)
+    return out
+
+
 def build_samples(history, period_end, label_weeks, max_hist):
-    flats, offs, pair_key, pair_item = [], [], [], []
+    flats, offs, pair_key, pair_item, pair_week, week_starts = [], [], [], [], [], []
     n_keys, n_flat = 0, 0
     for k in range(label_weeks):
         wk_end = period_end - pd.Timedelta(weeks=k)
@@ -61,13 +77,16 @@ def build_samples(history, period_end, label_weeks, max_hist):
         pos = pd.Series(np.arange(len(users)), index=users)
         pair_key.append(pos.loc[lab["user"].values].values + n_keys)
         pair_item.append(lab["item_idx"].values)
+        pair_week.append(np.full(len(lab), k))
+        week_starts.append(wk_start)
         flats.append(flat)
         offs.append(off + n_flat)
         n_keys += len(users)
         n_flat += len(flat)
     return {"flat": np.concatenate(flats), "offsets": np.concatenate(offs),
             "pair_key": np.concatenate(pair_key).astype(np.int64),
-            "pair_item": np.concatenate(pair_item).astype(np.int64)}
+            "pair_item": np.concatenate(pair_item).astype(np.int64),
+            "pair_week": np.concatenate(pair_week).astype(np.int64), "week_starts": week_starts}
 
 
 def mean_features(Xt, flat, offsets, device, chunk=200_000):
@@ -83,19 +102,20 @@ def mean_features(Xt, flat, offsets, device, chunk=200_000):
     return torch.cat(out)
 
 
-def build_model(d_in, p):
+def build_model(d_user, d_item, p):
     import torch.nn as nn
 
-    def mlp():
+    def mlp(d_in):
         return nn.Sequential(nn.Linear(d_in, p["hidden"]), nn.ReLU(), nn.Dropout(p["dropout"]),
                              nn.Linear(p["hidden"], p["emb_dim"]))
 
     model = nn.Module()
-    model.user, model.item = mlp(), mlp()
+    model.user, model.item = mlp(d_user), mlp(d_item)
     return model
 
 
-def train(X, samples, p, seed, device, log=print):
+def train(X, samples, p, seed, device, log=print, P=None):
+    """P: 라벨 주별 인기도 입력 (label_weeks, n_items, k) 또는 None."""
     import torch
     import torch.nn.functional as F
     set_seed(seed)
@@ -103,7 +123,9 @@ def train(X, samples, p, seed, device, log=print):
     U = mean_features(Xt, samples["flat"], samples["offsets"], device)
     keys = torch.from_numpy(samples["pair_key"]).to(device)
     items = torch.from_numpy(samples["pair_item"]).to(device)
-    model = build_model(X.shape[1], p).to(device)
+    weeks = torch.from_numpy(samples["pair_week"]).to(device)
+    Pt = None if P is None else torch.from_numpy(P).to(device)
+    model = build_model(X.shape[1], X.shape[1] + (0 if P is None else P.shape[2]), p).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=p["lr"], weight_decay=p["weight_decay"])
     gen = torch.Generator(device="cpu").manual_seed(seed)
     n, bs = len(keys), p["batch_size"]
@@ -114,8 +136,9 @@ def train(X, samples, p, seed, device, log=print):
         for s in range(0, n, bs):
             b = order[s:s + bs]
             kb, ib = keys[b], items[b]
+            item_in = Xt[ib] if Pt is None else torch.cat([Xt[ib], Pt[weeks[b], ib]], dim=1)
             u = F.normalize(model.user(U[kb]), dim=1)
-            v = F.normalize(model.item(Xt[ib]), dim=1)
+            v = F.normalize(model.item(item_in), dim=1)
             logits = u @ v.T / p["temperature"]
             same = ib[None, :] == ib[:, None]          # 같은 상품이 배치에 또 있으면 부정 샘플에서 제외
             same.fill_diagonal_(False)
@@ -129,13 +152,14 @@ def train(X, samples, p, seed, device, log=print):
     return model
 
 
-def predict(model, X, flat, offsets, k, device, chunk=4096):
+def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None):
     import torch
     import torch.nn.functional as F
     model.eval()
     with torch.no_grad():
         Xt = torch.from_numpy(X).to(device)
-        V = F.normalize(model.item(Xt), dim=1)
+        item_in = Xt if P_pred is None else torch.cat([Xt, torch.from_numpy(P_pred).to(device)], dim=1)
+        V = F.normalize(model.item(item_in), dim=1)
         Uin = mean_features(Xt, flat, offsets, device)
         out = []
         for s in range(0, len(Uin), chunk):
@@ -170,13 +194,18 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     X = item_features(paths, spec, seed)
     samples = build_samples(history, start, p["label_weeks"], p["max_hist"])
     log(f"[{name}] {split}/{mode} 입력 {X.shape}, 학습 쌍 {len(samples['pair_key']):,}, device {device}")
-    model = train(X, samples, p, seed, device, log)
+    P = P_pred = None
+    if spec.get("pop"):
+        P = pop_features(history, samples["week_starts"], X.shape[0])
+        P_pred = pop_features(history, [start], X.shape[0])[0]
+    model = train(X, samples, p, seed, device, log, P=P)
     users = np.sort(targets["user"].unique())
     flat, offsets, counts = user_history(history, users, p["max_hist"])
-    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device)
+    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred)
 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
-            "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]), "input_dim": int(X.shape[1]),
+            "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),
+            "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]),
             "n_train_pairs": int(len(samples["pair_key"])), "n_users": int(len(users)),
             "users_without_history": int((counts == 0).sum()), "train_seconds": round(time.time() - t0, 1),
             "created_at": now(), **environment_info()}
