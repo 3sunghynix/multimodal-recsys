@@ -21,9 +21,10 @@ embedding:
 train:
   # 튜닝(02_tuning) 후 선택한 값을 default에 반영하고 tuned: true로 바꿔 커밋한다.
   # tuned가 false이면 03_train_group이 실행되지 않는다. 이후 모든 실험은 default만 쓴다.
-  tuned: false
-  default: {hidden: 512, emb_dim: 128, dropout: 0.1, lr: 0.001, weight_decay: 0.0, temperature: 0.05,
-            batch_size: 2048, epochs: 5, label_weeks: 6, max_hist: 50}
+  # 2026-09-29 튜닝 결과 (C2, seed 42, 검증 주 Recall@300): h2 0.1065 > h1 0.1053 > h3 0.1051 → h2 채택
+  tuned: true
+  default: {hidden: 512, emb_dim: 128, dropout: 0.1, lr: 0.0005, weight_decay: 0.0, temperature: 0.05,
+            batch_size: 2048, epochs: 8, label_weeks: 6, max_hist: 50}
   candidates:
     h1: {}
     h2: {lr: 0.0005, epochs: 8}
