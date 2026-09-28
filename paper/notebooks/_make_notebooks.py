@@ -6,6 +6,9 @@ OUT = Path(sys.argv[1])
 OUT.mkdir(parents=True, exist_ok=True)
 
 SETUP = '''# @title 0. 공통 준비 (모든 노트북 동일)
+import sys
+if any(m.startswith("msrs_paper") for m in sys.modules):
+    raise RuntimeError("이전에 불러온 코드가 메모리에 남아 있습니다. 메뉴 '런타임 → 세션 다시 시작' 후 이 셀부터 다시 실행하세요.")
 from google.colab import drive
 drive.mount("/content/drive")
 
