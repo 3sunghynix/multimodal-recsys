@@ -1,0 +1,88 @@
+# 실험 조건과 담당 묶음. 조건 ID는 논문·결과 파일·공유 시트에서 모두 같은 이름으로 쓴다.
+# text: 텍스트 임베딩 사용 여부 / image: 이미지 인코더 / shuffle: null | global | type (같은 product_type_name 안)
+
+conditions:
+  C0:  {text: true,  image: null,     shuffle: null}
+  C1:  {text: false, image: marqo,    shuffle: null}
+  C2:  {text: true,  image: marqo,    shuffle: null}
+  C3:  {text: true,  image: marqo,    shuffle: global}
+  C4:  {text: true,  image: marqo,    shuffle: type}
+  C5:  {text: false, image: resnet50, shuffle: null}
+  C6:  {text: true,  image: resnet50, shuffle: null}
+  C7:  {text: true,  image: resnet50, shuffle: global}
+  C8:  {text: true,  image: resnet50, shuffle: type}
+  C9:  {text: false, image: clipb32,  shuffle: null}
+  C10: {text: true,  image: clipb32,  shuffle: null}
+  C11: {text: true,  image: clipb32,  shuffle: global}
+  C12: {text: true,  image: clipb32,  shuffle: type}
+  # 추가 분석 (2026-09-29, 결과 확인 후 추가 — 사전 등록 아님): 상품 타워에 인기도 입력
+  P0:  {text: true,  image: null,     shuffle: null,   pop: true}
+  P2:  {text: true,  image: marqo,    shuffle: null,   pop: true}
+  P3:  {text: true,  image: marqo,    shuffle: global, pop: true}
+  P4:  {text: true,  image: marqo,    shuffle: type,   pop: true}
+  # 2차 사전 등록 (prereg_v2.yaml). id: 상품 ID 임베딩 사용, id_setting: 튜닝 선택값 대신 강제할 후보 (민감도 분석)
+  S2:  {text: true,  image: siglip_b16,   shuffle: null}
+  S3:  {text: true,  image: siglip_b16,   shuffle: global}
+  S4:  {text: true,  image: siglip_b16,   shuffle: type}
+  L2:  {text: true,  image: laion_b32,    shuffle: null}
+  L3:  {text: true,  image: laion_b32,    shuffle: global}
+  L4:  {text: true,  image: laion_b32,    shuffle: type}
+  FC2: {text: true,  image: fashionclip2, shuffle: null}
+  FC3: {text: true,  image: fashionclip2, shuffle: global}
+  FC4: {text: true,  image: fashionclip2, shuffle: type}
+  I0:  {text: true,  image: null,         shuffle: null,   id: true}
+  I2:  {text: true,  image: marqo,        shuffle: null,   id: true}
+  I3:  {text: true,  image: marqo,        shuffle: global, id: true}
+  I4:  {text: true,  image: marqo,        shuffle: type,   id: true}
+  IS2: {text: true,  image: siglip_b16,   shuffle: null,   id: true}
+  IS3: {text: true,  image: siglip_b16,   shuffle: global, id: true}
+  IS4: {text: true,  image: siglip_b16,   shuffle: type,   id: true}
+  J0:  {text: true,  image: null,         shuffle: null,   id: true, id_setting: i2}
+  J2:  {text: true,  image: marqo,        shuffle: null,   id: true, id_setting: i2}
+  J3:  {text: true,  image: marqo,        shuffle: global, id: true, id_setting: i2}
+  J4:  {text: true,  image: marqo,        shuffle: type,   id: true, id_setting: i2}
+  JS2: {text: true,  image: siglip_b16,   shuffle: null,   id: true, id_setting: i2}
+  JS3: {text: true,  image: siglip_b16,   shuffle: global, id: true, id_setting: i2}
+  JS4: {text: true,  image: siglip_b16,   shuffle: type,   id: true, id_setting: i2}
+
+# 인코더별 조건 묶음 (분석에서 기여도 계산에 사용)
+families:
+  marqo:    {text_only: C0, image_only: C1, real: C2, shuffle_global: C3, shuffle_type: C4}
+  resnet50: {text_only: C0, image_only: C5, real: C6, shuffle_global: C7, shuffle_type: C8}
+  clipb32:  {text_only: C0, image_only: C9, real: C10, shuffle_global: C11, shuffle_type: C12}
+  marqo_pop: {text_only: P0, real: P2, shuffle_global: P3, shuffle_type: P4}
+
+# 실험 묶음: 한 묶음은 한 사람의 GPU에서 전부 돌린다 (직접 비교하는 조건은 같은 컴퓨터).
+groups:
+  A:   # 주 검정 (Marqo), 13회
+    - {conds: [C0, C2, C3, C4], seeds: [42, 43, 44], split: main}
+    - {conds: [C1], seeds: [42], split: main}
+  B:   # 인코더 비교 (ResNet-50), 5회 + 추가 seed 10회
+    - {conds: [C0, C5, C6, C7, C8], seeds: [42], split: main}
+    - {conds: [C0, C5, C6, C7, C8], seeds: [43, 44], split: main}    # 추가 (2026-09-29)
+  C:   # 인코더 비교 (CLIP) + 다른 테스트 주, 9회 + 추가 seed 10회. 베이스라인·비학습 방식은 04_baselines
+    - {conds: [C0, C9, C10, C11, C12], seeds: [42], split: main}
+    - {conds: [C0, C2, C3, C4], seeds: [42], split: alt}
+    - {conds: [C0, C9, C10, C11, C12], seeds: [43, 44], split: main}  # 추가 (2026-09-29)
+  D:   # 추가 분석 (2026-09-29): 인기도 입력 버전으로 주 검정 조건 반복, 12회
+    - {conds: [P0, P2, P3, P4], seeds: [42, 43, 44], split: main}
+  # ---- 2차 사전 등록 (prereg_v2.yaml). 07 노트북이 실행한다 (06의 전체 실행 대상 아님)
+  E:   # H1 · 재현 쌍: ID 없음, 새 인코더 3종, 27회
+    - {conds: [S2, S3, S4, L2, L3, L4, FC2, FC3, FC4], seeds: [42, 43, 44], split: main}
+  F:   # H2: ID 있음 (튜닝 선택 설정), 21회
+    - {conds: [I0, I2, I3, I4, IS2, IS3, IS4], seeds: [42, 43, 44], split: main}
+  G:   # ID 드롭아웃 0 (i2) 민감도, 21회. 선택 설정이 i2면 실행하지 않는다
+    - {conds: [J0, J2, J3, J4, JS2, JS3, JS4], seeds: [42, 43, 44], split: main}
+
+# 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
+v2_cells:
+  noid_marqo:        {real: [A, C2],  shuffle_global: [A, C3],  shuffle_type: [A, C4],  text_only: [A, C0]}
+  noid_siglip_b16:   {real: [E, S2],  shuffle_global: [E, S3],  shuffle_type: [E, S4],  text_only: [A, C0]}
+  noid_fashionclip2: {real: [E, FC2], shuffle_global: [E, FC3], shuffle_type: [E, FC4], text_only: [A, C0]}
+  noid_laion_b32:    {real: [E, L2],  shuffle_global: [E, L3],  shuffle_type: [E, L4],  text_only: [A, C0]}
+  noid_resnet50:     {real: [B, C6],  shuffle_global: [B, C7],  shuffle_type: [B, C8],  text_only: [B, C0]}
+  noid_clipb32:      {real: [C, C10], shuffle_global: [C, C11], shuffle_type: [C, C12], text_only: [C, C0]}
+  id_marqo:          {real: [F, I2],  shuffle_global: [F, I3],  shuffle_type: [F, I4],  text_only: [F, I0]}
+  id_siglip_b16:     {real: [F, IS2], shuffle_global: [F, IS3], shuffle_type: [F, IS4], text_only: [F, I0]}
+  i2_marqo:          {real: [G, J2],  shuffle_global: [G, J3],  shuffle_type: [G, J4],  text_only: [G, J0]}
+  i2_siglip_b16:     {real: [G, JS2], shuffle_global: [G, JS3], shuffle_type: [G, JS4], text_only: [G, J0]}

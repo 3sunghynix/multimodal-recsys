@@ -1,0 +1,103 @@
+# 두 번째 사전 등록 (2026-09-29). 이 파일의 커밋 시점이 설계 동결 시점이다.
+# 결과와 관계없이 주제, 확증 가설(H1 · H2), 측정값, 판정 기준은 바꾸지 않는다.
+# 구현 중 달라져야 할 사정이 생기면, 실험 실행 전에 이유를 적은 별도 커밋으로 수정하고 docs/주제재검토.md에 기록한다.
+# 사람이 읽는 설명: docs/주제재검토.md (v3)
+
+status: final
+registered: 2026-09-29
+topic: "패션 추천에서 이미지는 언제 도움이 되는가 — 인코더, ID, 신규 상품의 조건 분석"
+context: >
+  1차 사전 등록(analysis_plan.yaml, 패턴 대 무지)은 불지지. 이 2차 사전 등록은 1차 결과를 본 뒤 질문을 넓힌 것이며,
+  아래 추가 실험은 모두 이 파일 커밋 이후에 실행한다.
+
+# 실행 전 명확화 (해석 확정, 설계 변경 아님). 모두 학습 실행 전에 커밋한다.
+clarifications:
+  - date: 2026-09-29
+    item: "segments.established / sparse / id_model.unseen_item_id 의 '판매 횟수'"
+    decision: >
+      학습에 실제로 쓰는 데이터(구매 5회 이상 고객의 학습 + 검증 기간 구매, 즉 processed/{split}/history.parquet 중
+      테스트 주 시작 이전 구매)에서 센다. '한 번도 팔리지 않은 상품'(ID 0 처리 대상)도 같은 기준이다.
+    reason: "이 구간의 목적은 ID 임베딩이 충분히 학습된 상품이다. ID 임베딩은 학습 데이터로만 학습되므로 같은 데이터로 센다."
+
+# ---------------------------------------------------------------- 인코더 쌍 (출발점이 같은 범용 대 패션 적응)
+encoder_pairs:
+  primary:
+    adapted: {name: marqo, source: "hf-hub:Marqo/marqo-fashionSigLIP", arch: ViT-B-16-SigLIP,
+              evidence: "https://huggingface.co/Marqo/marqo-fashionSigLIP — 'The model was fine-tuned from ViT-B-16-SigLIP (webli).'"}
+    generic: {name: siglip_b16, source: "open_clip ViT-B-16-SigLIP, pretrained=webli", arch: ViT-B-16-SigLIP}
+  replication:
+    adapted: {name: fashionclip2, source: "patrickjohncyh/fashion-clip (FashionCLIP 2.0)", arch: ViT-B-32,
+              evidence: "https://huggingface.co/patrickjohncyh/fashion-clip — fine-tuned from laion/CLIP-ViT-B-32-laion2B-s34B-b79K"}
+    generic: {name: laion_b32, source: "open_clip ViT-B-32, pretrained=laion2b_s34b_b79k", arch: ViT-B-32}
+  check: "임베딩 추출 시 각 모델의 구조 이름을 기록해 쌍의 구조가 같은지 확인한다"
+
+# ---------------------------------------------------------------- ID 있는 Two-Tower
+id_model:
+  item_tower_input: "콘텐츠 임베딩 ⊕ 학습되는 상품 ID 임베딩"
+  user_tower_input: "구매 상품 콘텐츠 임베딩 평균 (ID 없음)"
+  unseen_item_id: zero          # 최종 학습 기간에 한 번도 팔리지 않은 상품의 ID 임베딩은 0
+  base_train_params: paper.yaml train.default (h2) 그대로
+  tuning:
+    candidates:
+      i1: {id_dim: 32, id_dropout: 0.0}
+      i2: {id_dim: 64, id_dropout: 0.0}
+      i3: {id_dim: 64, id_dropout: 0.1}
+      i4: {id_dim: 64, id_dropout: 0.3}
+    select_by: "ID 있는 Marqo, 텍스트 + 이미지 조건, seed 42, 검증 주 고객별 평균 Recall@300 1등"
+    apply: "선택 설정을 ID 있는 모든 조건에 똑같이 적용"
+  final_training: "검증 주로 설정 선택 후, 학습 + 검증 기간으로 다시 학습해 테스트 주 평가 (1차와 같음)"
+  sensitivity: "선택 설정이 i2가 아니면, i2로도 ID 있는 모든 조건을 seed 3개로 실행해 탐색적 민감도 분석으로 보고"
+  limitation: "상품 쪽에만 ID (Ye 외 모델은 고객·상품 모두 ID). 신규 상품은 테스트에서만 ID 0이 되는 입력 불일치 가능"
+
+# ---------------------------------------------------------------- 평가 구간
+segments:
+  all: "테스트 주 전체 구매"
+  established: "최종 학습 기간(검증 주 포함)에 10회 이상 팔린 상품의 구매"
+  sparse: "최종 학습 기간에 1~9회 팔린 상품의 구매 (탐색적)"
+  new_item: "전체 기록 기준 테스트 주에 처음 팔린 상품의 구매 (1차와 같음)"
+  established_sensitivity_thresholds: [5, 20]   # 탐색적
+  scoring_rule: "구간별 R은 분자·분모 모두 그 구간 구매로만 계산. 그 구간 구매가 없는 고객은 제외"
+
+# ---------------------------------------------------------------- 측정값과 통계
+measure:
+  primary: relative_content     # [R(텍스트+이미지) − R(텍스트+전체 섞은 이미지)] / R(텍스트+전체 섞은 이미지)
+  also_report: absolute_content # R(텍스트+이미지) − R(텍스트+전체 섞은 이미지)
+  metric: "고객별 평균 Recall@300"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+  seeds: [42, 43, 44]
+  seed_aggregation: "seed별로 계산해 평균, 모든 seed가 같은 부트스트랩 추출을 공유"
+
+# ---------------------------------------------------------------- 확증 검정 (두 개, 본페로니 보정)
+confirmatory:
+  correction: bonferroni
+  ci_level: 0.975
+  H1:
+    name: "도메인 적응"
+    comparison: "ID 없음, 구간 all: 상대 기여도(marqo) − 상대 기여도(siglip_b16)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  H2:
+    name: "ID가 이미지를 가림"
+    comparison: "marqo, 구간 established: 상대 기여도(ID 없음) − 상대 기여도(ID 있음, 선택 설정)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  replication_pair: "fashionclip2 − laion_b32 (ID 없음, all): 별도 검정 아님. 점추정 부호가 H1과 같은지와 95% 구간 보고"
+  report_regardless: true
+
+exploratory:
+  - "신규 · 희소 상품 구간의 기여도"
+  - "같은 품목 안 섞기 기준 기여도 (fine)"
+  - "OpenAI CLIP · ResNet-50 포함 비교"
+  - "ID 있음 + 범용 SigLIP 조합의 양상"
+  - "established 기준 5 · 20회 민감도"
+  - "드롭아웃 0 (i2) 민감도"
+
+# ---------------------------------------------------------------- 추가 실행 조건 (seed 42 · 43 · 44)
+runs:
+  id_off:
+    siglip_b16: [text+image, text+shuffle_global, text+shuffle_type]
+    fashionclip2: [text+image, text+shuffle_global, text+shuffle_type]
+    laion_b32: [text+image, text+shuffle_global, text+shuffle_type]
+  id_on:
+    text_only: [text]
+    marqo: [text+image, text+shuffle_global, text+shuffle_type]
+    siglip_b16: [text+image, text+shuffle_global, text+shuffle_type]
+  reuse: "ID 없는 텍스트만(C0)과 ID 없는 Marqo(C2 · C3 · C4)는 기존 실행 결과(묶음 A)를 쓴다"
