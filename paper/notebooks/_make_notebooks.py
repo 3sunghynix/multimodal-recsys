@@ -260,7 +260,7 @@ save("06_run_all.ipynb", nb(
     [SETUP, VERIFY,
      '''# @title 2. 전체 진행 현황
 assert cfg["train"]["tuned"] and plan["status"] == "final"
-GROUPS = list(exps["groups"])
+GROUPS = ["A", "B", "C", "D"]   # 1차 실험 묶음. 2차 사전 등록 묶음(E · F · G)은 07 노트북이 실행한다
 def status():
     for g in GROUPS:
         runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
@@ -300,4 +300,98 @@ contrib[(contrib["measure"] == m["measure"]) & (contrib["segment"] == m["segment
 from IPython.display import Image, display
 display(Image(str(paths.results / "fig1.png")))
 display(Image(str(paths.results / "fig2.png")))''']))
+save("07_prereg_v2.ipynb", nb(
+    "07. 2차 사전 등록 실행 (인코더 쌍 · ID 모델 · 확증 검정)",
+    "`configs/prereg_v2.yaml` 대로 실행한다. 순서: 임베딩 3종 → 묶음 E → ID 튜닝 (**여기서 멈춤**: 선택 설정을 "
+    "`paper.yaml`에 적고 `id_model.tuned: true`로 커밋) → **새 런타임**에서 처음부터 다시 → 묶음 F · G → 분석.\n\n"
+    "끝난 실행은 건너뛰므로 끊기면 새 런타임에서 처음부터 다시 모두 실행하면 된다. 계획: `docs/학습계획_v2.md`.",
+    [SETUP,
+     '''# @title 1. 사전 등록 · 준비물 확인
+from msrs_paper.config import load_yaml
+from msrs_paper.utils import verify_manifest
+prereg = load_yaml("prereg_v2")
+assert prereg["status"] == "final" and prereg.get("clarifications"), "prereg_v2.yaml 확정·명확화 커밋이 필요합니다"
+m = verify_manifest(paths)
+print(f"사전 등록 {prereg['registered']} · 명확화 {len(prereg['clarifications'])}건 · 준비물 {len(m['files'])}개 일치")''',
+     '''# @title 2. 임베딩 3종 추출 + 쌍 구조 확인 (이미 있으면 건너뜀)
+import os, shutil, torch
+import numpy as np, pandas as pd
+from IPython.display import Image, display
+from msrs_paper import embeddings as em
+from msrs_paper.utils import read_json, write_json
+IMG_ZIP = "/content/images_subset.zip"
+if not os.path.exists(IMG_ZIP):
+    shutil.copy(paths.raw / "images_subset.zip", IMG_ZIP)
+items = pd.read_parquet(paths.processed / "items.parquet").sort_values("idx").reset_index(drop=True)
+device = "cuda" if torch.cuda.is_available() else "cpu"
+E = cfg["embedding"]
+for name in ["siglip_b16", "laion_b32", "fashionclip2"]:
+    if (paths.embeddings / f"img_{name}.npy").exists():
+        continue
+    spec = E["image_models"][name]
+    raw = em.extract_image(IMG_ZIP, items["article_id"].values, spec, E["batch_size"], device)
+    emb, info = em.reduce(raw, E["pca_dim"])
+    em.save_embedding(paths, f"img_{name}", emb, {**info, **spec, "arch": em.arch_info(spec)})
+    print(name, emb.shape, info)
+arch = {n: em.arch_info(E["image_models"][n]) for n in ["marqo", "siglip_b16", "fashionclip2", "laion_b32"]}
+display(pd.DataFrame(arch).T)
+assert em.same_arch(arch["marqo"], arch["siglip_b16"]), "주 쌍의 구조가 다릅니다 — 실행을 멈추고 확인하세요"
+assert em.same_arch(arch["fashionclip2"], arch["laion_b32"]), "재현 쌍의 구조가 다릅니다 — 실행을 멈추고 확인하세요"
+print("두 쌍 모두 구조 일치")
+from msrs_paper.inspect_images import neighbor_grid
+checks = paths.results / "checks"; checks.mkdir(parents=True, exist_ok=True)
+for name in ["siglip_b16", "laion_b32", "fashionclip2"]:
+    out = neighbor_grid(items, np.load(paths.embeddings / f"img_{name}.npy"), IMG_ZIP, checks / f"neighbors_img_{name}.png")
+    print(name); display(Image(str(out)))''',
+     '''# @title 3. 체크섬 목록 갱신 (새 임베딩 포함)
+from msrs_paper.utils import write_manifest
+m = write_manifest(paths)
+print(len(m["files"]), "개 파일 등록")''',
+     '''# @title 4. 진행 현황
+def status():
+    for g in ["E", "F", "G"]:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+    print("ID 튜닝:", cfg["id_model"])
+status()''',
+     '''# @title 5. 묶음 E 학습 (ID 없음, 새 인코더 3종, 27회)
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "prereg_v2.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+two_tower.run_group(cfg, exps, paths, "E", log=log)
+status()''',
+     '''# @title 6. ID 모델 튜닝 (i1~i4) → 선택 후 여기서 멈춤
+if not cfg["id_model"]["tuned"]:
+    rows = []
+    for hp in prereg["id_model"]["tuning"]["candidates"]:
+        info = two_tower.run(cfg, exps, paths, "I2", 42, "main", "tuning", mode="tune", hp_name=hp, log=log)
+        rows.append({"hp": hp, **prereg["id_model"]["tuning"]["candidates"][hp],
+                     "valid_recall@300": info["valid_recall@300"], "train_seconds": info["train_seconds"]})
+    table = pd.DataFrame(rows).sort_values("valid_recall@300", ascending=False)
+    table.to_csv(paths.results / "tuning_id.csv", index=False)
+    display(table)
+    best = table.iloc[0]["hp"]
+    log(f"ID 튜닝 1등: {best}")
+    raise SystemExit(f"튜닝 완료. paper.yaml id_model.selected: {best}, tuned: true 로 커밋·푸시한 뒤 "
+                     "'런타임 → 세션 다시 시작' 후 처음부터 다시 실행하세요.")
+print("ID 설정:", cfg["id_model"])''',
+     '''# @title 7. 묶음 F (ID 있음, 선택 설정) · 묶음 G (드롭아웃 0 민감도)
+two_tower.run_group(cfg, exps, paths, "F", log=log)
+if cfg["id_model"]["selected"] != "i2":
+    two_tower.run_group(cfg, exps, paths, "G", log=log)
+else:
+    log("선택 설정이 i2라서 묶음 G는 실행하지 않음 (F 결과를 민감도 분석에 그대로 사용)")
+status()''',
+     '''# @title 8. 분석: 확증 검정 H1 · H2, 재현 쌍, 표 · 그림
+from msrs_paper import analysis_v2
+confirmatory, replication, table = analysis_v2.run(cfg, exps, paths, log=log)
+print(confirmatory)
+print(replication)
+display(Image(str(paths.root / "results_v2" / "fig_v2.png")))
+table''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

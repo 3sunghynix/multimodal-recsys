@@ -11,6 +11,11 @@
 인기도 입력 (조건 spec의 pop: true, 추가 분석): 상품 타워 입력에 [직전 1주, 직전 4주 판매량의 log1p를 z-점수화]
 2개를 붙인다. 라벨 주마다 그 주 시작 이전 판매량으로 따로 계산하므로 정답 주의 판매가 섞이지 않는다.
 고객 타워 입력은 그대로(콘텐츠 임베딩 평균)다.
+
+상품 ID (조건 spec의 id: true, 2차 사전 등록): 상품 타워 입력 = 콘텐츠 ⊕ 학습되는 상품 ID 임베딩.
+학습 데이터(해당 모드의 history)에 한 번도 없는 상품의 ID는 예측 때 항상 0이다.
+ID 드롭아웃 p: 학습 중 표본마다 확률 p로 ID 부분 전체를 0으로 바꾼다 (배율 보정 없음, 신규 상품 상태를 흉내).
+고객 타워는 그대로. ID를 쓰지 않는 조건은 이 기능이 추가되기 전과 계산 경로가 같다.
 """
 import time
 
@@ -18,7 +23,7 @@ import numpy as np
 import pandas as pd
 
 from . import metrics
-from .config import train_params
+from .config import load_yaml, train_params
 from .data_prep import load_split
 from .utils import environment_info, local_tmp_dir, now, publish_dir, read_json, set_seed, write_json
 
@@ -114,8 +119,24 @@ def build_model(d_user, d_item, p):
     return model
 
 
-def train(X, samples, p, seed, device, log=print, P=None):
-    """P: 라벨 주별 인기도 입력 (label_weeks, n_items, k) 또는 None."""
+def id_settings(cfg, spec, mode, hp_name):
+    """ID 조건의 {id_dim, id_dropout}와 설정 이름. ID를 쓰지 않으면 (None, None)."""
+    if not spec.get("id"):
+        return None, None
+    candidates = load_yaml("prereg_v2")["id_model"]["tuning"]["candidates"]
+    if mode == "tune":
+        name = hp_name
+    elif spec.get("id_setting"):
+        name = spec["id_setting"]
+    else:
+        assert cfg["id_model"]["tuned"] and cfg["id_model"]["selected"], \
+            "ID 튜닝 결과를 paper.yaml id_model.selected에 적고 tuned: true로 커밋한 뒤 실행하세요"
+        name = cfg["id_model"]["selected"]
+    return dict(candidates[name]), name
+
+
+def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None):
+    """P: 라벨 주별 인기도 입력 (label_weeks, n_items, k) 또는 None. id_cfg: {id_dim, id_dropout} 또는 None."""
     import torch
     import torch.nn.functional as F
     set_seed(seed)
@@ -125,7 +146,12 @@ def train(X, samples, p, seed, device, log=print, P=None):
     items = torch.from_numpy(samples["pair_item"]).to(device)
     weeks = torch.from_numpy(samples["pair_week"]).to(device)
     Pt = None if P is None else torch.from_numpy(P).to(device)
-    model = build_model(X.shape[1], X.shape[1] + (0 if P is None else P.shape[2]), p).to(device)
+    d_item = X.shape[1] + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"])
+    model = build_model(X.shape[1], d_item, p)
+    if id_cfg is not None:
+        model.id_emb = torch.nn.Embedding(X.shape[0], id_cfg["id_dim"])
+        torch.nn.init.normal_(model.id_emb.weight, std=0.01)
+    model = model.to(device)
     opt = torch.optim.Adam(model.parameters(), lr=p["lr"], weight_decay=p["weight_decay"])
     gen = torch.Generator(device="cpu").manual_seed(seed)
     n, bs = len(keys), p["batch_size"]
@@ -137,6 +163,11 @@ def train(X, samples, p, seed, device, log=print, P=None):
             b = order[s:s + bs]
             kb, ib = keys[b], items[b]
             item_in = Xt[ib] if Pt is None else torch.cat([Xt[ib], Pt[weeks[b], ib]], dim=1)
+            if id_cfg is not None:
+                e = model.id_emb(ib)
+                if id_cfg["id_dropout"] > 0:
+                    e = e * (torch.rand(len(b), 1, device=device) >= id_cfg["id_dropout"]).float()
+                item_in = torch.cat([item_in, e], dim=1)
             u = F.normalize(model.user(U[kb]), dim=1)
             v = F.normalize(model.item(item_in), dim=1)
             logits = u @ v.T / p["temperature"]
@@ -152,13 +183,17 @@ def train(X, samples, p, seed, device, log=print, P=None):
     return model
 
 
-def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None):
+def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None, seen=None):
+    """seen: ID 모델에서 학습 데이터에 등장한 상품 표시 (bool, n_items). 없는 상품의 ID는 0으로 둔다."""
     import torch
     import torch.nn.functional as F
     model.eval()
     with torch.no_grad():
         Xt = torch.from_numpy(X).to(device)
         item_in = Xt if P_pred is None else torch.cat([Xt, torch.from_numpy(P_pred).to(device)], dim=1)
+        if hasattr(model, "id_emb"):
+            mask = torch.from_numpy(seen.astype(np.float32)).to(device)[:, None]
+            item_in = torch.cat([item_in, model.id_emb.weight * mask], dim=1)
         V = F.normalize(model.item(item_in), dim=1)
         Uin = mean_features(Xt, flat, offsets, device)
         out = []
@@ -177,13 +212,15 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     else:
         name = f"{cond}_seed{seed}_{hp_name}"
         out_dir = paths.outputs / "tuning" / split / name
-        overrides = cfg["train"]["candidates"][hp_name]
+        # 학습 설정 후보(h1~h3)면 학습 설정을, ID 후보(i1~i4)면 ID 설정만 바꾼다
+        overrides = cfg["train"]["candidates"].get(hp_name)
     if (out_dir / "run_info.json").exists():
         log(f"[skip] {out_dir} 이미 완료")
         return read_json(out_dir / "run_info.json")
 
     p = train_params(cfg, overrides)
     spec = exps["conditions"][cond]
+    id_cfg, id_name = id_settings(cfg, spec, mode, hp_name)
     stats = read_json(paths.split_dir(split) / "stats.json")
     history, valid_targets, test_targets = load_split(paths, split)
     start = pd.Timestamp(stats["valid_start"] if mode == "tune" else stats["test_start"])
@@ -198,14 +235,16 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     if spec.get("pop"):
         P = pop_features(history, samples["week_starts"], X.shape[0])
         P_pred = pop_features(history, [start], X.shape[0])[0]
-    model = train(X, samples, p, seed, device, log, P=P)
+    model = train(X, samples, p, seed, device, log, P=P, id_cfg=id_cfg)
     users = np.sort(targets["user"].unique())
     flat, offsets, counts = user_history(history, users, p["max_hist"])
-    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred)
+    seen = np.bincount(history["item_idx"].values, minlength=X.shape[0]) > 0
+    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred, seen=seen)
 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
             "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),
-            "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]),
+            "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"]),
+            "id_setting": id_name, "id_cfg": id_cfg, "n_seen_items": int(seen.sum()),
             "n_train_pairs": int(len(samples["pair_key"])), "n_users": int(len(users)),
             "users_without_history": int((counts == 0).sum()), "train_seconds": round(time.time() - t0, 1),
             "created_at": now(), **environment_info()}

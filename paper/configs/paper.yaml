@@ -16,7 +16,16 @@ embedding:
     marqo: {kind: open_clip, name: "hf-hub:Marqo/marqo-fashionSigLIP", pretrained: null}
     resnet50: {kind: torchvision_resnet50}
     clipb32: {kind: open_clip, name: ViT-B-32, pretrained: openai}
+    # 2차 사전 등록 (prereg_v2.yaml) 인코더 쌍
+    siglip_b16: {kind: open_clip, name: ViT-B-16-SigLIP, pretrained: webli}          # Marqo의 출발점 (범용)
+    laion_b32: {kind: open_clip, name: ViT-B-32, pretrained: laion2b_s34b_b79k}     # FashionCLIP 2.0의 출발점 (범용)
+    fashionclip2: {kind: hf_clip, name: patrickjohncyh/fashion-clip}                 # 패션 적응 (재현 쌍)
   shuffle_seeds: [42, 43, 44]
+
+# 2차 사전 등록의 ID 모델. 후보는 prereg_v2.yaml에 있고, 튜닝 후 selected를 적고 tuned: true로 커밋한다.
+id_model:
+  tuned: false
+  selected: null
 
 train:
   # 튜닝(02_tuning) 후 선택한 값을 default에 반영하고 tuned: true로 바꿔 커밋한다.

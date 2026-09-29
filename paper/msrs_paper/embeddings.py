@@ -55,8 +55,45 @@ def _image_dataset(zip_path, article_ids, transform):
     return ZipImages()
 
 
+def arch_info(spec):
+    """인코더의 이미지 쪽 구조 요약. 인코더 쌍(범용 대 패션 적응)의 구조가 같은지 확인하는 데 쓴다."""
+    import json
+    if spec["kind"] == "open_clip":
+        import open_clip
+        name = spec["name"]
+        if name.startswith("hf-hub:"):
+            from huggingface_hub import hf_hub_download
+            with open(hf_hub_download(name[len("hf-hub:"):], "open_clip_config.json"), encoding="utf-8") as f:
+                cfg = json.load(f)["model_cfg"]
+        else:
+            cfg = open_clip.get_model_config(name)
+        v = cfg["vision_cfg"]
+        return {"image_size": v.get("image_size"), "patch_size": v.get("patch_size"), "width": v.get("width"),
+                "layers": v.get("layers"), "timm_model_name": v.get("timm_model_name"), "embed_dim": cfg.get("embed_dim")}
+    if spec["kind"] == "hf_clip":
+        from transformers import CLIPConfig
+        c = CLIPConfig.from_pretrained(spec["name"])
+        v = c.vision_config
+        return {"image_size": v.image_size, "patch_size": v.patch_size, "width": v.hidden_size,
+                "layers": v.num_hidden_layers, "timm_model_name": None, "embed_dim": c.projection_dim}
+    return {"name": spec["kind"]}
+
+
+def same_arch(a, b):
+    """두 구조 요약에서 양쪽 모두 값이 있는 항목이 전부 같으면 True (비교할 항목이 하나도 없으면 False)."""
+    keys = [k for k in ("image_size", "patch_size", "width", "layers", "timm_model_name", "embed_dim")
+            if a.get(k) is not None and b.get(k) is not None]
+    return bool(keys) and all(a[k] == b[k] for k in keys)
+
+
 def load_image_model(spec, device):
     import torch
+    if spec["kind"] == "hf_clip":
+        from transformers import CLIPModel, CLIPProcessor
+        model = CLIPModel.from_pretrained(spec["name"]).to(device).eval()
+        processor = CLIPProcessor.from_pretrained(spec["name"])
+        preprocess = lambda img: processor(images=img, return_tensors="pt")["pixel_values"][0]
+        return (lambda x: model.get_image_features(pixel_values=x)), preprocess
     if spec["kind"] == "open_clip":
         import open_clip
         model, _, preprocess = open_clip.create_model_and_transforms(spec["name"], pretrained=spec.get("pretrained"))
