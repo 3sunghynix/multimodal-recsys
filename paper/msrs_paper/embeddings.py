@@ -93,7 +93,13 @@ def load_image_model(spec, device):
         model = CLIPModel.from_pretrained(spec["name"]).to(device).eval()
         processor = CLIPProcessor.from_pretrained(spec["name"])
         preprocess = lambda img: processor(images=img, return_tensors="pt")["pixel_values"][0]
-        return (lambda x: model.get_image_features(pixel_values=x)), preprocess
+
+        def encode(x):
+            # get_image_features()는 transformers 버전에 따라 반환 형식이 달라서, 같은 계산을 직접 한다:
+            # 비전 인코더의 pooled 출력 → CLIP 이미지 투영층
+            pooled = model.vision_model(pixel_values=x).pooler_output
+            return model.visual_projection(pooled)
+        return encode, preprocess
     if spec["kind"] == "open_clip":
         import open_clip
         model, _, preprocess = open_clip.create_model_and_transforms(spec["name"], pretrained=spec.get("pretrained"))
