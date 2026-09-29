@@ -1,0 +1,48 @@
+# 논문 실험 공통 설정. 세 명 모두 이 파일(같은 커밋)만 사용한다.
+
+drive_root: /content/drive/MyDrive/msrs_paper   # 공유 폴더 바로가기를 '내 드라이브'에 추가한 경로
+
+data:
+  window_weeks: 26          # 학습 기간 (검증·테스트 주 제외)
+  min_user_purchases: 5     # 학습 기간 구매 건수 기준 고객 필터
+  alt_shift_weeks: 1        # 실험 C의 '다른 테스트 주' 분할: 테스트 주를 몇 주 앞당길지
+  image_max_side: 512       # 드라이브에 저장할 이미지 축소 크기 (인코더 입력은 224)
+
+embedding:
+  pca_dim: 256
+  batch_size: 128
+  text_model: sentence-transformers/all-MiniLM-L6-v2
+  image_models:
+    marqo: {kind: open_clip, name: "hf-hub:Marqo/marqo-fashionSigLIP", pretrained: null}
+    resnet50: {kind: torchvision_resnet50}
+    clipb32: {kind: open_clip, name: ViT-B-32, pretrained: openai}
+    # 2차 사전 등록 (prereg_v2.yaml) 인코더 쌍
+    siglip_b16: {kind: open_clip, name: ViT-B-16-SigLIP, pretrained: webli}          # Marqo의 출발점 (범용)
+    laion_b32: {kind: open_clip, name: ViT-B-32, pretrained: laion2b_s34b_b79k}     # FashionCLIP 2.0의 출발점 (범용)
+    fashionclip2: {kind: hf_clip, name: patrickjohncyh/fashion-clip}                 # 패션 적응 (재현 쌍)
+  shuffle_seeds: [42, 43, 44]
+
+# 2차 사전 등록의 ID 모델. 후보는 prereg_v2.yaml에 있고, 튜닝 후 selected를 적고 tuned: true로 커밋한다.
+id_model:
+  # 2026-09-29 ID 튜닝 (ID 있는 Marqo 텍스트+이미지, seed 42, 검증 주 Recall@300):
+  #   i4 0.0850 > i1 0.0833 > i3 0.0802 > i2 0.0761 → i4 (id_dim 64, id_dropout 0.3)
+  tuned: true
+  selected: i4
+
+train:
+  # 튜닝(02_tuning) 후 선택한 값을 default에 반영하고 tuned: true로 바꿔 커밋한다.
+  # tuned가 false이면 03_train_group이 실행되지 않는다. 이후 모든 실험은 default만 쓴다.
+  # 2026-09-29 튜닝 결과 (C2, seed 42, 검증 주 Recall@300): h2 0.1065 > h1 0.1053 > h3 0.1051 → h2 채택
+  tuned: true
+  default: {hidden: 512, emb_dim: 128, dropout: 0.1, lr: 0.0005, weight_decay: 0.0, temperature: 0.05,
+            batch_size: 2048, epochs: 8, label_weeks: 6, max_hist: 50}
+  candidates:
+    h1: {}
+    h2: {lr: 0.0005, epochs: 8}
+    h3: {temperature: 0.1, emb_dim: 256}
+
+eval:
+  k: 300
+  ndcg_k: 12
+  bootstrap: 1000
+  bootstrap_seed: 42

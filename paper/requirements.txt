@@ -1,0 +1,8 @@
+# Colab 기본 설치(torch, torchvision, numpy, pandas, scikit-learn, matplotlib, pyarrow)에 추가로 필요한 것.
+# 실제 설치된 버전은 각 실험의 run_info.json에 기록된다.
+open_clip_torch
+timm
+ftfy
+sentence-transformers
+kaggle
+pyyaml
