@@ -389,9 +389,14 @@ else:
 status()''',
      '''# @title 8. 분석: 확증 검정 H1 · H2, 재현 쌍, 표 · 그림
 from msrs_paper import analysis_v2
-confirmatory, replication, table = analysis_v2.run(cfg, exps, paths, log=log)
+ctx = analysis_v2.build_context(cfg, exps, paths, log=log)
+confirmatory, replication, table = analysis_v2.run(cfg, exps, paths, log=log, ctx=ctx)
 print(confirmatory)
 print(replication)
 display(Image(str(paths.root / "results_v2" / "fig_v2.png")))
-table''']))
+table''',
+     '''# @title 9. 사후 · 탐색적 분석 (사전 등록 아님): 차이의 95% 구간, 인코더 6종 그림
+post = analysis_v2.posthoc(cfg, exps, paths, log=log, ctx=ctx)
+display(Image(str(paths.root / "results_v2" / "fig_v2_encoders.png")))
+post[["description", "measure", "a", "b", "estimate", "ci95_low", "ci95_high", "excludes_zero"]]''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

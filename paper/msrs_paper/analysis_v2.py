@@ -94,7 +94,8 @@ def _q(x, level):
     return float(np.quantile(x, a)), float(np.quantile(x, 1 - a))
 
 
-def run(cfg, exps, paths, log=print):
+def build_context(cfg, exps, paths, log=print):
+    """채점 · 부트스트랩까지 공통 계산. 확증 분석(run)과 사후 분석(posthoc)이 같은 추출을 공유한다."""
     prereg = load_yaml("prereg_v2")
     out = results_dir(paths)
     k = cfg["eval"]["k"]
@@ -167,6 +168,14 @@ def run(cfg, exps, paths, log=print):
                 acc.append(diff / R[ic] if kind == "relative" else diff)
         return float(np.mean(pts)), np.mean(boots, axis=0), seeds
 
+    return {"prereg": prereg, "out": out, "cells": cells, "masks": masks, "n_boot": n_boot,
+            "contribution": contribution}
+
+
+def run(cfg, exps, paths, log=print, ctx=None):
+    """2차 사전 등록의 확증 검정 · 재현 쌍 · 전체 표."""
+    ctx = ctx or build_context(cfg, exps, paths, log)
+    prereg, out, cells, masks, contribution = (ctx[k] for k in ("prereg", "out", "cells", "masks", "contribution"))
     conf = prereg["confirmatory"]
     level = conf["ci_level"]
     expected_seeds = prereg["measure"]["seeds"]
@@ -237,6 +246,91 @@ def figure(table, out_path):
     ax.set_xticks(x)
     ax.set_xticklabels([lab for _, lab in present], fontsize=8)
     ax.set_ylabel("relative image contribution\n(vs shuffled image)")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=200)
+    plt.close(fig)
+    return out_path
+
+
+# ---------------------------------------------------------------- 사후 · 탐색적 분석 (사전 등록 아님)
+# 2차 결과를 본 뒤 정한 비교. 결론의 근거로 쓰지 않고 "사후 · 탐색적"으로 표시해 보고한다.
+# 각 항목: (id, 설명, kind, (셀 A, 구간 A), (셀 B, 구간 B)) → A − B 와 95% 짝지은 부트스트랩 구간
+POSTHOC = [
+    ("pretrain_clipb32_rel", "같은 CLIP B/32 구조: LAION-2B − OpenAI 사전학습 (전체)", "relative",
+     ("noid_laion_b32", "all"), ("noid_clipb32", "all")),
+    ("pretrain_clipb32_abs", "같은 CLIP B/32 구조: LAION-2B − OpenAI 사전학습 (전체)", "absolute",
+     ("noid_laion_b32", "all"), ("noid_clipb32", "all")),
+    ("siglip_vs_resnet_rel", "범용 SigLIP B/16 − ResNet-50 (전체)", "relative",
+     ("noid_siglip_b16", "all"), ("noid_resnet50", "all")),
+    ("marqo_sparse_vs_est_abs", "Marqo · ID 없음: 희소 − 기존 상품", "absolute",
+     ("noid_marqo", "sparse"), ("noid_marqo", "established")),
+    ("marqo_new_vs_est_abs", "Marqo · ID 없음: 신규 − 기존 상품", "absolute",
+     ("noid_marqo", "new_item"), ("noid_marqo", "established")),
+    ("siglip_sparse_vs_est_abs", "범용 SigLIP · ID 없음: 희소 − 기존 상품", "absolute",
+     ("noid_siglip_b16", "sparse"), ("noid_siglip_b16", "established")),
+    ("siglip_new_vs_est_abs", "범용 SigLIP · ID 없음: 신규 − 기존 상품", "absolute",
+     ("noid_siglip_b16", "new_item"), ("noid_siglip_b16", "established")),
+    ("marqo_noid_vs_i2_rel", "Marqo · 기존 상품: ID 없음 − ID 드롭아웃 0 (i2)", "relative",
+     ("noid_marqo", "established"), ("i2_marqo", "established")),
+    ("marqo_noid_vs_i2_abs", "Marqo · 기존 상품: ID 없음 − ID 드롭아웃 0 (i2)", "absolute",
+     ("noid_marqo", "established"), ("i2_marqo", "established")),
+    ("siglip_noid_vs_i2_rel", "범용 SigLIP · 기존 상품: ID 없음 − ID 드롭아웃 0 (i2)", "relative",
+     ("noid_siglip_b16", "established"), ("i2_siglip_b16", "established")),
+    ("siglip_noid_vs_i2_abs", "범용 SigLIP · 기존 상품: ID 없음 − ID 드롭아웃 0 (i2)", "absolute",
+     ("noid_siglip_b16", "established"), ("i2_siglip_b16", "established")),
+]
+
+ENCODER_ORDER = [("noid_resnet50", "ResNet-50\n(ImageNet)"), ("noid_clipb32", "CLIP B/32\n(OpenAI)"),
+                 ("noid_laion_b32", "CLIP B/32\n(LAION-2B)"), ("noid_fashionclip2", "FashionCLIP 2.0\n(LAION+fashion)"),
+                 ("noid_siglip_b16", "SigLIP B/16\n(WebLI)"), ("noid_marqo", "Marqo\n(WebLI+fashion)")]
+
+
+def posthoc(cfg, exps, paths, log=print, ctx=None):
+    """사후 · 탐색적 대비와 인코더 6종 그림. 결과: results_v2/posthoc_contrasts.csv, fig_v2_encoders.png"""
+    ctx = ctx or build_context(cfg, exps, paths, log)
+    contribution, out = ctx["contribution"], ctx["out"]
+    rows = []
+    for cid, desc, kind, (ca, sa), (cb, sb) in POSTHOC:
+        pa, ba, seeds_a = contribution(ca, sa, "content", kind)
+        pb, bb, seeds_b = contribution(cb, sb, "content", kind)
+        lo, hi = _q(ba - bb, 0.95)
+        rows.append({"id": cid, "description": desc, "measure": f"content_{kind}", "a": pa, "b": pb,
+                     "estimate": pa - pb, "ci95_low": lo, "ci95_high": hi,
+                     "excludes_zero": bool(lo > 0 or hi < 0),
+                     "seeds_a": ",".join(map(str, seeds_a)), "seeds_b": ",".join(map(str, seeds_b)),
+                     "status": "사후 · 탐색적 (사전 등록 아님)"})
+    df = pd.DataFrame(rows)
+    df.to_csv(out / "posthoc_contrasts.csv", index=False)
+    figure_encoders(contribution, out / "fig_v2_encoders.png")
+    for r in rows:
+        log(f"[사후] {r['description']} ({r['measure']}): {r['estimate']:+.4f} [{r['ci95_low']:+.4f}, {r['ci95_high']:+.4f}]")
+    return df
+
+
+def figure_encoders(contribution, out_path):
+    """인코더 6종 × 구간(기존 · 희소 · 신규)의 절대 이미지 기여도 (ID 없음). 사후 · 탐색적 그림."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    segs = [("established", "established (≥10 sales)"), ("sparse", "sparse (1–9)"), ("new_item", "new items")]
+    fig, ax = plt.subplots(figsize=(8, 3.2))
+    width = 0.8 / len(segs)
+    x = np.arange(len(ENCODER_ORDER))
+    for j, (seg, label) in enumerate(segs):
+        est, lo, hi = [], [], []
+        for cell, _ in ENCODER_ORDER:
+            p, b, _ = contribution(cell, seg, "content", "absolute")
+            ql, qh = _q(b, 0.95)
+            est.append(p)
+            lo.append(p - ql)
+            hi.append(qh - p)
+        ax.bar(x + j * width, est, width, yerr=[lo, hi], capsize=2, label=label)
+    ax.axhline(0, color="black", linewidth=0.8)
+    ax.set_xticks(x + width)
+    ax.set_xticklabels([lab for _, lab in ENCODER_ORDER], fontsize=7)
+    ax.set_ylabel("image contribution\n(Δ Recall@300 vs shuffled)")
+    ax.set_title("Exploratory (post hoc): image contribution by encoder and item history", fontsize=9)
+    ax.legend(frameon=False, fontsize=7)
     fig.tight_layout()
     fig.savefig(out_path, dpi=200)
     plt.close(fig)
