@@ -7,6 +7,15 @@
 이 스크립트는 재학습을 하지 않고, 이미 저장된 후보(outputs/A/main/C{2,4}_seed{s}/candidates.npy)를
 그대로 쓰되 테스트 정답에서 오라벨 상품의 구매를 뺀 뒤 채점만 다시 한다.
 
+정답·평가 대상 사용자 처리 일관성:
+- 오라벨 상품(item_idx)의 test_targets 구매를 정답 표에서 제거한다.
+- users 목록과 candidates.npy는 원본 그대로 사용해 평가 대상 고객 집합을 유지한다.
+- 셀별 집계(cell_hits, cell_n)는 필터된 정답에 대해서만 이뤄지므로, 오라벨 상품 구매는
+  해당 셀의 hits와 n에서 자연히 빠진다.
+- 어떤 고객이 특정 셀에서 필터로 모든 구매가 빠지면 그 셀의 n_user=0이 되어
+  원본 분석(user_mean의 has = n_u > 0)과 동일한 규칙으로 그 셀 기여도에서 제외된다.
+- 부트스트랩 가중치 w는 users 전체(46,054명)에 대해 생성되므로 원본 검정과 짝지어진다.
+
 사용:
   python -m paper.scripts.sensitivity_labels \\
     --label-csv /content/drive/MyDrive/msrs_paper/results/label_check/label_check.csv \\
