@@ -24,8 +24,10 @@ embedding:
 
 # 2차 사전 등록의 ID 모델. 후보는 prereg_v2.yaml에 있고, 튜닝 후 selected를 적고 tuned: true로 커밋한다.
 id_model:
-  tuned: false
-  selected: null
+  # 2026-09-29 ID 튜닝 (ID 있는 Marqo 텍스트+이미지, seed 42, 검증 주 Recall@300):
+  #   i4 0.0850 > i1 0.0833 > i3 0.0802 > i2 0.0761 → i4 (id_dim 64, id_dropout 0.3)
+  tuned: true
+  selected: i4
 
 train:
   # 튜닝(02_tuning) 후 선택한 값을 default에 반영하고 tuned: true로 바꿔 커밋한다.
