@@ -1,0 +1,23 @@
+{
+  "hypothesis_id": "H_VisualConsistency",
+  "status": "exploratory",
+  "measure": "Stratum-adjusted customer-average Recall@300",
+  "contrast": "High minus low image contribution; C2 minus C4",
+  "n_strata": 10,
+  "n_evaluated_customers": 3311,
+  "n_evaluated_purchases": 5941,
+  "low_contribution": 0.022053975197921814,
+  "high_contribution": 0.02865397671463895,
+  "difference": 0.0066000015167171355,
+  "ci95_customer_bootstrap": [
+    -0.009907058044625992,
+    0.02262375089012079
+  ],
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "bootstrap_samples": 1000,
+  "bootstrap_seed": 42
+}

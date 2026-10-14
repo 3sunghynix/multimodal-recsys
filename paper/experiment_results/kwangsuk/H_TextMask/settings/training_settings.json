@@ -1,0 +1,100 @@
+{
+  "cfg": {
+    "drive_root": "/content/drive/MyDrive/msrs_paper",
+    "data": {
+      "window_weeks": 26,
+      "min_user_purchases": 5,
+      "alt_shift_weeks": 1,
+      "image_max_side": 512
+    },
+    "embedding": {
+      "pca_dim": 256,
+      "batch_size": 128,
+      "text_model": "sentence-transformers/all-MiniLM-L6-v2",
+      "image_models": {
+        "marqo": {
+          "kind": "open_clip",
+          "name": "hf-hub:Marqo/marqo-fashionSigLIP",
+          "pretrained": null
+        },
+        "resnet50": {
+          "kind": "torchvision_resnet50"
+        },
+        "clipb32": {
+          "kind": "open_clip",
+          "name": "ViT-B-32",
+          "pretrained": "openai"
+        },
+        "siglip_b16": {
+          "kind": "open_clip",
+          "name": "ViT-B-16-SigLIP",
+          "pretrained": "webli"
+        },
+        "laion_b32": {
+          "kind": "open_clip",
+          "name": "ViT-B-32",
+          "pretrained": "laion2b_s34b_b79k"
+        },
+        "fashionclip2": {
+          "kind": "hf_clip",
+          "name": "patrickjohncyh/fashion-clip"
+        }
+      },
+      "shuffle_seeds": [
+        42,
+        43,
+        44
+      ]
+    },
+    "id_model": {
+      "tuned": true,
+      "selected": "i4"
+    },
+    "train": {
+      "tuned": true,
+      "default": {
+        "hidden": 512,
+        "emb_dim": 128,
+        "dropout": 0.1,
+        "lr": 0.0005,
+        "weight_decay": 0.0,
+        "temperature": 0.05,
+        "batch_size": 2048,
+        "epochs": 8,
+        "label_weeks": 6,
+        "max_hist": 50
+      },
+      "candidates": {
+        "h1": {},
+        "h2": {
+          "lr": 0.0005,
+          "epochs": 8
+        },
+        "h3": {
+          "temperature": 0.1,
+          "emb_dim": 256
+        }
+      }
+    },
+    "eval": {
+      "k": 300,
+      "ndcg_k": 12,
+      "bootstrap": 1000,
+      "bootstrap_seed": 42
+    }
+  },
+  "conditions": {
+    "C2": {
+      "text": true,
+      "image": "marqo",
+      "shuffle": null
+    },
+    "C4": {
+      "text": true,
+      "image": "marqo",
+      "shuffle": "type"
+    }
+  },
+  "code_commit": "e6b73dc4a8aee549b4310cf4f3266e373b8632ca",
+  "text_versions_sha256": "89b49c9f33bb245dfb53c6b9828aa1f266709f75ebbe87a22b2d4c1e4e03aeb1"
+}

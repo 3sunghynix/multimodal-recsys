@@ -1,0 +1,20 @@
+{
+  "hypothesis_id": "H_VisualConsistency",
+  "status": "exploratory; existing main split",
+  "hypothesis": "Image contribution is greater for high visual-consistency customers.",
+  "history": "Before test_start; most recent 50 distinct products; dominant product type with at least 5 distinct products.",
+  "consistency_measure": "Mean pairwise cosine similarity of Marqo image embeddings.",
+  "grouping": "Bottom and top thirds within product type and history-size band; minimum 30 customers per group.",
+  "evaluation_plan": "Non-repurchase test purchases in the customer's dominant product type; customer-average Recall@300; C2 minus C4; compare high minus low within strata.",
+  "training_seeds": [
+    42,
+    43,
+    44
+  ],
+  "bootstrap": {
+    "unit": "customer",
+    "samples": 1000,
+    "seed": 42
+  },
+  "test_start": "2020-09-16 00:00:00"
+}
