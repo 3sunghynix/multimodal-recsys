@@ -4,7 +4,7 @@ import yaml
 
 PAPER_DIR = Path(__file__).resolve().parent.parent
 CONF_DIR = PAPER_DIR / "configs"
-SPLITS = ("main", "alt")
+SPLITS = ("main", "alt", "s2")   # s2: 테스트 주를 2주 앞당긴 분할 (2020-09-02 ~ 08, 3 · 4차 사전 등록 재검증용)
 
 
 def load_yaml(name):

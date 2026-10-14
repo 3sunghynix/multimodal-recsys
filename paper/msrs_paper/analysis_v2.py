@@ -27,10 +27,10 @@ def results_dir(paths):
     return d
 
 
-def item_sales_counts(paths, n_items):
+def item_sales_counts(paths, n_items, split=SPLIT):
     """학습에 실제로 쓰는 데이터(history, 테스트 주 이전)에서 센 상품별 판매 횟수 (사전 등록 명확화)."""
-    stats = read_json(paths.split_dir(SPLIT) / "stats.json")
-    history, _, _ = load_split(paths, SPLIT)
+    stats = read_json(paths.split_dir(split) / "stats.json")
+    history, _, _ = load_split(paths, split)
     h = history[history["t_dat"] < pd.Timestamp(stats["test_start"])]
     return np.bincount(h["item_idx"].values, minlength=n_items)
 
@@ -52,7 +52,7 @@ def selected_id(cfg):
     return cfg.get("id_model", {}).get("selected")
 
 
-def resolve_cells(exps, cfg, paths, cells_key="v2_cells", seeds=None):
+def resolve_cells(exps, cfg, paths, cells_key="v2_cells", seeds=None, split=SPLIT):
     """v2_cells(또는 cells_key) → {cell: {role: [(group, cond, seed, run_dir), ...]}}. 없는 실행은 빠진다.
     G 묶음이 없고 선택 설정이 i2면, i2 민감도 셀은 F 묶음 결과를 쓴다 (같은 설정)."""
     seeds = seeds or load_yaml("prereg_v2")["measure"]["seeds"]
@@ -63,7 +63,7 @@ def resolve_cells(exps, cfg, paths, cells_key="v2_cells", seeds=None):
         for role, (group, cond) in roles.items():
             found = []
             for s in seeds:
-                d = paths.run_dir(group, SPLIT, f"{cond}_seed{s}")
+                d = paths.run_dir(group, split, f"{cond}_seed{s}")
                 if not (d / "run_info.json").exists() and group == "G" and selected_id(cfg) == "i2":
                     d = paths.run_dir("F", SPLIT, f"{g_to_f[cond]}_seed{s}")
                 if (d / "run_info.json").exists():
@@ -94,15 +94,15 @@ def _q(x, level):
     return float(np.quantile(x, a)), float(np.quantile(x, 1 - a))
 
 
-def build_context(cfg, exps, paths, log=print, cells_key="v2_cells", out=None):
+def build_context(cfg, exps, paths, log=print, cells_key="v2_cells", out=None, split=SPLIT):
     """채점 · 부트스트랩까지 공통 계산. 확증 분석(run)과 사후 분석(posthoc)이 같은 추출을 공유한다.
     cells_key · out: 다른 분석(예: 3차 yh_cells → results_yh/)이 같은 계산을 재사용할 때만 바꾼다.
     구간 정의 · 부트스트랩 설정은 prereg_v2와 같다."""
     prereg = load_yaml("prereg_v2")
     out = out or results_dir(paths)
     k = cfg["eval"]["k"]
-    _, _, targets = load_split(paths, SPLIT)
-    cells = resolve_cells(exps, cfg, paths, cells_key)
+    _, _, targets = load_split(paths, split)
+    cells = resolve_cells(exps, cfg, paths, cells_key, split=split)
 
     # 기준 고객 목록 (모든 실행이 같아야 함)
     any_run = next(r[3] for c in cells.values() for runs in c.values() for r in runs)
@@ -110,7 +110,7 @@ def build_context(cfg, exps, paths, log=print, cells_key="v2_cells", out=None):
     rows = metrics.target_rows(users_ref, targets)
     items = targets["item_idx"].values
     n_items = len(pd.read_parquet(paths.processed / "items.parquet", columns=["idx"]))
-    counts = item_sales_counts(paths, n_items)
+    counts = item_sales_counts(paths, n_items, split)
     masks = segment_masks(targets, counts, prereg)
     U = len(users_ref)
 
