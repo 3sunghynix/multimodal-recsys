@@ -16,6 +16,13 @@
 학습 데이터(해당 모드의 history)에 한 번도 없는 상품의 ID는 예측 때 항상 0이다.
 ID 드롭아웃 p: 학습 중 표본마다 확률 p로 ID 부분 전체를 0으로 바꾼다 (배율 보정 없음, 신규 상품 상태를 흉내).
 고객 타워는 그대로. ID를 쓰지 않는 조건은 이 기능이 추가되기 전과 계산 경로가 같다.
+
+결합 · 모달리티 드롭아웃 (조건 spec의 fusion · text_dropout · image_dropout, 3차 사전 등록 prereg_yh_fusion.yaml):
+- text_dropout / image_dropout p: 학습 중 상품 타워 입력의 텍스트 블록(앞 text_dim칸) / 이미지 블록을 학습 쌍마다 확률 p로 0 (배율 보정 없음).
+  고객 타워 입력과 추천 시에는 적용하지 않는다.
+- fusion late: 텍스트 MLP + 이미지 MLP의 합. gate: α · 이미지 MLP + (1 − α) · 텍스트 MLP, α = sigmoid(Linear(입력)).
+  상품 · 고객 타워 모두 같은 구조. gate 실행은 상품별 α를 gate_alpha.npy로 저장한다.
+- 이 옵션이 없는 조건은 추가 전과 계산 경로 · 결과가 같다 (합성 데이터로 가중치 · 추천 동일 확인).
 """
 import time
 
@@ -107,15 +114,40 @@ def mean_features(Xt, flat, offsets, device, chunk=200_000):
     return torch.cat(out)
 
 
-def build_model(d_user, d_item, p):
+def build_model(d_user, d_item, p, fusion=None, text_dim=None):
+    """fusion: None/concat(기본, 기존과 같은 경로) | late | gate. late · gate는 입력을 [텍스트 | 이미지] 블록으로 나눈다."""
+    import torch
     import torch.nn as nn
 
     def mlp(d_in):
         return nn.Sequential(nn.Linear(d_in, p["hidden"]), nn.ReLU(), nn.Dropout(p["dropout"]),
                              nn.Linear(p["hidden"], p["emb_dim"]))
 
+    class Fused(nn.Module):
+        def __init__(self, d_in):
+            super().__init__()
+            self.text, self.image = mlp(text_dim), mlp(d_in - text_dim)
+            if fusion == "gate":
+                self.gate = nn.Linear(d_in, 1)
+                nn.init.zeros_(self.gate.weight)
+                nn.init.zeros_(self.gate.bias)          # α 초기값 0.5
+
+        def alpha(self, x):
+            return torch.sigmoid(self.gate(x))
+
+        def forward(self, x):
+            t, v = self.text(x[:, :text_dim]), self.image(x[:, text_dim:])
+            if fusion == "late":
+                return t + v
+            a = self.alpha(x)
+            return a * v + (1 - a) * t
+
     model = nn.Module()
-    model.user, model.item = mlp(d_user), mlp(d_item)
+    if fusion in (None, "concat"):
+        model.user, model.item = mlp(d_user), mlp(d_item)
+    else:
+        assert fusion in ("late", "gate") and text_dim and d_user == d_item, (fusion, text_dim, d_user, d_item)
+        model.user, model.item = Fused(d_user), Fused(d_item)
     return model
 
 
@@ -135,8 +167,35 @@ def id_settings(cfg, spec, mode, hp_name):
     return dict(candidates[name]), name
 
 
-def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None):
-    """P: 라벨 주별 인기도 입력 (label_weeks, n_items, k) 또는 None. id_cfg: {id_dim, id_dropout} 또는 None."""
+def modality_settings(paths, spec):
+    """3차 사전 등록 조건(fusion · text_dropout · image_dropout)의 설정. 해당 없으면 None (기존과 같은 경로)."""
+    keys = ("fusion", "text_dropout", "image_dropout")
+    if not any(spec.get(k) for k in keys):
+        return None
+    assert spec["text"] and spec["image"] and not spec.get("pop") and not spec.get("id"), spec
+    text_dim = int(np.load(paths.embeddings / "text_minilm.npy", mmap_mode="r").shape[1])
+    return {"fusion": spec.get("fusion", "concat"), "text_dim": text_dim,
+            "text_dropout": float(spec.get("text_dropout", 0.0)), "image_dropout": float(spec.get("image_dropout", 0.0))}
+
+
+def n_params(model):
+    return int(sum(p.numel() for p in model.parameters()))
+
+
+def gate_alpha(model, X, device, chunk=65536):
+    """게이트 결합 상품 타워의 상품별 α (이미지 쪽 가중치)."""
+    import torch
+    model.eval()
+    out = []
+    with torch.no_grad():
+        for s in range(0, len(X), chunk):
+            out.append(model.item.alpha(torch.from_numpy(X[s:s + chunk]).to(device)).squeeze(1).cpu().numpy())
+    return np.concatenate(out).astype(np.float32)
+
+
+def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=None):
+    """P: 라벨 주별 인기도 입력 (label_weeks, n_items, k) 또는 None. id_cfg: {id_dim, id_dropout} 또는 None.
+    mod_cfg: {fusion, text_dim, text_dropout, image_dropout} 또는 None (3차 사전 등록). None이면 기존과 같은 경로."""
     import torch
     import torch.nn.functional as F
     set_seed(seed)
@@ -147,7 +206,13 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None):
     weeks = torch.from_numpy(samples["pair_week"]).to(device)
     Pt = None if P is None else torch.from_numpy(P).to(device)
     d_item = X.shape[1] + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"])
-    model = build_model(X.shape[1], d_item, p)
+    mod = mod_cfg or {}
+    model = build_model(X.shape[1], d_item, p, fusion=mod.get("fusion"), text_dim=mod.get("text_dim"))
+    td, vd = mod.get("text_dropout", 0.0), mod.get("image_dropout", 0.0)
+    if td or vd:
+        assert mod.get("text_dim") and P is None and id_cfg is None, "모달리티 드롭아웃은 텍스트 + 이미지 · 인기도 · ID 없음 조건 전용"
+        col_text = torch.zeros(X.shape[1], device=device)
+        col_text[:mod["text_dim"]] = 1.0
     if id_cfg is not None:
         model.id_emb = torch.nn.Embedding(X.shape[0], id_cfg["id_dim"])
         torch.nn.init.normal_(model.id_emb.weight, std=0.01)
@@ -163,6 +228,12 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None):
             b = order[s:s + bs]
             kb, ib = keys[b], items[b]
             item_in = Xt[ib] if Pt is None else torch.cat([Xt[ib], Pt[weeks[b], ib]], dim=1)
+            if td:      # 학습 쌍마다 확률 td로 텍스트 블록을 0으로
+                drop = (torch.rand(len(b), 1, device=device) < td).float()
+                item_in = item_in * (1 - drop * col_text)
+            if vd:      # 학습 쌍마다 확률 vd로 이미지 블록을 0으로
+                drop = (torch.rand(len(b), 1, device=device) < vd).float()
+                item_in = item_in * (1 - drop * (1 - col_text))
             if id_cfg is not None:
                 e = model.id_emb(ib)
                 if id_cfg["id_dropout"] > 0:
@@ -235,7 +306,8 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     if spec.get("pop"):
         P = pop_features(history, samples["week_starts"], X.shape[0])
         P_pred = pop_features(history, [start], X.shape[0])[0]
-    model = train(X, samples, p, seed, device, log, P=P, id_cfg=id_cfg)
+    mod_cfg = modality_settings(paths, spec)
+    model = train(X, samples, p, seed, device, log, P=P, id_cfg=id_cfg, mod_cfg=mod_cfg)
     users = np.sort(targets["user"].unique())
     flat, offsets, counts = user_history(history, users, p["max_hist"])
     seen = np.bincount(history["item_idx"].values, minlength=X.shape[0]) > 0
@@ -244,7 +316,8 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
             "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),
             "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"]),
-            "id_setting": id_name, "id_cfg": id_cfg, "n_seen_items": int(seen.sum()),
+            "id_setting": id_name, "id_cfg": id_cfg, "mod_cfg": mod_cfg, "n_params": n_params(model),
+            "n_seen_items": int(seen.sum()),
             "n_train_pairs": int(len(samples["pair_key"])), "n_users": int(len(users)),
             "users_without_history": int((counts == 0).sum()), "train_seconds": round(time.time() - t0, 1),
             "created_at": now(), **environment_info()}
@@ -253,6 +326,8 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
         log(f"[{name}] valid Recall@300 = {info['valid_recall@300']:.4f}")
 
     tmp = local_tmp_dir()
+    if mod_cfg and mod_cfg.get("fusion") == "gate":      # 상품별 이미지 가중치 α (탐색 분석용)
+        np.save(tmp / "gate_alpha.npy", gate_alpha(model, X, device))
     np.save(tmp / "candidates.npy", cands.astype(np.int32))
     np.save(tmp / "users.npy", users.astype(np.int64))
     write_json(tmp / "run_info.json", info)
