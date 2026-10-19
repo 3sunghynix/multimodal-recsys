@@ -564,4 +564,44 @@ cols = ["cell", "segment", "R_real", "R_minus_text_only", "R_minus_const_ctrl", 
 display(encoders[[c for c in cols if c in encoders.columns]])
 display(hybrid[hybrid["segment"].isin(["all", "new_item"])].pivot_table(
     index=["model", "n_baseline"], columns="segment", values="R").round(4))''']))
+save("11_yh_balance.ipynb", nb(
+    "11. 6차 사전 등록 (김유환): 우세 모달리티 억제 + 반사실 이미지 활용도 (s2)",
+    "`configs/prereg_yh_balance.yaml` 대로 실행한다. 인코더 4종 × {기준, 이미지 드롭아웃, 텍스트 드롭아웃, 이미지만} 48회(약 20~25분, "
+    "평균 대체 추천 포함) → 분석(약 10분). 텍스트만(C0)은 5차(10 노트북) 결과를 재사용한다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 · 진행 현황
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_balance")
+assert prereg["status"] == "final" and (paths.split_dir("s2") / "stats.json").exists()
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']}")
+def status():
+    b = exps["groups"]["YH4"][0]
+    runs = [(c, s) for s in b["seeds"] for c in b["conds"]]
+    done = [r for r in runs if (paths.run_dir("YH4", "s2", f"{r[0]}_seed{r[1]}") / "run_info.json").exists()]
+    c0 = [paths.run_dir("YH3_ENC", "s2", f"C0_seed{s}") / "run_info.json" for s in (42, 43, 44)]
+    print(f"묶음 YH4: 전체 {len(runs)}회, 완료 {len(done)}회 · 재사용 텍스트만 C0 (YH3_ENC): {sum(f.exists() for f in c0)} / 3")
+status()''',
+     '''# @title 2. 학습 48회 (평균 대체 추천 포함, 약 20~25분)
+import time
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_balance.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+two_tower.run_group(cfg, exps, paths, "YH4", log=log)
+log(f"6차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")
+status()''',
+     '''# @title 3. 분석: 확증 H10 · H11 + 인코더 × 처방 효과 (약 10분)
+from msrs_paper import analysis_yh4
+confirmatory, effects, dominance, util = analysis_yh4.run(cfg, exps, paths, log=log)
+effects[effects["segment"] == "all"][["encoder", "treatment", "R_base", "R_treat", "delta", "ci_low", "ci_high"]]''',
+     '''# @title 4. 우세 모달리티 · 반사실 활용도 · 구간별 효과 (탐색적)
+display(dominance)
+display(util.pivot_table(index=["encoder", "model"], columns="measure", values="utilization").round(3))
+display(effects[effects["segment"].isin(["established", "new_item"])][["encoder", "treatment", "segment", "delta", "ci_low", "ci_high"]])''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

@@ -27,6 +27,10 @@ ID 드롭아웃 p: 학습 중 표본마다 확률 p로 ID 부분 전체를 0으�
 4차 사전 등록 (prereg_yh_imgdrop.yaml): dropout_rescale(남은 이미지 블록 1/(1 − p)배), image_elem_dropout(원소 단위),
 test_img_scale(추천 때 상품 타워 이미지 블록만 s배), image_control(random: 상품별 무작위 단위 벡터, const: 모든 상품 같은 벡터).
 3차까지의 조건은 이 옵션 추가 전후 결과가 같다 (합성 데이터 확인).
+
+6차 사전 등록 (prereg_yh_balance.yaml): 묶음 블록에 counterfactual: true면, 학습한 같은 모델로 이미지(또는 텍스트) 블록을
+전체 상품 평균 벡터로 바꿔 한 번 더 추천해 candidates_cf_img.npy / candidates_cf_txt.npy로 저장한다 (활용도 지표).
+원래 추천(candidates.npy)은 바뀌지 않는다.
 """
 import time
 
@@ -296,7 +300,8 @@ def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None, seen=No
     return np.concatenate(out)
 
 
-def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print):
+def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print,
+        counterfactual=False):
     """실험 1회. 드라이브에 run_info.json이 이미 있으면 건너뛴다 (중단 후 이어 돌리기 가능)."""
     import torch
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -339,11 +344,19 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
         X_item = X.copy()
         X_item[:, t_dim:] *= float(spec["test_img_scale"])
     cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred, seen=seen, X_item=X_item)
+    cf = {}
+    if counterfactual and spec["text"] and spec.get("image") and P is None and not spec.get("id"):
+        # 6차: 한 모달리티 블록을 전체 상품 평균으로 바꿔 다시 추천 (상품 · 고객 입력 모두). 같은 모델에서 활용도를 잰다
+        t_dim = int(np.load(paths.embeddings / "text_minilm.npy", mmap_mode="r").shape[1])
+        for tag, sl in (("img", slice(t_dim, None)), ("txt", slice(0, t_dim))):
+            Xc = X.copy()
+            Xc[:, sl] = X[:, sl].mean(axis=0, keepdims=True)
+            cf[tag] = predict(model, Xc, flat, offsets, cfg["eval"]["k"], device)
 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
             "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),
             "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"]),
-            "id_setting": id_name, "id_cfg": id_cfg, "mod_cfg": mod_cfg, "n_params": n_params(model),
+            "id_setting": id_name, "id_cfg": id_cfg, "mod_cfg": mod_cfg, "n_params": n_params(model), "counterfactual": sorted(cf),
             "n_seen_items": int(seen.sum()),
             "n_train_pairs": int(len(samples["pair_key"])), "n_users": int(len(users)),
             "users_without_history": int((counts == 0).sum()), "train_seconds": round(time.time() - t0, 1),
@@ -356,6 +369,8 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     if mod_cfg and mod_cfg.get("fusion") == "gate":      # 상품별 이미지 가중치 α (탐색 분석용)
         np.save(tmp / "gate_alpha.npy", gate_alpha(model, X, device))
     np.save(tmp / "candidates.npy", cands.astype(np.int32))
+    for tag, c in cf.items():
+        np.save(tmp / f"candidates_cf_{tag}.npy", c.astype(np.int32))
     np.save(tmp / "users.npy", users.astype(np.int64))
     write_json(tmp / "run_info.json", info)
     publish_dir(tmp, out_dir)
@@ -367,4 +382,5 @@ def run_group(cfg, exps, paths, group, log=print):
     for block in exps["groups"][group]:
         for seed in block["seeds"]:
             for cond in block["conds"]:
-                run(cfg, exps, paths, cond, seed, block["split"], group, log=log)
+                run(cfg, exps, paths, cond, seed, block["split"], group, log=log,
+                    counterfactual=block.get("counterfactual", False))
