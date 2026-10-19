@@ -1,0 +1,58 @@
+# 7차 사전 등록 (김유환): 텍스트만 쓸 때보다 이미지를 어떻게 함께 써야 성능이 오르는가 — 새 테스트 주 s4
+# 근거: 4차(이미지 드롭아웃 확증, Marqo) · 6차(우세 모달리티 억제 기각, ResNet · CLIP에서도 이미지 드롭아웃 이득 — 탐색),
+#       0-2(상품별 고유 벡터는 외우기 지름길), docs/선행연구조사_이미지활용도.md (UME: Du 외 ICML 2023, 잡음: OGM-GE)
+# 이 파일의 커밋 시점이 설계 동결 시점이다. s4 분할 생성과 모든 학습 · 분석은 이 커밋 이후에 한다.
+
+status: final
+registered: 2026-10-19
+owner: 김유환
+hypothesis_ids: [YH_imgdrop_general, YH_image_noise, YH_unimodal_ensemble]
+question: "텍스트만 쓰는 모델보다 이미지를 함께 쓸 때, 어떤 방식(이미지 드롭아웃 · 이미지 잡음 · 따로 학습 후 점수 합산)이 성능을 더 올리는가"
+
+data:
+  split: s4
+  definition: "data_prep.build_split(shift_weeks=4), 기존 items.parquet 그대로. 테스트 2020-08-19 ~ 25, 검증 2020-08-12 ~ 18"
+  why_new: >
+    main · alt · s2의 테스트 주와 검증 주(09-16 ~ 22, 09-09 ~ 15, 09-02 ~ 08, 08-26 ~ 09-01)는 모두 결과 확인이나 튜닝에 썼다.
+    특히 08-26 ~ 09-01은 4차에서 이미지 드롭아웃 p를 고른 s2 검증 주라 쓰지 않는다. 08-19 ~ 25와 그 검증 주 08-12 ~ 18은 처음 쓴다.
+    상품 집합 밖 상품의 구매는 제외한다 (기존 분할과 같은 규칙).
+
+model: "ID 없는 Two-Tower, 이어 붙이기, h2. 이미지 드롭아웃 0.3은 3 · 4 · 6차와 같은 구현"
+image_noise:
+  method: "학습 중 상품 타워 입력의 이미지 블록에 학습 쌍마다 N(0, σ²) 잡음을 더한다. 추천 때는 더하지 않는다"
+  candidates: [0.03, 0.06, 0.12]   # 이미지 블록은 256차원 L2 정규화라 좌표 표준편차 약 0.0625
+  select_by: "s4 검증 주, 텍스트 + Marqo, seed 42, 고객별 평균 Recall@300 1등 (σ*). 분석 코드가 튜닝 결과에서 자동 선택"
+ume:
+  method: "텍스트만(C0) · 이미지만(C1) 모델을 따로 학습. 추천 점수 = z(텍스트 모델 점수) + w · z(이미지 모델 점수), z는 고객별 전체 상품 점수의 표준화. 같은 seed끼리 짝"
+  w: 1.0   # 고정 (튜닝 없음)
+seeds: [42, 43, 44]
+encoders_h12: [marqo, siglip_b16, resnet50, clipb32]
+
+measure:
+  primary: "R = 고객별 평균 Recall@300, 구간 all"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+  always_report: "텍스트만(C0) 대비 R 차이를 모든 방법에 함께 보고"
+
+confirmatory:
+  correction: bonferroni   # 3개
+  ci_level: 0.98333
+  H12:
+    name: "이미지 드롭아웃의 일반성"
+    comparison: "인코더 4종 평균 Δ, Δ(인코더) = R(이미지 드롭아웃 0.3) − R(기준 이어 붙이기)"
+    decision: "98.33% 부트스트랩 구간 하한 > 0 이면 지지"
+  H13:
+    name: "이미지 잡음"
+    comparison: "R(텍스트 + Marqo, 이미지 잡음 σ*) − R(C2)"
+    decision: "98.33% 부트스트랩 구간 하한 > 0 이면 지지"
+  H14:
+    name: "따로 학습 후 점수 합산 (UME)"
+    comparison: "R(UME: C0 + C1, w = 1) − R(C2)"
+    decision: "98.33% 부트스트랩 구간 하한 > 0 이면 지지"
+  report_regardless: true
+
+exploratory:
+  - "인코더별 Δ(이미지 드롭아웃) (6차 s2 탐색 결과의 재현)"
+  - "이미지 잡음 σ별 R, 잡음 σ* − 이미지 드롭아웃 0.3 (Marqo) — 비슷하면 '외우기 억제' 설명을 지지"
+  - "UME w ∈ {0.5, 2}, UME(ResNet: C0 + C5) − C6"
+  - "외우기 정도: 같은 모델로 학습에 포함된 검증 주를 다시 채점한 R − 테스트 주 R (조건별 seed 평균). 이미지 드롭아웃 · 잡음이 이 차이를 줄이는지"
+  - "구간별(established · sparse · new_item) 결과"

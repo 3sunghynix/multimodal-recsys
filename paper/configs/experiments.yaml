@@ -93,6 +93,11 @@ conditions:
   YH4_CTD: {text: true,  image: clipb32,    shuffle: null, text_dropout: 0.3}
   YH4_SI:  {text: false, image: siglip_b16, shuffle: null}
 
+  # 7차 사전 등록 김유환 (prereg_yh_image_use.yaml): 이미지 잡음 σ
+  YH5_N1: {text: true, image: marqo, shuffle: null, image_noise: 0.03}
+  YH5_N2: {text: true, image: marqo, shuffle: null, image_noise: 0.06}
+  YH5_N3: {text: true, image: marqo, shuffle: null, image_noise: 0.12}
+
 # 인코더별 조건 묶음 (분석에서 기여도 계산에 사용)
 families:
   marqo:    {text_only: C0, image_only: C1, real: C2, shuffle_global: C3, shuffle_type: C4}
@@ -150,6 +155,14 @@ groups:
   YH4:       # 인코더 4종 × {기준, 이미지 드롭아웃, 텍스트 드롭아웃, 이미지만}, 48회
     - {conds: [C2, S2, C6, C10, YH_VD3R, YH4_SVD, YH4_RVD, YH4_CVD, YH_TD3R, YH4_STD, YH4_RTD, YH4_CTD, C1, YH4_SI, C5, C9],
        seeds: [42, 43, 44], split: s2, counterfactual: true}
+
+  # ---- 7차 사전 등록 김유환 (prereg_yh_image_use.yaml). s4. insample: 학습 주 재채점, save_vectors: UME용 벡터 저장
+  YH5_ENC:    # 인코더 4종 × {기준, 이미지 드롭아웃 0.3}, 24회
+    - {conds: [C2, S2, C6, C10, YH_VD3R, YH4_SVD, YH4_RVD, YH4_CVD], seeds: [42, 43, 44], split: s4, insample: true}
+  YH5_NOISE:  # Marqo 이미지 잡음 σ 3개, 9회
+    - {conds: [YH5_N1, YH5_N2, YH5_N3], seeds: [42, 43, 44], split: s4, insample: true}
+  YH5_UME:    # 텍스트만 · 이미지만 (Marqo, ResNet), 9회
+    - {conds: [C0, C1, C5], seeds: [42, 43, 44], split: s4, save_vectors: true, insample: true}
 
 # 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
 v2_cells:
