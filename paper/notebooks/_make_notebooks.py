@@ -604,4 +604,66 @@ effects[effects["segment"] == "all"][["encoder", "treatment", "R_base", "R_treat
 display(dominance)
 display(util.pivot_table(index=["encoder", "model"], columns="measure", values="utilization").round(3))
 display(effects[effects["segment"].isin(["established", "new_item"])][["encoder", "treatment", "segment", "delta", "ci_low", "ci_high"]])''']))
+save("12_yh_image_use.ipynb", nb(
+    "12. 7차 사전 등록 (김유환): 텍스트만 대비 이미지를 함께 쓰는 방식 비교 (새 테스트 주 s4)",
+    "`configs/prereg_yh_image_use.yaml` 대로 실행한다. s4 분할 만들기(처음 한 번, 약 10분) → 튜닝 4회 → 학습 42회(약 20분) → "
+    "분석(점수 합산 포함 약 10분). σ*는 분석 코드가 튜닝 결과에서 자동으로 고른다.",
+    [SETUP, VERIFY,
+     '''# @title 2. 사전 등록 확인 + s4 분할 만들기 (없을 때만, 약 10분)
+from msrs_paper.config import load_yaml
+from msrs_paper import data_prep as dp
+from msrs_paper.utils import read_json, write_manifest
+prereg = load_yaml("prereg_yh_image_use")
+assert prereg["status"] == "final", "prereg_yh_image_use.yaml 확정 · 커밋이 필요합니다"
+if not (paths.split_dir("s4") / "stats.json").exists():
+    tx = dp.load_transactions(paths.raw / "transactions_train.csv")
+    items = dp.load_items(paths).sort_values("idx").reset_index(drop=True)
+    history, vt, tt, stats = dp.build_split(tx, items, cfg["data"]["window_weeks"], cfg["data"]["min_user_purchases"], 4)
+    dp.save_split(paths.split_dir("s4"), history, vt, tt, stats)
+    del tx
+    m = write_manifest(paths)
+    print("s4 분할 생성, 체크섬 목록 갱신:", len(m["files"]), "개 파일")
+stats = read_json(paths.split_dir("s4") / "stats.json")
+print({k: v for k, v in stats.items() if k != "test_cells"})''',
+     '''# @title 3. 진행 현황
+GROUPS = ["YH5_ENC", "YH5_NOISE", "YH5_UME"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+status()''',
+     '''# @title 4. 튜닝 (s4 검증 주, seed 42): 기준 C2 + 이미지 잡음 σ 3개
+import pandas as pd
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_image_use.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+rows = []
+for cond in ["C2", "YH5_N1", "YH5_N2", "YH5_N3"]:
+    info = two_tower.run(cfg, exps, paths, cond, 42, "s4", "tuning", mode="tune", hp_name="h2", log=log)
+    rows.append({"cond": cond, "image_noise": exps["conditions"][cond].get("image_noise", 0.0),
+                 "valid_recall@300": info["valid_recall@300"], "train_seconds": info["train_seconds"]})
+pd.DataFrame(rows)''',
+     '''# @title 5. 학습 42회: 인코더 × 드롭아웃 → 이미지 잡음 → 텍스트만 · 이미지만 (약 20분)
+import time
+t0 = time.time()
+for g in GROUPS:
+    log(f"===== 묶음 {g} =====")
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+    log(f"===== 묶음 {g} 완료 ({(time.time() - t0) / 60:.1f}분 경과) =====")
+status()''',
+     '''# @title 6. 분석: 확증 H12 · H13 · H14 + 텍스트만 대비 표 (약 10분)
+from msrs_paper import analysis_yh5
+confirmatory, methods, contrasts, memo, tuning = analysis_yh5.run(cfg, exps, paths, log=log)
+display(tuning)
+methods[methods["segment"] == "all"][["method", "R", "R_minus_text_only", "ci_low", "ci_high"]]''',
+     '''# @title 7. 탐색: 대비 · 외우기 정도 · 구간별
+display(contrasts[contrasts["segment"] == "all"][["description", "R_a", "R_b", "estimate", "ci_low", "ci_high"]])
+display(memo)
+display(methods[methods["segment"].isin(["established", "new_item"])].pivot_table(
+    index="method", columns="segment", values="R_minus_text_only").round(4))''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
