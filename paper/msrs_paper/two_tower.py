@@ -34,6 +34,7 @@ test_img_scale(추천 때 상품 타워 이미지 블록만 s배), image_control
 
 7차 사전 등록 (prereg_yh_image_use.yaml): image_noise σ(학습 중 이미지 블록에 N(0, σ²) 잡음), 묶음 블록 옵션
 save_vectors(고객 · 상품 벡터 저장, 따로 학습한 모델의 점수 합산용), insample(학습에 포함된 검증 주를 같은 모델로 다시 채점).
+save_model: 가중치(model.pt)와 구조 설정(model_config.json) 저장. load_trained()로 다시 불러온다 (MMR · ONNX 비교용).
 """
 import time
 
@@ -321,7 +322,7 @@ def embed(model, X, flat, offsets, device, chunk=4096):
 
 
 def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print,
-        counterfactual=False, save_vectors=False, insample=False):
+        counterfactual=False, save_vectors=False, insample=False, save_model=False):
     """실험 1회. 드라이브에 run_info.json이 이미 있으면 건너뛴다 (중단 후 이어 돌리기 가능)."""
     import torch
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -407,6 +408,13 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     if vecs is not None:
         np.save(tmp / "user_vectors.npy", vecs[0].astype(np.float16))
         np.save(tmp / "item_vectors.npy", vecs[1].astype(np.float16))
+    if save_model:
+        import torch
+        assert P is None and id_cfg is None, "save_model은 인기도 · ID 입력이 없는 조건 전용"
+        torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, tmp / "model.pt")
+        write_json(tmp / "model_config.json", {"cond": cond, "spec": spec, "seed": seed, "split": split, "group": group,
+                                                "d_user": int(X.shape[1]), "d_item": int(X.shape[1]), "params": p,
+                                                "fusion": (mod_cfg or {}).get("fusion"), "text_dim": (mod_cfg or {}).get("text_dim")})
     write_json(tmp / "run_info.json", info)
     publish_dir(tmp, out_dir)
     log(f"[{name}] 저장 → {out_dir}")
@@ -419,4 +427,27 @@ def run_group(cfg, exps, paths, group, log=print):
             for cond in block["conds"]:
                 run(cfg, exps, paths, cond, seed, block["split"], group, log=log,
                     counterfactual=block.get("counterfactual", False),
-                    save_vectors=block.get("save_vectors", False), insample=block.get("insample", False))
+                    save_vectors=block.get("save_vectors", False), insample=block.get("insample", False),
+                    save_model=block.get("save_model", False))
+
+
+def load_trained(paths, run_dir, device="cpu"):
+    """save_model로 저장한 실행을 다시 불러온다. 반환: (모델, 상품 입력 X, 고객 입력 Uin, users).
+    X: 상품 타워 입력 (상품 idx 순서), Uin: 고객 타워 입력 = 테스트 시작 전 최근 구매 max_hist개의 X 평균 (users.npy 순서)."""
+    import torch
+    from pathlib import Path
+    run_dir = Path(run_dir)
+    mc = read_json(run_dir / "model_config.json")
+    p = mc["params"]
+    model = build_model(mc["d_user"], mc["d_item"], p, fusion=mc.get("fusion"), text_dim=mc.get("text_dim"))
+    model.load_state_dict(torch.load(run_dir / "model.pt", map_location=device))
+    model = model.to(device).eval()
+    X = item_features(paths, mc["spec"], mc["seed"])
+    stats = read_json(paths.split_dir(mc["split"]) / "stats.json")
+    history, _, _ = load_split(paths, mc["split"])
+    history = history[history["t_dat"] < pd.Timestamp(stats["test_start"])]
+    users = np.load(run_dir / "users.npy")
+    flat, offsets, _ = user_history(history, users, p["max_hist"])
+    with torch.no_grad():
+        Uin = mean_features(torch.from_numpy(X).to(device), flat, offsets, device).cpu().numpy()
+    return model, X, Uin, users
