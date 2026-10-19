@@ -168,6 +168,12 @@ groups:
   YH5_EXPORT:
     - {conds: [C2], seeds: [42], split: s4, save_model: true, save_vectors: true}
 
+  # ---- 8차 사전 등록 김유환 (prereg_yh_ume.yaml). 모든 실행 벡터 저장 (앙상블 · UME 계산용)
+  YH6_S2:     # s2 확증: 텍스트만 · 이미지만(Marqo · SigLIP · ResNet) · 함께 학습, 15회
+    - {conds: [C0, C1, C2, YH4_SI, C5], seeds: [42, 43, 44], split: s2, save_vectors: true}
+  YH6_MAIN:   # main 재현: 텍스트만 · 이미지만(Marqo) · 함께 학습, 9회
+    - {conds: [C0, C1, C2], seeds: [42, 43, 44], split: main, save_vectors: true}
+
 # 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
 v2_cells:
   noid_marqo:        {real: [A, C2],  shuffle_global: [A, C3],  shuffle_type: [A, C4],  text_only: [A, C0]}
