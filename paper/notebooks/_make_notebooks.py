@@ -666,4 +666,47 @@ display(contrasts[contrasts["segment"] == "all"][["description", "R_a", "R_b", "
 display(memo)
 display(methods[methods["segment"].isin(["established", "new_item"])].pivot_table(
     index="method", columns="segment", values="R_minus_text_only").round(4))''']))
+save("13_yh_ume.ipynb", nb(
+    "13. 8차 사전 등록 (김유환): 따로 학습 후 점수 합산(UME) 확증 — s2 확증, main 재현",
+    "`configs/prereg_yh_ume.yaml` 대로 실행한다. 학습 24회(벡터 저장, 약 12분) → 앙상블 · 베이스라인 결합 · 분석(약 10~15분).",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 · 진행 현황
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_ume")
+assert prereg["status"] == "final"
+for sp, rel in prereg["hybrid"]["b2_runs"].items():
+    print(sp, "B2 있음:", (paths.root / rel / "candidates.npy").exists())
+GROUPS = ["YH6_S2", "YH6_MAIN"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']}")
+status()''',
+     '''# @title 2. 학습 24회 (벡터 저장, 약 12분)
+import time
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_ume.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+for g in GROUPS:
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+log(f"8차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")
+status()''',
+     '''# @title 3. 분석: 확증 H15 · H16 · H17 + 탐색 대비 (약 10~15분)
+from msrs_paper import analysis_yh6
+confirmatory, table, contrasts, det = analysis_yh6.run(cfg, exps, paths, log=log)
+contrasts[contrasts["segment"] == "all"][["split", "description", "R_a", "R_b", "estimate", "ci_low", "ci_high"]]''',
+     '''# @title 4. 방식별 R과 텍스트만 대비 · 구간별 · 결정성
+display(table[table["segment"] == "all"].pivot_table(index="series", columns="split", values="R").round(4))
+display(table[table["segment"].isin(["established", "new_item"])].pivot_table(
+    index="series", columns=["split", "segment"], values="R_minus_text_only").round(4))
+display(det.groupby(["split", "cond"])["identical"].all())''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
