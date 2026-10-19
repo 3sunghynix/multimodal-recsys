@@ -709,4 +709,27 @@ display(table[table["segment"] == "all"].pivot_table(index="series", columns="sp
 display(table[table["segment"].isin(["established", "new_item"])].pivot_table(
     index="series", columns=["split", "segment"], values="R_minus_text_only").round(4))
 display(det.groupby(["split", "cond"])["identical"].all())''']))
+save("14_yh_slots.ipynb", nb(
+    "14. 9차 사전 등록 (김유환): 베이스라인 + UME 자리 (s4 확증, 학습 없음)",
+    "`configs/prereg_yh_slots.yaml` 대로 실행한다. s4의 B2 계산(약 1분) → 결합 · 분석(약 10분). 7 · 8차의 저장 벡터를 쓴다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 + s4 베이스라인 B2 계산
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+from msrs_paper import baselines
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_slots")
+assert prereg["status"] == "final"
+baselines.run(cfg, paths, "B2", "s4", group="YH7_BASE")
+need = [paths.run_dir("YH5_UME", "s4", f"{c}_seed{s}") / "user_vectors.npy" for c in ("C0", "C1") for s in (42, 43, 44)]
+print(f"준비물 {len(m['files'])}개 일치 · s4 UME 벡터 {sum(f.exists() for f in need)} / 6")''',
+     '''# @title 2. 분석: 확증 H18 · H19 + 자리 수 · 분할별 탐색 (약 10분)
+from msrs_paper import analysis_yh7
+confirmatory, table, contrasts = analysis_yh7.run(cfg, exps, paths)
+table[table["segment"] == "all"].pivot_table(index="series", columns="split", values="R").round(4)''',
+     '''# @title 3. 탐색: 전용 자리 대비 · 구간별
+c = contrasts[contrasts["description"].str.contains(" 20")]
+display(c[c["segment"] == "all"][["split", "description", "estimate", "ci_low", "ci_high"]])
+display(c[c["segment"].isin(["established", "new_item", "sparse"])].pivot_table(
+    index=["split", "description"], columns="segment", values="estimate").round(4))''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
