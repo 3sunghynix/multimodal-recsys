@@ -1,0 +1,57 @@
+# 6차 사전 등록 (김유환): 우세 모달리티 억제 가설과 반사실 이미지 활용도 지표 (s2 분할)
+# 근거: docs/선행연구조사_이미지활용도.md 7절 (H-A, H-B). 모달리티 불균형 연구(OGM-GE, AGM, MILES, BalanceBenchmark)의
+# 공통 처방은 "우세 모달리티의 학습을 늦춘다"이다. 이미지 드롭아웃이 Marqo에서 효과가 있었던 것(4차 확증)이
+# 이 원리 때문이라면, 우세 모달리티가 텍스트인 인코더에서는 이미지 드롭아웃이 아니라 텍스트 드롭아웃이 도움이 되어야 한다.
+# 이 파일의 커밋 시점이 설계 동결 시점이다. 아래 학습 · 분석은 모두 이 커밋 이후에 한다.
+
+status: final
+registered: 2026-10-19
+owner: 김유환
+hypothesis_ids: [YH_dominant_suppression, YH_counterfactual_utilization]
+question: "모달리티 드롭아웃의 효과는 그 모달리티가 우세한 인코더에서만 나타나는가 (우세 모달리티 억제 원리)"
+
+data:
+  split: s2
+disclosure: >
+  s2에서 이미 본 결과: Marqo의 이미지 드롭아웃 0.1 · 0.3 · 0.5 효과(4차), Marqo · SigLIP · ResNet · OpenAI CLIP · LAION의
+  기준 R과 섞은 이미지 기여도(5차), 텍스트만 C0의 R(5차). 이미지 · 텍스트 드롭아웃을 Marqo 외 인코더에 건 결과,
+  이미지만 모델의 s2 결과, 반사실(평균 대체) 활용도는 아직 보지 않았다. 확증 검정은 아직 보지 않은 결과로만 구성한다.
+dominance_prior: >
+  우세 모달리티 예측은 main 1차 결과로 미리 정한다: 이미지만 R이 텍스트만 R(0.0928)보다 높으면 이미지 우세.
+  Marqo 0.1034 → 이미지 우세, OpenAI CLIP 0.0806 · ResNet 0.0745 → 텍스트 우세.
+  범용 SigLIP B/16은 main 이미지만 결과가 없으므로, Marqo의 출발점(같은 구조 · 같은 사전학습)이고 5차에서 Marqo와 같은
+  기여도 수준이었다는 근거로 이미지 우세로 예측한다. 이 예측 자체는 이번 실행의 이미지만 모델로 함께 확인한다(탐색).
+
+model: "ID 없는 Two-Tower, 이어 붙이기, h2. 드롭아웃은 3 · 4차와 같은 구현(학습 중 상품 타워 입력 블록을 학습 쌍마다 확률 p로 0, 배율 보정 없음)"
+runs: "s2, seed 42 · 43 · 44. 인코더 4종(Marqo, 범용 SigLIP B/16, ResNet-50, OpenAI CLIP B/32) × {기준, 이미지 드롭아웃 0.3, 텍스트 드롭아웃 0.3, 이미지만}. 모두 새로 학습(묶음 YH4). 텍스트만은 5차 C0 재사용"
+dropout_p: 0.3   # 4차에서 Marqo 검증 주 1등. 인코더별 재튜닝 없음 (같은 p로 비교)
+
+counterfactual_utilization:   # H-A
+  definition: "U_mod = 1 − R(해당 모달리티 블록을 전체 상품 평균 벡터로 바꿔 추천) / R(원래 추천). 같은 학습 모델, 상품 · 고객 입력 모두 대체"
+  computed_for: "텍스트와 이미지를 함께 쓰는 모든 실행"
+
+measure:
+  primary: "R = 고객별 평균 Recall@300, 구간 all"
+  effect: "Δ(인코더, 처방) = R(처방) − R(기준), seed 평균"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+seeds: [42, 43, 44]
+
+confirmatory:
+  correction: bonferroni   # 2개
+  ci_level: 0.975
+  H10:
+    name: "이미지 드롭아웃은 이미지 우세 인코더에서 더 이롭다"
+    comparison: "Δ(SigLIP, 이미지 드롭아웃 0.3) − Δ(ResNet, 이미지 드롭아웃 0.3)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  H11:
+    name: "텍스트 드롭아웃은 텍스트 우세 인코더에서 더 이롭다"
+    comparison: "Δ(ResNet, 텍스트 드롭아웃 0.3) − Δ(SigLIP, 텍스트 드롭아웃 0.3)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  report_regardless: true
+
+exploratory:
+  - "인코더 4종 × 처방 2종의 Δ와 95% 구간 (OpenAI CLIP은 텍스트 우세 예측, Marqo는 4차 재현)"
+  - "우세 모달리티 확인: 인코더별 이미지만 R − 텍스트만 R (s2)"
+  - "H-A 타당성: 기준 모델의 U_img가 5차의 섞은 이미지 상대 기여도와 같은 순서인지, 드롭아웃 모델에서 U_img · U_txt가 어떻게 변하는지"
+  - "우세 정도(이미지만 R − 텍스트만 R 또는 U_img − U_txt)와 Δ(이미지 드롭아웃) · Δ(텍스트 드롭아웃)의 관계 (인코더 4개 점)"
+  - "구간별(established · sparse · new_item) Δ"
