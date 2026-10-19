@@ -1,0 +1,96 @@
+{
+  "source_folder": "/content/drive/MyDrive/kwangsuk_mmr_onnx/20261019T055148136576Z",
+  "files": [
+    {
+      "path": "EXPERIMENT_SUMMARY.md",
+      "bytes": 2618,
+      "sha256": "61a3c7b71f0fbc7aa04a590fdaed51b893a38da44933b026d9519d208c011998"
+    },
+    {
+      "path": "mmr/bootstrap_settings.json",
+      "bytes": 1735,
+      "sha256": "7379964d8a38cc43a753d0833f361fa05f5477c1c45b0b8dabe6a855fca23281"
+    },
+    {
+      "path": "mmr/full_results.csv",
+      "bytes": 1863,
+      "sha256": "1aacc9d92c15c2292424060cc4bdf2153e86c9ac6759013743f5b9ef52cbcab6"
+    },
+    {
+      "path": "mmr/mmr_tradeoff.pdf",
+      "bytes": 19136,
+      "sha256": "8063282f9b61b854f397e1bfaf488693a4c8882571d78b8091358b9b751e76ae"
+    },
+    {
+      "path": "mmr/mmr_tradeoff.png",
+      "bytes": 151950,
+      "sha256": "680cc00a5e35c86e5c396ca029fefcb5acd0e41d26b1b2eda0505745bed840dc"
+    },
+    {
+      "path": "mmr/paired_bootstrap_estimates.npy",
+      "bytes": 160128,
+      "sha256": "b726c2d8af985a7ff1170d0811a3c4c9f5807d39c5e3bf865115c63768169c3e"
+    },
+    {
+      "path": "mmr/paired_bootstrap_intervals.csv",
+      "bytes": 2064,
+      "sha256": "9eaacbdc34343f17d50f52e8fd97b6f11337c64dc0f32902a3d87d7aa2dd39ad"
+    },
+    {
+      "path": "mmr/pilot_results.csv",
+      "bytes": 1058,
+      "sha256": "f8f5f18b7d4d2ea39c0ce6838bf1fa2fec455a382b286f312789b2972f233d3e"
+    },
+    {
+      "path": "mmr/settings.json",
+      "bytes": 598,
+      "sha256": "ba01b52dae51aae7637f10281788f3aee08446edd9a65dee575db1a454b164a4"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/benchmark_settings.json",
+      "bytes": 1190,
+      "sha256": "b3a6ebe8ac4e436a324a35428219a2c399c5f9e1bdc89c6dbf66eb941c0a13ed"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/export_settings.json",
+      "bytes": 365,
+      "sha256": "c4a14a37d96d31ceb0d22d2ea93d850dd62b49cd0bb829f22a4c31569df82b0d"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/latency_by_round.csv",
+      "bytes": 770,
+      "sha256": "9dd154feece66e51cd0d05586f68937805d85bdd6a01a9fedec280dda6a34f6b"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/latency_raw.csv",
+      "bytes": 273556,
+      "sha256": "4f947128ceb988f0ecfab6ce342e1444c0b7c1b5390002716482ef8fdc610d7d"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/latency_summary.csv",
+      "bytes": 356,
+      "sha256": "c052ec88dec044459d48c641396df86ef691caa817d5508eb332a34b0e562002"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/model_sizes.csv",
+      "bytes": 81,
+      "sha256": "912c1c9b108ca7f56e385d99d2b5f977c35a0882c5a4948288e86ab475053488"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/output_checks.csv",
+      "bytes": 522,
+      "sha256": "fbff07973069f87a4489a4dd9ac0d8d48c5cffbf84879ae91d32994c8d0f5bd4"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/recommendation_check_settings.json",
+      "bytes": 233,
+      "sha256": "fb81731ff889e0b8e59bdbe69ce04b37b3c501cf7f150897659d306baa1a2bd4"
+    },
+    {
+      "path": "onnx/20261019T055939355814Z/recommendation_checks.csv",
+      "bytes": 229,
+      "sha256": "28556bf7147e1cfb2440ae3c55df510901e461d5faf1ee41485085b8648a4990"
+    }
+  ],
+  "excluded": "Model weights, ONNX binaries, customer IDs and per-customer recommendation arrays remain on Drive."
+}

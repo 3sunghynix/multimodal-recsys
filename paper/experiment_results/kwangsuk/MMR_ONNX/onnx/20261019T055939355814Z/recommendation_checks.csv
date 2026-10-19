@@ -1,0 +1,3 @@
+k,customers,mean_set_overlap,exact_order_customer_fraction,pytorch_recall,onnx_recall,recall_difference
+50,1000,1.0,0.994,0.03814765398000692,0.03814765398000692,0.0
+300,1000,1.0,0.908,0.10318143074246015,0.10318143074246015,0.0

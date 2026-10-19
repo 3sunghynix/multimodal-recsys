@@ -1,0 +1,9 @@
+{
+  "sample_seed": 42,
+  "customers": 1000,
+  "catalogue_products": 53232,
+  "max_absolute_score_error": 5.364418029785156e-07,
+  "comparison": "PyTorch FP32 vs ONNX FP32",
+  "item_vectors_recomputed": true,
+  "includes_mmr": false
+}

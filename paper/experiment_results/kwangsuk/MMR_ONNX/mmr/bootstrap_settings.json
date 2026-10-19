@@ -1,0 +1,90 @@
+{
+  "seed": 42,
+  "repetitions": 1000,
+  "confidence_level": 0.95,
+  "baseline": "lambda_1p000",
+  "column_order": [
+    {
+      "condition": "lambda_0p999",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p999",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p995",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p995",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p990",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p990",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p980",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p980",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p950",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p950",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p900",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p900",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p700",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p700",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p500",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p500",
+      "metric": "diversity"
+    },
+    {
+      "condition": "lambda_0p300",
+      "metric": "recall"
+    },
+    {
+      "condition": "lambda_0p300",
+      "metric": "diversity"
+    },
+    {
+      "condition": "score_only_float16_reference",
+      "metric": "recall"
+    },
+    {
+      "condition": "score_only_float16_reference",
+      "metric": "diversity"
+    }
+  ],
+  "interval_type": "pointwise paired customer bootstrap",
+  "analysis_type": "exploratory"
+}
