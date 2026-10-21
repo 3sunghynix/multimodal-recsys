@@ -19,7 +19,7 @@ BROWSERS = [Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),     
 
 CSS = """
 @page { size: A4; margin: 15mm 14mm 15mm 14mm; }
-body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9.2pt; line-height: 1.55; margin: 0; }
+body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.5; margin: 0; }
 .banner { border-bottom: 1px solid #c9c8c2; padding: 0 0 4px; font-size: 7.4pt; color: #52514e; margin-bottom: 8px; text-align: center; }
 .banner p { margin: 2px 0; }
 h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
@@ -35,11 +35,13 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .wide p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
 table { border-collapse: collapse; margin: 0 auto; font-size: 8.2pt; border-top: 1.4px solid #0b0b0b; border-bottom: 1.4px solid #0b0b0b; }
 th, td { padding: 1.6px 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.t3 table { font-size: 7.6pt; }
+.t3 td:nth-child(4) { white-space: normal; }
 th:first-child, td:first-child { text-align: left; padding-left: 4px; }
 th { font-weight: 600; border-bottom: 0.8px solid #0b0b0b; }
 tr.sep td { border-top: 0.6px solid #8a8984; }
 tr.best td { background: #eef3fa; }
-img { width: 100%; }
+img { width: 86%; display: block; margin: 0 auto; }
 .caption { font-size: 7.6pt; color: #333; margin-top: 2px; }
 .refs { font-size: 7.8pt; }
 .refs p { margin: 0 0 2px; }
@@ -69,6 +71,7 @@ def wide_blocks(html):
     """표 · 그림(과 바로 뒤 캡션)을 2단 전체 폭으로."""
     html = re.sub(r"<p>(<strong>표 \d\.</strong>.*?)</p>\s*(<table>.*?</table>)",
                   r'<div class="wide"><p class="tcap">\1</p>\2</div>', html, flags=re.S)
+    html = html.replace('<div class="wide"><p class="tcap"><strong>표 3.', '<div class="wide t3"><p class="tcap"><strong>표 3.')   # 긴 칸만 줄바꿈
     html = re.sub(r"<tr>(\s*<td>(?:텍스트만 × 2|이미지 드롭아웃 \(인코더))", r'<tr class="sep">\1', html)   # 표 안 묶음 구분선
     html = re.sub(r"<tr>(\s*<td><strong>)", r'<tr class="best">\1', html)                              # 강조 행
     html = re.sub(r'<p><img alt="[^"]*" src="([^"]+)" /></p>\s*<p>(<strong>그림 \d\.</strong>.*?)</p>',
