@@ -31,7 +31,7 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .cols h3 { font-size: 9.5pt; margin: 8px 0 3px; break-after: avoid; }
 .cols p { margin: 0 0 5px; }
 .cols ol, .cols ul { margin: 0 0 4px; padding-left: 14px; }
-.wide { column-span: all; margin: 5px 0 6px; break-inside: avoid; }
+.wide { column-span: all; margin: 8px 0 10px; break-inside: avoid; }
 .wide p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
 table { border-collapse: collapse; margin: 0 auto; font-size: 8.2pt; border-top: 1.4px solid #0b0b0b; border-bottom: 1.4px solid #0b0b0b; }
 th, td { padding: 1.6px 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
