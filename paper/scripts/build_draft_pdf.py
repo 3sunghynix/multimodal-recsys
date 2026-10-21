@@ -44,6 +44,7 @@ img { width: 100%; }
 .refs { font-size: 7.8pt; }
 .refs p { margin: 0 0 2px; }
 code { font-size: 8pt; }
+.nw { white-space: nowrap; }
 """
 
 
@@ -88,7 +89,7 @@ def build():
     clean = lambda t: t.replace("\n---\n", "\n")
     refs_html = "".join(f"<p>{markdown.markdown(l.strip())[3:-4]}</p>" for l in refs.strip().splitlines() if l.strip() and l.strip() != "---")
     html = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>{CSS}</style></head><body>
-<h1>{title.lstrip('# ').strip()}</h1>
+<h1>{title.lstrip('# ').strip().replace(': ', ':<br>', 1)}</h1>
 <div class="authors">{authors.strip()}</div>
 <div class="abstract">{md(clean(abstract))}</div>
 <div class="cols">{wide_blocks(md(clean(main)))}<h2>참고문헌</h2><div class="refs">{refs_html}</div></div>
