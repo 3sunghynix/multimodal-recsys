@@ -18,8 +18,8 @@ BROWSERS = [Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),     
             Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")]
 
 CSS = """
-@page { size: A4; margin: 15mm 14mm 15mm 14mm; }
-body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.5; margin: 0; }
+@page { size: A4; margin: 13mm 13mm 13mm 13mm; }
+body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.45; margin: 0; }
 .banner { border-bottom: 1px solid #c9c8c2; padding: 0 0 4px; font-size: 7.4pt; color: #52514e; margin-bottom: 8px; text-align: center; }
 .banner p { margin: 2px 0; }
 h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
@@ -32,7 +32,8 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .cols p { margin: 0 0 5px; }
 .cols ol, .cols ul { margin: 0 0 4px; padding-left: 14px; }
 .wide { column-span: all; margin: 8px 0 10px; break-inside: avoid; }
-.wide p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
+.wide p.tcap, .narrow p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
+.narrow { margin: 6px 0 8px; break-inside: avoid; }
 table { border-collapse: collapse; margin: 0 auto; font-size: 8.2pt; border-top: 1.4px solid #0b0b0b; border-bottom: 1.4px solid #0b0b0b; }
 th, td { padding: 1.6px 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .t3 table { font-size: 7.6pt; }
@@ -41,11 +42,13 @@ th:first-child, td:first-child { text-align: left; padding-left: 4px; }
 th { font-weight: 600; border-bottom: 0.8px solid #0b0b0b; }
 tr.sep td { border-top: 0.6px solid #8a8984; }
 tr.best td { background: #eef3fa; }
-img { width: 86%; display: block; margin: 0 auto; }
+img { width: 74%; display: block; margin: 0 auto; }
 .caption { font-size: 7.6pt; color: #333; margin-top: 2px; }
-.refs { font-size: 7.8pt; }
+.refs { font-size: 7.3pt; }
 .refs p { margin: 0 0 2px; }
 code { font-size: 8pt; }
+.appendix { break-before: page; }
+.appendix h2 { font-size: 10.5pt; margin: 0 0 6px; }
 .nw { white-space: nowrap; }
 """
 
@@ -68,10 +71,12 @@ def md(text):
 
 
 def wide_blocks(html):
-    """표 · 그림(과 바로 뒤 캡션)을 2단 전체 폭으로."""
-    html = re.sub(r"<p>(<strong>표 \d\.</strong>.*?)</p>\s*(<table>.*?</table>)",
-                  r'<div class="wide"><p class="tcap">\1</p>\2</div>', html, flags=re.S)
-    html = html.replace('<div class="wide"><p class="tcap"><strong>표 3.', '<div class="wide t3"><p class="tcap"><strong>표 3.')   # 긴 칸만 줄바꿈
+    """표 · 그림(과 바로 뒤 캡션)을 2단 전체 폭으로. 열 3개 이하 표는 한 단 안에 둔다."""
+    def table_block(m):
+        cls = "narrow" if m.group(2).split("</tr>", 1)[0].count("<th") <= 3 else "wide"
+        return f'<div class="{cls}"><p class="tcap">{m.group(1)}</p>{m.group(2)}</div>'
+    html = re.sub(r"<p>(<strong>표 A?\d\.</strong>.*?)</p>\s*(<table>.*?</table>)", table_block, html, flags=re.S)
+    html = html.replace('<div class="wide"><p class="tcap"><strong>표 A1.', '<div class="wide t3"><p class="tcap"><strong>표 A1.')   # 사전 등록 표: 긴 칸만 줄바꿈
     html = re.sub(r"<tr>(\s*<td>(?:텍스트만 × 2|이미지 드롭아웃 \(인코더))", r'<tr class="sep">\1', html)   # 표 안 묶음 구분선
     html = re.sub(r"<tr>(\s*<td><strong>)", r'<tr class="best">\1', html)                              # 강조 행
     html = re.sub(r'<p><img alt="[^"]*" src="([^"]+)" /></p>\s*<p>(<strong>그림 \d\.</strong>.*?)</p>',
@@ -89,6 +94,7 @@ def build():
     abstract, body = rest.split("## 1. 서론", 1)
     body = "## 1. 서론" + body
     main, refs = body.split("## 참고문헌", 1)
+    refs, appendix = (refs.split("## 부록 A", 1) + [""])[:2]   # 부록은 참고문헌 뒤 새 쪽
     clean = lambda t: t.replace("\n---\n", "\n")
     refs_html = "".join(f"<p>{markdown.markdown(l.strip())[3:-4]}</p>" for l in refs.strip().splitlines() if l.strip() and l.strip() != "---")
     html = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>{CSS}</style></head><body>
@@ -96,6 +102,7 @@ def build():
 <div class="authors">{authors.strip()}</div>
 <div class="abstract">{md(clean(abstract))}</div>
 <div class="cols">{wide_blocks(md(clean(main)))}<h2>참고문헌</h2><div class="refs">{refs_html}</div></div>
+{f'<div class="appendix"><h2>부록 A{appendix.split(chr(10), 1)[0]}</h2>{wide_blocks(md(clean(appendix.split(chr(10), 1)[1].strip().removesuffix('---'))))}</div>' if appendix else ""}
 </body></html>"""
     html = html.replace('src="figures/', f'src="{(DOCS / "figures").as_uri()}/')
     browser = next(b for b in BROWSERS if b.exists())
