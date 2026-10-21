@@ -1,4 +1,4 @@
-"""docs/논문초안.md → docs/논문초안_리뷰용.pdf (논문형 2단 배치, 리뷰 요청은 별도 쪽).
+"""docs/논문초안.md → docs/논문초안_리뷰용.pdf (논문형 2단 배치, 리뷰 요청 절은 PDF에서 제외).
 
 필요: pip install markdown, Chrome (또는 Edge) 헤드리스 인쇄.
 사용 (레포 루트에서): python paper/scripts/build_draft_pdf.py
@@ -32,15 +32,17 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .cols p { margin: 0 0 5px; }
 .cols ol, .cols ul { margin: 0 0 4px; padding-left: 14px; }
 .wide { column-span: all; margin: 5px 0 6px; break-inside: avoid; }
-table { border-collapse: collapse; width: 100%; font-size: 8.2pt; }
-th, td { border-top: 1px solid #c9c8c2; border-bottom: 1px solid #c9c8c2; padding: 2px 5px; text-align: left; }
-th { background: #f0efec; }
+.wide p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
+table { border-collapse: collapse; margin: 0 auto; font-size: 8.2pt; border-top: 1.4px solid #0b0b0b; border-bottom: 1.4px solid #0b0b0b; }
+th, td { padding: 1.6px 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; padding-left: 4px; }
+th { font-weight: 600; border-bottom: 0.8px solid #0b0b0b; }
+tr.sep td { border-top: 0.6px solid #8a8984; }
+tr.best td { background: #eef3fa; }
 img { width: 100%; }
 .caption { font-size: 7.6pt; color: #333; margin-top: 2px; }
 .refs { font-size: 7.8pt; }
 .refs p { margin: 0 0 2px; }
-.review { break-before: page; font-size: 8.8pt; }
-.review h2 { font-size: 11pt; border-bottom: 1px solid #c9c8c2; padding-bottom: 3px; }
 code { font-size: 8pt; }
 """
 
@@ -64,8 +66,10 @@ def md(text):
 
 def wide_blocks(html):
     """표 · 그림(과 바로 뒤 캡션)을 2단 전체 폭으로."""
-    html = re.sub(r"(<p><strong>표 \d\.</strong>.*?</p>\s*<table>.*?</table>(?:\s*<p>.*?</p>)?)",
-                  r'<div class="wide">\1</div>', html, flags=re.S)
+    html = re.sub(r"<p>(<strong>표 \d\.</strong>.*?)</p>\s*(<table>.*?</table>)",
+                  r'<div class="wide"><p class="tcap">\1</p>\2</div>', html, flags=re.S)
+    html = re.sub(r"<tr>(\s*<td>(?:텍스트만 × 2|이미지 드롭아웃 \(인코더))", r'<tr class="sep">\1', html)   # 표 안 묶음 구분선
+    html = re.sub(r"<tr>(\s*<td><strong>)", r'<tr class="best">\1', html)                              # 강조 행
     html = re.sub(r'<p><img alt="[^"]*" src="([^"]+)" /></p>\s*<p>(<strong>그림 \d\.</strong>.*?)</p>',
                   r'<div class="wide"><img src="\1"><p class="caption">\2</p></div>', html, flags=re.S)
     return html
@@ -88,7 +92,6 @@ def build():
 <div class="authors">{authors.strip()}</div>
 <div class="abstract">{md(clean(abstract))}</div>
 <div class="cols">{wide_blocks(md(clean(main)))}<h2>참고문헌</h2><div class="refs">{refs_html}</div></div>
-<div class="review"><h2>리뷰 요청 (팀 검토용, 제출본에서 삭제)</h2>{md(clean(review.split(chr(10), 1)[1]))}</div>
 </body></html>"""
     html = html.replace('src="figures/', f'src="{(DOCS / "figures").as_uri()}/')
     browser = next(b for b in BROWSERS if b.exists())
