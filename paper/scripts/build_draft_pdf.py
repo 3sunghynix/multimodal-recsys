@@ -18,27 +18,27 @@ BROWSERS = [Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),     
             Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")]
 
 CSS = """
-@page { size: A4; margin: 15mm 14mm 16mm 14mm; }
-body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.55; margin: 0; }
-.banner { border: 1px solid #c9c8c2; background: #f6f5f2; padding: 6px 10px; font-size: 7.6pt; color: #52514e; margin-bottom: 12px; }
+@page { size: A4; margin: 15mm 14mm 15mm 14mm; }
+body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9.2pt; line-height: 1.55; margin: 0; }
+.banner { border-bottom: 1px solid #c9c8c2; padding: 0 0 4px; font-size: 7.4pt; color: #52514e; margin-bottom: 8px; text-align: center; }
 .banner p { margin: 2px 0; }
-h1 { font-size: 15.5pt; text-align: center; margin: 4px 0 6px; line-height: 1.35; }
-.authors { text-align: center; color: #52514e; margin-bottom: 10px; }
-.abstract { margin: 0 6mm 10px; font-size: 8.8pt; text-align: justify; }
+h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
+.authors { text-align: center; color: #52514e; margin-bottom: 6px; }
+.abstract { margin: 0 5mm 8px; font-size: 8.9pt; text-align: justify; }
 .abstract h2 { font-size: 10pt; text-align: center; margin: 0 0 4px; }
-.cols { column-count: 2; column-gap: 7mm; text-align: justify; }
-.cols h2 { font-size: 10.5pt; margin: 10px 0 4px; break-after: avoid; }
+.cols { column-count: 2; column-gap: 6mm; text-align: justify; }
+.cols h2 { font-size: 10.5pt; margin: 9px 0 4px; break-after: avoid; }
 .cols h3 { font-size: 9.5pt; margin: 8px 0 3px; break-after: avoid; }
-.cols p { margin: 0 0 6px; }
-.cols ol, .cols ul { margin: 0 0 6px; padding-left: 16px; }
-.wide { column-span: all; margin: 8px 0 10px; break-inside: avoid; }
-table { border-collapse: collapse; width: 100%; font-size: 8pt; }
-th, td { border-top: 1px solid #c9c8c2; border-bottom: 1px solid #c9c8c2; padding: 3px 5px; text-align: left; }
+.cols p { margin: 0 0 5px; }
+.cols ol, .cols ul { margin: 0 0 4px; padding-left: 14px; }
+.wide { column-span: all; margin: 5px 0 6px; break-inside: avoid; }
+table { border-collapse: collapse; width: 100%; font-size: 8.2pt; }
+th, td { border-top: 1px solid #c9c8c2; border-bottom: 1px solid #c9c8c2; padding: 2px 5px; text-align: left; }
 th { background: #f0efec; }
 img { width: 100%; }
-.caption { font-size: 8pt; color: #333; margin-top: 3px; }
-.refs { font-size: 7.6pt; }
-.refs p { margin: 0 0 3px; }
+.caption { font-size: 7.6pt; color: #333; margin-top: 2px; }
+.refs { font-size: 7.8pt; }
+.refs p { margin: 0 0 2px; }
 .review { break-before: page; font-size: 8.8pt; }
 .review h2 { font-size: 11pt; border-bottom: 1px solid #c9c8c2; padding-bottom: 3px; }
 code { font-size: 8pt; }
@@ -84,7 +84,6 @@ def build():
     clean = lambda t: t.replace("\n---\n", "\n")
     refs_html = "".join(f"<p>{markdown.markdown(l.strip())[3:-4]}</p>" for l in refs.strip().splitlines() if l.strip() and l.strip() != "---")
     html = f"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>{CSS}</style></head><body>
-<div class="banner">{md(header)}</div>
 <h1>{title.lstrip('# ').strip()}</h1>
 <div class="authors">{authors.strip()}</div>
 <div class="abstract">{md(clean(abstract))}</div>

@@ -1,7 +1,7 @@
 """논문 초안 그림 (docs/figures/). 수치 출처: docs/실험기록.md 7 · 8차 (seed 3개 평균 Recall@300).
 
 그림 1: 이미지 사용 방식 세 가지의 구조도
-그림 2: 세 테스트 주에서 텍스트만 대비 Recall@300 개선율 (방식별 평균 막대 + 주별 값 표시)
+그림 2: (v0.4에서 제외) 텍스트만 대비 개선율 막대그래프 — fig_improvement()로 다시 만들 수 있음
 
 사용 (레포 루트에서): python paper/scripts/make_draft_figures.py
 """
@@ -79,7 +79,7 @@ def arrow(ax, x0, y0, x1, y1):
 
 
 def fig_fusion():
-    fig, axes = plt.subplots(1, 3, figsize=(7.0, 2.5), dpi=300)
+    fig, axes = plt.subplots(1, 3, figsize=(7.0, 2.1), dpi=300)
     fig.patch.set_facecolor(SURFACE)
     titles = ["(a) 함께 학습", "(b) 따로 학습 후 결합 (UME)", "(c) 앙상블 대조"]
     for ax, t in zip(axes, titles):
@@ -126,6 +126,5 @@ def fig_fusion():
 
 if __name__ == "__main__":
     OUT.mkdir(parents=True, exist_ok=True)
-    fig_fusion()
-    fig_improvement()
+    fig_fusion()   # 그림 2(막대그래프)는 v0.4에서 제외: 표 1과 같은 수치, 3쪽 분량 맞추기
     print("저장:", sorted(p.name for p in OUT.glob("*.png")))
