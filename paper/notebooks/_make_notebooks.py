@@ -780,5 +780,24 @@ display(table[table["segment"] == "all"].pivot_table(index="series", columns=["s
 display(c[c["description"].str.startswith("결합")].pivot_table(index=["split", "description"], columns="metric", values="estimate").round(4))
 display(hits.set_index(["split", "K"]).T.round(3))
 display(memo.groupby(["setting", "cond"])["gap"].mean().unstack().round(4))
-display(c[c["split"] != "s6"][["split", "description", "metric", "estimate", "ci_low", "ci_high"]])''']))
+display(c[c["split"] != "s6"][["split", "description", "metric", "estimate", "ci_low", "ci_high"]])''',
+     '''# @title 6. 김광석 전달용 (분석과 무관): UME 지연 시간용 C0 · C1 가중치 저장 + MAP@12 교차 확인 파일
+import numpy as np
+from msrs_paper import two_tower, metrics
+from msrs_paper.data_prep import load_split
+from msrs_paper.utils import write_json
+two_tower.run_group(cfg, exps, paths, "YH5_EXPORT", log=log)       # s4 · seed 42 · 기본 설정, 이미 있는 C2는 건너뜀
+for c in ("C0", "C1"):
+    same = np.array_equal(np.load(paths.run_dir("YH5_EXPORT", "s4", f"{c}_seed42") / "candidates.npy"),
+                          np.load(paths.run_dir("YH5_UME", "s4", f"{c}_seed42") / "candidates.npy"))
+    print(f"{c}: 논문에 쓴 YH5_UME 실행과 같은 추천 = {same}")
+d = paths.run_dir("YH8_TUNED", "s6", "C2_seed42")
+_, _, tt = load_split(paths, "s6")
+users = np.load(d / "users.npy")
+um = analysis_yh8.user_metrics(np.load(d / "candidates.npy"), metrics.target_rows(users, tt), tt["item_idx"].values, len(users))
+check = {"run": str(d), "targets": str(paths.split_dir("s6") / "test_targets.parquet"),
+         "map12": float(um["map12"][um["has"]].mean()), "n_users": int(um["has"].sum()),
+         "definition": "고객별 AP@12 = (1/min(구매 수, 12)) Σ_{j≤12} 정밀도@j × 적중_j 의 평균. 정답은 (고객, 상품) 중복 제거, 재구매 포함, users.npy의 모든 테스트 고객"}
+write_json(analysis_yh8.results_dir(paths) / "map12_check.json", check)
+check''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
