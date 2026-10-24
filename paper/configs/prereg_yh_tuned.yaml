@@ -1,0 +1,75 @@
+# 10차 사전 등록 (김유환): 규제를 튜닝한 함께 학습 모델 대비 UME, 상위 12개 지표 — 새 테스트 주 s6
+# 근거: 논문 초안 리뷰(김광석, 2026-10-24)의 예상 반론
+#   ① "함께 학습 모델의 설정(규제)이 충분히 좋지 않아서 UME에 진 것 아닌가" — 7 · 8차는 기본 설정(h2)만 썼다
+#   ② "Recall@300은 후보 생성 지표일 뿐, 상위 추천 품질에서도 이득이 유지되는가"
+# s6은 이 파일 커밋 이후에 처음 만드는 분할이라 어떤 모델의 결과도 본 적 없다.
+# 이 파일의 커밋 시점이 설계 동결 시점이다. s6 분할 생성 · 튜닝 · 학습 · 분석은 모두 이 커밋 이후에 한다.
+
+status: final
+registered: 2026-10-24
+owner: 김유환
+hypothesis_ids: [YH_ume_vs_tuned_joint, YH_ume_vs_tuned_joint_ensemble, YH_ume_top12]
+question: >
+  같은 예산으로 규제를 튜닝해도 따로 학습 후 결합(UME)이 함께 학습보다 높은가.
+  후보 300개(Recall@300)뿐 아니라 상위 12개 추천 품질(MAP@12)에서도 그런가.
+
+data:
+  split: s6   # 새 분할: 테스트 2020-08-05 ~ 11 (build_split shift_weeks = 6), 검증 07-29 ~ 08-04
+disclosure: >
+  s6에서 본 결과는 없다(이 커밋 이후 생성). 상품 표는 기존과 같다(2020-03-04 이후 판매된 이미지 있는 상품).
+  s6의 학습 기간은 2020-01-28부터라 처음 약 5주는 상품 표 밖 상품의 구매가 빠진다 (s4는 약 3주, 같은 방식).
+  다른 주(main · s2 · s4)에서는 UME와 함께 학습(기본 설정)의 Recall@300을 이미 봤다. 상위 12개 지표는 어느 주에서도 계산한 적 없다.
+
+model: "ID 없는 Two-Tower. 기본 설정 h2 (hidden 512, emb 128, lr 0.0005, batch 2048, temperature 0.05)"
+tuning:
+  where: "s6 검증 주(07-29 ~ 08-04), seed 42, 검증 Recall@300 (기존 튜닝과 같은 기준)"
+  conds: [C0, C1, C2]   # 텍스트만 · 이미지만(Marqo) · 함께 학습 — 세 조건 모두 같은 격자 (같은 예산)
+  grid:                  # 규제 3축의 전체 조합 18개. 이름: d(드롭아웃 × 10) w(weight decay) e(에폭)
+    dropout: [0.1, 0.3, 0.5]
+    weight_decay: [0.0, 1.0e-5, 1.0e-4]
+    epochs: [4, 8]
+  default: d1_w0_e8     # 기존 설정 (dropout 0.1, weight decay 0, 8 에폭)
+  selection: "조건마다 검증 Recall@300이 가장 높은 설정. 같은 값이면 기본 설정, 그다음 격자 순서. 고른 결과는 results_yh8/tuning.json에 기록"
+runs:
+  tuned: "C0 · C1 · C2 각자 고른 설정 × seed 42 · 43 · 44 (묶음 YH8_TUNED, 벡터 저장, 학습 주 재채점)"
+  default: "C0 · C1 · C2 기본 설정 × seed 42 · 43 · 44 (묶음 YH8_DEF, 벡터 저장, 학습 주 재채점)"
+  baseline: "B2 (재구매 + 인기, 묶음 YH8_BASE)"
+ensemble:
+  method: "모델별 고객 × 전체 상품 점수를 고객별 표준화(z)해 1:1로 더한 상위 300개 (7 · 8차와 같음)"
+  ume: "튜닝한 C0 + 튜닝한 C1, 같은 seed끼리"
+  joint_ensemble: "튜닝한 C2의 서로 다른 seed 쌍 (42, 43) · (43, 44) · (44, 42)"
+seeds: [42, 43, 44]
+measure:
+  recall300: "고객별 평균 Recall@300 (기존과 같음)"
+  map12: "고객별 AP@12 평균. AP@12 = (1 / min(구매 수, 12)) × Σ_{순위 j ≤ 12} 정밀도@j × 적중_j (H&M 대회 지표)"
+  recall12: "고객별 평균 Recall@12 (맞힌 구매 수 / 구매 수)"
+  ndcg12: "고객별 NDCG@12 (구매마다 이득 1, 이상값은 min(구매 수, 12)개)"
+  segments: "all (확증). established · sparse · new_item은 탐색"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+
+confirmatory:   # 모두 s6, 구간 all
+  correction: bonferroni   # 3개
+  ci_level: 0.98333
+  H20:
+    name: "같은 예산으로 튜닝한 함께 학습 대비"
+    comparison: "Recall@300(UME: 튜닝 C0 + 튜닝 C1) − Recall@300(튜닝 C2)"
+    decision: "98.33% 구간 하한 > 0 이면 지지"
+  H21:
+    name: "튜닝 후 모델 수를 맞춘 비교"
+    comparison: "Recall@300(UME: 튜닝 C0 + 튜닝 C1) − Recall@300(튜닝 C2 두 개의 앙상블)"
+    decision: "98.33% 구간 하한 > 0 이면 지지"
+  H22:
+    name: "상위 12개 추천 품질"
+    comparison: "MAP@12(UME: 튜닝 C0 + 튜닝 C1) − MAP@12(튜닝 C2)"
+    decision: "98.33% 구간 하한 > 0 이면 지지"
+  report_regardless: true
+
+exploratory:   # 95% 구간만 보고, 확증 표현 금지
+  - "s6: Recall@12 · NDCG@12 (H20 · H21 대비), 기본 설정 UME − 튜닝 C2, 튜닝 − 기본 (조건별), 구간별"
+  - "s6: 학습 주 재채점 차이(외우기 정도)를 기본 · 튜닝 설정에서 비교"
+  - "점수 결합 방식: z 표준화 합(기준) · 원점수(정규화 내적) 합 · 고객별 min-max 합 · RRF(k = 60) — s6 · main · s2 · s4"
+  - "적중 분해: 텍스트만 · 이미지만 · UME · 함께 학습이 맞힌 구매의 겹침(둘 다 · 한쪽만 · UME가 추가로 맞힘), 같은 모달리티 seed 간 겹침과 비교 — K = 300 · 12"
+  - "main · s2 · s4의 상위 12개 지표 (기본 설정, 저장된 후보 · 벡터 사용, 결과 일부를 이미 본 주라 탐색)"
+  - "s6: B2 280 + UME 20 − B2 (9차 H18의 새 주 재현), B2 280 + 튜닝 C2 20과 비교"
+interpretation_guard: >
+  결합 방식 비교와 적중 분해는 따로 학습의 효과와 점수 보정의 효과를 나눠 보는 참고 자료이며, 원인을 완전히 분리했다고 쓰지 않는다.
