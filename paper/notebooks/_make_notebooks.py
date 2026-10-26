@@ -399,4 +399,62 @@ table''',
 post = analysis_v2.posthoc(cfg, exps, paths, log=log, ctx=ctx)
 display(Image(str(paths.root / "results_v2" / "fig_v2_encoders.png")))
 post[["description", "measure", "a", "b", "estimate", "ci95_low", "ci95_high", "excludes_zero"]]''']))
+save("08_yh_fusion.ipynb", nb(
+    "08. 3차 사전 등록 (김유환): 텍스트 드롭아웃 · 결합 구조",
+    "`configs/prereg_yh_fusion.yaml` 대로 실행한다. 순서: 텍스트 드롭아웃 튜닝(검증 주, 3회) → 묶음 YH_TD(18회) → "
+    "YH_FU(12회) → YH_VD(대조, 18회) → 분석. p*는 분석 코드가 튜닝 결과에서 자동으로 고르므로 중간에 멈추지 않는다.\n\n"
+    "끝난 실행은 건너뛰므로 끊기면 **새 런타임**에서 처음부터 다시 모두 실행하면 된다. 기준 모델(C2 · C3)은 묶음 A 결과를 쓴다.",
+    [SETUP, VERIFY,
+     '''# @title 2. 사전 등록 · 진행 현황
+from msrs_paper.config import load_yaml
+prereg = load_yaml("prereg_yh_fusion")
+assert prereg["status"] == "final", "prereg_yh_fusion.yaml 확정 · 커밋이 필요합니다"
+assert cfg["train"]["tuned"]
+GROUPS = ["YH_TD", "YH_FU", "YH_VD"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+    base = [paths.run_dir("A", "main", f"{c}_seed{s}") / "run_info.json" for c in ("C2", "C3") for s in (42, 43, 44)]
+    print("기준 C2 · C3 (묶음 A):", sum(f.exists() for f in base), "/ 6")
+print(f"사전 등록 {prereg['registered']} · 담당 {prereg['owner']}")
+status()''',
+     '''# @title 3. 텍스트 드롭아웃 튜닝 (검증 주, seed 42, 3회)
+import pandas as pd
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_fusion.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+rows = []
+for cond in ["YH_TD1R", "YH_TD3R", "YH_TD5R"]:
+    info = two_tower.run(cfg, exps, paths, cond, 42, "main", "tuning", mode="tune", hp_name="h2", log=log)
+    rows.append({"cond": cond, "text_dropout": exps["conditions"][cond]["text_dropout"],
+                 "valid_recall@300": info["valid_recall@300"], "train_seconds": info["train_seconds"]})
+pd.DataFrame(rows).sort_values("valid_recall@300", ascending=False)''',
+     '''# @title 4. 학습: YH_TD (18회) → YH_FU (12회) → YH_VD (18회)
+import time
+t0 = time.time()
+for g in GROUPS:
+    log(f"===== 묶음 {g} =====")
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+    log(f"===== 묶음 {g} 완료 ({(time.time() - t0) / 60:.1f}분 경과) =====")
+status()''',
+     '''# @title 5. 분석: 확증 H3 · H4, 조건 × 구간 표, 게이트 α
+from IPython.display import Image, display
+from msrs_paper import analysis_yh
+confirmatory, table, tuning = analysis_yh.run(cfg, exps, paths, log=log)
+display(tuning)
+display(Image(str(paths.root / "results_yh" / "fig_yh.png")))
+table[table["segment"] == "all"][["cell", "R_real", "R_minus_base", "R_minus_base_ci_low", "R_minus_base_ci_high",
+                                  "content_relative", "content_relative_minus_base"]]''',
+     '''# @title 6. 구간별 결과와 게이트 α (탐색적)
+import pandas as pd
+cols = ["cell", "segment", "R_real", "R_minus_base", "content_absolute", "content_absolute_minus_base"]
+display(table[cols])
+display(pd.read_csv(paths.root / "results_yh" / "gate_alpha_summary.csv"))
+print(open(paths.root / "results_yh" / "gate_alpha_corr.json", encoding="utf-8").read())''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

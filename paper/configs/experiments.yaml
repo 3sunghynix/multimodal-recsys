@@ -44,6 +44,24 @@ conditions:
   JS2: {text: true,  image: siglip_b16,   shuffle: null,   id: true, id_setting: i2}
   JS3: {text: true,  image: siglip_b16,   shuffle: global, id: true, id_setting: i2}
   JS4: {text: true,  image: siglip_b16,   shuffle: type,   id: true, id_setting: i2}
+  # 3차 사전 등록 김유환 (prereg_yh_fusion.yaml). text_dropout / image_dropout: 학습 중 해당 블록을 확률 p로 0
+  # fusion: concat(기본) | late | gate
+  YH_TD1R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.1}
+  YH_TD1G: {text: true, image: marqo, shuffle: global, text_dropout: 0.1}
+  YH_TD3R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.3}
+  YH_TD3G: {text: true, image: marqo, shuffle: global, text_dropout: 0.3}
+  YH_TD5R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.5}
+  YH_TD5G: {text: true, image: marqo, shuffle: global, text_dropout: 0.5}
+  YH_VD1R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.1}
+  YH_VD1G: {text: true, image: marqo, shuffle: global, image_dropout: 0.1}
+  YH_VD3R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.3}
+  YH_VD3G: {text: true, image: marqo, shuffle: global, image_dropout: 0.3}
+  YH_VD5R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.5}
+  YH_VD5G: {text: true, image: marqo, shuffle: global, image_dropout: 0.5}
+  YH_LR:   {text: true, image: marqo, shuffle: null,   fusion: late}
+  YH_LG:   {text: true, image: marqo, shuffle: global, fusion: late}
+  YH_GR:   {text: true, image: marqo, shuffle: null,   fusion: gate}
+  YH_GG:   {text: true, image: marqo, shuffle: global, fusion: gate}
 
 # 인코더별 조건 묶음 (분석에서 기여도 계산에 사용)
 families:
@@ -74,6 +92,14 @@ groups:
   G:   # ID 드롭아웃 0 (i2) 민감도, 21회. 선택 설정이 i2면 실행하지 않는다
     - {conds: [J0, J2, J3, J4, JS2, JS3, JS4], seeds: [42, 43, 44], split: main}
 
+  # ---- 3차 사전 등록 김유환 (prereg_yh_fusion.yaml). 08 노트북이 실행한다
+  YH_TD:   # 텍스트 드롭아웃 p 3개 × 진짜 · 전체 섞기, 18회
+    - {conds: [YH_TD1R, YH_TD1G, YH_TD3R, YH_TD3G, YH_TD5R, YH_TD5G], seeds: [42, 43, 44], split: main}
+  YH_FU:   # 결합 구조 late · gate × 진짜 · 전체 섞기, 12회
+    - {conds: [YH_GR, YH_GG, YH_LR, YH_LG], seeds: [42, 43, 44], split: main}
+  YH_VD:   # 이미지 드롭아웃 대조 (탐색적), 18회
+    - {conds: [YH_VD1R, YH_VD1G, YH_VD3R, YH_VD3G, YH_VD5R, YH_VD5G], seeds: [42, 43, 44], split: main}
+
 # 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
 v2_cells:
   noid_marqo:        {real: [A, C2],  shuffle_global: [A, C3],  shuffle_type: [A, C4],  text_only: [A, C0]}
@@ -86,3 +112,15 @@ v2_cells:
   id_siglip_b16:     {real: [F, IS2], shuffle_global: [F, IS3], shuffle_type: [F, IS4], text_only: [F, I0]}
   i2_marqo:          {real: [G, J2],  shuffle_global: [G, J3],  shuffle_type: [G, J4],  text_only: [G, J0]}
   i2_siglip_b16:     {real: [G, JS2], shuffle_global: [G, JS3], shuffle_type: [G, JS4], text_only: [G, J0]}
+
+# 3차 분석 (김유환)의 조건 묶음: (묶음, 조건). base_concat은 기존 묶음 A 재사용
+yh_cells:
+  base_concat: {real: [A, C2],          shuffle_global: [A, C3]}
+  td10:        {real: [YH_TD, YH_TD1R], shuffle_global: [YH_TD, YH_TD1G]}
+  td30:        {real: [YH_TD, YH_TD3R], shuffle_global: [YH_TD, YH_TD3G]}
+  td50:        {real: [YH_TD, YH_TD5R], shuffle_global: [YH_TD, YH_TD5G]}
+  vd10:        {real: [YH_VD, YH_VD1R], shuffle_global: [YH_VD, YH_VD1G]}
+  vd30:        {real: [YH_VD, YH_VD3R], shuffle_global: [YH_VD, YH_VD3G]}
+  vd50:        {real: [YH_VD, YH_VD5R], shuffle_global: [YH_VD, YH_VD5G]}
+  late:        {real: [YH_FU, YH_LR],   shuffle_global: [YH_FU, YH_LG]}
+  gate:        {real: [YH_FU, YH_GR],   shuffle_global: [YH_FU, YH_GG]}

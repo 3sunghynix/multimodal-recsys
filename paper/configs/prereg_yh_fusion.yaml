@@ -1,0 +1,68 @@
+# 3차 사전 등록 (김유환): 텍스트 + 이미지를 어떻게 결합 · 학습해야 이미지가 덜 묻히고 성능이 오르는가
+# 가이드 4-3 (텍스트 모달리티 드롭아웃) · 4-4 (결합 구조). 근거: docs/선행연구조사.md 4절
+# 이 파일의 커밋 시점이 설계 동결 시점이다. 아래 실행은 모두 이 커밋 이후에 한다.
+# 결과와 관계없이 가설, 비교, 측정값, 판정 기준은 바꾸지 않는다.
+
+status: final
+registered: 2026-10-14
+owner: 김유환
+hypothesis_ids: [YH_textdrop, YH_fusion]
+question: "텍스트가 학습을 지배하는 문제(Ye 외 2025)를 학습 방식(텍스트 드롭아웃)이나 결합 구조(게이트 · 늦은 결합)로 완화하면, 텍스트 + 이미지 모델의 성능과 이미지 활용이 함께 오르는가"
+context: >
+  지금까지의 모든 조건은 [텍스트 ⊕ 이미지] 이어 붙이기 + MLP 한 가지였다. 이 질문(결합 · 학습 방식)의 결과는 아직 본 적이 없으므로
+  main 분할에서 사전 등록 후 확증으로 검정한다. 기준 모델은 묶음 A의 C2(텍스트 + Marqo, 이어 붙이기) · C3(전체 섞기)를 재사용한다.
+
+data: {split: main}
+features: {text: text_minilm, image: marqo}
+model:
+  base: "ID 없는 Two-Tower, paper.yaml train.default (h2) 그대로. 구조별 재튜닝 없음"
+  text_dropout: >
+    학습 중 상품 타워 입력의 텍스트 블록(앞 256칸)을 학습 쌍마다 확률 p로 0으로 바꾼다 (배율 보정 없음, ID 드롭아웃과 같은 방식).
+    고객 타워 입력과 추천 시에는 적용하지 않는다.
+  image_dropout: "대조용 (탐색적). 같은 방식으로 이미지 블록(뒤 256칸)을 확률 p로 0으로 바꾼다"
+  fusion:
+    concat: "현재 방식: [텍스트 ⊕ 이미지] → MLP(512) → 128"
+    late: "텍스트 MLP(256→512→128) + 이미지 MLP(256→512→128)의 합"
+    gate: "α = sigmoid(Linear([텍스트 ⊕ 이미지] → 1)), 출력 = α · 이미지 MLP + (1 − α) · 텍스트 MLP. α 초기값 0.5 (bias 0)"
+    towers: "상품 타워와 고객 타워 모두 같은 구조, 파라미터는 따로"
+
+tuning:
+  text_dropout:
+    candidates: [0.1, 0.3, 0.5]
+    select_by: "텍스트 + Marqo 진짜 이미지, seed 42, 검증 주 고객별 평균 Recall@300 1등 (p*)"
+    note: "p = 0(C2) 검증 점수 0.1065는 1차 튜닝 h2 값. p*는 분석 코드가 튜닝 결과 파일에서 자동으로 고른다"
+  fusion: "튜닝 없음 (h2 고정)"
+
+conditions:   # 조건 정의는 experiments.yaml (YH_ 접두어)
+  text_dropout: "p ∈ {0.1, 0.3, 0.5} × {진짜, 전체 섞기}"
+  image_dropout: "p ∈ {0.1, 0.3, 0.5} × {진짜, 전체 섞기} (탐색적 대조)"
+  fusion: "{late, gate} × {진짜, 전체 섞기}"
+seeds: [42, 43, 44]
+
+measure:
+  primary: "R = 고객별 평균 Recall@300, 구간 all (모델 성능 자체)"
+  also_report: "상대 · 절대 내용 기여도 (진짜 − 전체 섞기), 구간 all · established · sparse · new_item"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+  seed_aggregation: "seed별로 계산해 평균, 모든 조건이 같은 부트스트랩 추출 공유"
+
+confirmatory:
+  correction: bonferroni
+  ci_level: 0.975
+  H3:
+    name: "텍스트 드롭아웃"
+    comparison: "R_all(텍스트 + Marqo, 텍스트 드롭아웃 p*) − R_all(C2)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  H4:
+    name: "게이트 결합"
+    comparison: "R_all(텍스트 + Marqo, gate) − R_all(C2)"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  report_regardless: true
+
+exploratory:
+  - "텍스트 드롭아웃 p별 R과 상대 · 절대 내용 기여도 (용량-반응)"
+  - "이미지 드롭아웃 대조: 같은 p에서 텍스트 드롭아웃과 비교 (규제 효과인지 텍스트 가림 효과인지)"
+  - "늦은 결합(late)의 R과 기여도"
+  - "게이트 · 늦은 결합 · 드롭아웃의 내용 기여도 − 이어 붙이기의 내용 기여도"
+  - "구간별(established · sparse · new_item) R과 기여도"
+  - "게이트 α 분포: 상품 판매 횟수 구간 · 상품군 · 외관 그룹 · 시각 특이성(같은 product_type 평균과의 코사인 거리, Marqo 임베딩)별 평균"
+  - "파라미터 수 보고 (구조 간 차이)"

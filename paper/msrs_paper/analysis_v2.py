@@ -52,13 +52,13 @@ def selected_id(cfg):
     return cfg.get("id_model", {}).get("selected")
 
 
-def resolve_cells(exps, cfg, paths):
-    """v2_cells → {cell: {role: [(group, cond, seed, run_dir), ...]}}. 없는 실행은 빠진다.
+def resolve_cells(exps, cfg, paths, cells_key="v2_cells", seeds=None):
+    """v2_cells(또는 cells_key) → {cell: {role: [(group, cond, seed, run_dir), ...]}}. 없는 실행은 빠진다.
     G 묶음이 없고 선택 설정이 i2면, i2 민감도 셀은 F 묶음 결과를 쓴다 (같은 설정)."""
-    seeds = load_yaml("prereg_v2")["measure"]["seeds"]
+    seeds = seeds or load_yaml("prereg_v2")["measure"]["seeds"]
     g_to_f = {"J0": "I0", "J2": "I2", "J3": "I3", "J4": "I4", "JS2": "IS2", "JS3": "IS3", "JS4": "IS4"}
     out = {}
-    for cell, roles in exps["v2_cells"].items():
+    for cell, roles in exps[cells_key].items():
         out[cell] = {}
         for role, (group, cond) in roles.items():
             found = []
@@ -94,13 +94,15 @@ def _q(x, level):
     return float(np.quantile(x, a)), float(np.quantile(x, 1 - a))
 
 
-def build_context(cfg, exps, paths, log=print):
-    """채점 · 부트스트랩까지 공통 계산. 확증 분석(run)과 사후 분석(posthoc)이 같은 추출을 공유한다."""
+def build_context(cfg, exps, paths, log=print, cells_key="v2_cells", out=None):
+    """채점 · 부트스트랩까지 공통 계산. 확증 분석(run)과 사후 분석(posthoc)이 같은 추출을 공유한다.
+    cells_key · out: 다른 분석(예: 3차 yh_cells → results_yh/)이 같은 계산을 재사용할 때만 바꾼다.
+    구간 정의 · 부트스트랩 설정은 prereg_v2와 같다."""
     prereg = load_yaml("prereg_v2")
-    out = results_dir(paths)
+    out = out or results_dir(paths)
     k = cfg["eval"]["k"]
     _, _, targets = load_split(paths, SPLIT)
-    cells = resolve_cells(exps, cfg, paths)
+    cells = resolve_cells(exps, cfg, paths, cells_key)
 
     # 기준 고객 목록 (모든 실행이 같아야 함)
     any_run = next(r[3] for c in cells.values() for runs in c.values() for r in runs)
@@ -168,8 +170,17 @@ def build_context(cfg, exps, paths, log=print):
                 acc.append(diff / R[ic] if kind == "relative" else diff)
         return float(np.mean(pts)), np.mean(boots, axis=0), seeds
 
+    def level(cell, role, seg):
+        """seed 평균 R: (점추정, 부트스트랩 벡터, 사용 seed)."""
+        runs = {s: str(d) for _, _, s, d in cells[cell].get(role, [])}
+        if not runs:
+            return float("nan"), np.full(n_boot, np.nan), []
+        seeds = sorted(runs)
+        idx = [series[(runs[s], seg)] for s in seeds]
+        return float(R_point[idx].mean()), R_boot[idx].mean(axis=0), seeds
+
     return {"prereg": prereg, "out": out, "cells": cells, "masks": masks, "n_boot": n_boot,
-            "contribution": contribution}
+            "contribution": contribution, "level": level}
 
 
 def run(cfg, exps, paths, log=print, ctx=None):
