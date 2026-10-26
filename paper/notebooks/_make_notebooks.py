@@ -521,4 +521,47 @@ cols = ["cell", "segment", "R_real", "R_minus_base", "R_minus_base_ci_low", "R_m
         "R_global_minus_base", "content_relative", "content_absolute"]
 display(table[table["segment"] == "all"][[c for c in cols if c in table.columns]])
 display(table[table["segment"].isin(["established", "new_item"])][["cell", "segment", "R_real", "R_minus_base"]])''']))
+save("10_yh_where.ipynb", nb(
+    "10. 5차 사전 등록 (김유환): 인코더 사전학습 · 희소 상품 확증, 베이스라인 결합 (s2)",
+    "`configs/prereg_yh_where.yaml` 대로 실행한다. 학습 27회 + 베이스라인 B1 · B2(약 12분) → 분석(결합 후보 계산 포함 약 10분). "
+    "C2 · C3 · 이미지 드롭아웃 · 같은 벡터 대조군은 09 노트북(4차) 결과를 재사용한다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_where")
+assert prereg["status"] == "final" and (paths.split_dir("s2") / "stats.json").exists()
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']} · s2 있음")
+
+def status():
+    runs = [(b["split"], c, s) for b in exps["groups"]["YH3_ENC"] for s in b["seeds"] for c in b["conds"]]
+    done = [r for r in runs if (paths.run_dir("YH3_ENC", r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+    base = [paths.run_dir("YH2_BASE", "s2", f"{c}_seed{s}") / "run_info.json" for c in ("C2", "C3") for s in (42, 43, 44)]
+    print(f"묶음 YH3_ENC: 전체 {len(runs)}회, 완료 {len(done)}회 · 재사용 C2 · C3 (YH2_BASE): {sum(f.exists() for f in base)} / 6")
+status()''',
+     '''# @title 2. 학습: 텍스트만 + 인코더 4종 (27회) → 베이스라인 B1 · B2 (s2)
+import time
+from msrs_paper import two_tower, baselines
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_where.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+two_tower.run_group(cfg, exps, paths, "YH3_ENC", log=log)
+for name in ["B1", "B2"]:
+    baselines.run(cfg, paths, name, "s2", group="YH3_BASE", log=log)
+log(f"5차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")
+status()''',
+     '''# @title 3. 분석: 확증 H7 · H8 · H9 + 탐색 대비 (약 10분)
+from msrs_paper import analysis_yh3
+confirmatory, encoders, hybrid, contrasts = analysis_yh3.run(cfg, exps, paths, log=log)
+contrasts[["description", "a", "b", "estimate", "ci_low", "ci_high"]]''',
+     '''# @title 4. 인코더 표 · 결합 스윕 (탐색적)
+cols = ["cell", "segment", "R_real", "R_minus_text_only", "R_minus_const_ctrl", "content_relative", "content_absolute"]
+display(encoders[[c for c in cols if c in encoders.columns]])
+display(hybrid[hybrid["segment"].isin(["all", "new_item"])].pivot_table(
+    index=["model", "n_baseline"], columns="segment", values="R").round(4))''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

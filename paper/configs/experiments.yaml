@@ -133,6 +133,10 @@ groups:
   YH2_CTRL:  # 탐색 0-2: 대조군 종류 × 텍스트 드롭아웃 0 · 0.5, 15회 (섞은 이미지 td 0은 YH2_BASE의 C3)
     - {conds: [YH_TD5G, YH_RN0, YH_RN5, YH_CN0, YH_CN5], seeds: [42, 43, 44], split: s2}
 
+  # ---- 5차 사전 등록 김유환 (prereg_yh_where.yaml). s2 분할. 베이스라인 B1 · B2는 baselines.run(group="YH3_BASE")
+  YH3_ENC:   # 텍스트만 + 인코더 4종 (진짜 · 전체 섞기), 27회
+    - {conds: [C0, L2, L3, C10, C11, S2, S3, C6, C7], seeds: [42, 43, 44], split: s2}
+
 # 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
 v2_cells:
   noid_marqo:        {real: [A, C2],  shuffle_global: [A, C3],  shuffle_type: [A, C4],  text_only: [A, C0]}
@@ -181,3 +185,14 @@ yh2_cells:
   ctrl_rand5:  {real: [YH2_CTRL, YH_RN5]}
   ctrl_const0: {real: [YH2_CTRL, YH_CN0]}
   ctrl_const5: {real: [YH2_CTRL, YH_CN5]}
+
+# 5차 분석 (김유환)의 조건 묶음 — 모두 s2 분할의 실행
+yh3_cells:
+  noid_marqo:      {real: [YH2_BASE, C2], shuffle_global: [YH2_BASE, C3]}
+  noid_laion_b32:  {real: [YH3_ENC, L2],  shuffle_global: [YH3_ENC, L3]}
+  noid_clipb32:    {real: [YH3_ENC, C10], shuffle_global: [YH3_ENC, C11]}
+  noid_siglip_b16: {real: [YH3_ENC, S2],  shuffle_global: [YH3_ENC, S3]}
+  noid_resnet50:   {real: [YH3_ENC, C6],  shuffle_global: [YH3_ENC, C7]}
+  text_only:       {real: [YH3_ENC, C0]}
+  const_ctrl:      {real: [YH2_CTRL, YH_CN0]}
+  imgdrop30:       {real: [YH2_VD, YH_VD3R], shuffle_global: [YH2_VD, YH_VD3G]}
