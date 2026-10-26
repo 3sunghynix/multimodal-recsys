@@ -23,6 +23,10 @@ ID 드롭아웃 p: 학습 중 표본마다 확률 p로 ID 부분 전체를 0으�
 - fusion late: 텍스트 MLP + 이미지 MLP의 합. gate: α · 이미지 MLP + (1 − α) · 텍스트 MLP, α = sigmoid(Linear(입력)).
   상품 · 고객 타워 모두 같은 구조. gate 실행은 상품별 α를 gate_alpha.npy로 저장한다.
 - 이 옵션이 없는 조건은 추가 전과 계산 경로 · 결과가 같다 (합성 데이터로 가중치 · 추천 동일 확인).
+
+4차 사전 등록 (prereg_yh_imgdrop.yaml): dropout_rescale(남은 이미지 블록 1/(1 − p)배), image_elem_dropout(원소 단위),
+test_img_scale(추천 때 상품 타워 이미지 블록만 s배), image_control(random: 상품별 무작위 단위 벡터, const: 모든 상품 같은 벡터).
+3차까지의 조건은 이 옵션 추가 전후 결과가 같다 (합성 데이터 확인).
 """
 import time
 
@@ -39,7 +43,13 @@ def item_features(paths, spec, seed):
     parts = []
     if spec["text"]:
         parts.append(np.load(paths.embeddings / "text_minilm.npy"))
-    if spec["image"]:
+    if spec.get("image_control"):       # 4차 사전 등록 대조군: 상품별 무작위 벡터(random) 또는 모든 상품에 같은 벡터(const)
+        n, dim = np.load(paths.embeddings / f"img_{spec['image']}.npy", mmap_mode="r").shape
+        rng = np.random.default_rng(seed if spec["image_control"] == "random" else 0)
+        img = rng.standard_normal((n, dim) if spec["image_control"] == "random" else (1, dim)).astype(np.float32)
+        img = np.repeat(img, n, axis=0) if spec["image_control"] == "const" else img
+        parts.append(img / np.linalg.norm(img, axis=1, keepdims=True))
+    elif spec["image"]:
         img = np.load(paths.embeddings / f"img_{spec['image']}.npy")
         if spec["shuffle"]:
             perm = np.load(paths.embeddings / f"shuffle_{spec['shuffle']}_seed{seed}.npy")
@@ -168,14 +178,17 @@ def id_settings(cfg, spec, mode, hp_name):
 
 
 def modality_settings(paths, spec):
-    """3차 사전 등록 조건(fusion · text_dropout · image_dropout)의 설정. 해당 없으면 None (기존과 같은 경로)."""
-    keys = ("fusion", "text_dropout", "image_dropout")
+    """3 · 4차 사전 등록 조건의 학습 설정. 해당 없으면 None (기존과 같은 경로).
+    fusion · text_dropout · image_dropout (3차), dropout_rescale · image_elem_dropout (4차)."""
+    keys = ("fusion", "text_dropout", "image_dropout", "image_elem_dropout")
     if not any(spec.get(k) for k in keys):
         return None
     assert spec["text"] and spec["image"] and not spec.get("pop") and not spec.get("id"), spec
     text_dim = int(np.load(paths.embeddings / "text_minilm.npy", mmap_mode="r").shape[1])
     return {"fusion": spec.get("fusion", "concat"), "text_dim": text_dim,
-            "text_dropout": float(spec.get("text_dropout", 0.0)), "image_dropout": float(spec.get("image_dropout", 0.0))}
+            "text_dropout": float(spec.get("text_dropout", 0.0)), "image_dropout": float(spec.get("image_dropout", 0.0)),
+            "dropout_rescale": bool(spec.get("dropout_rescale", False)),
+            "image_elem_dropout": float(spec.get("image_elem_dropout", 0.0))}
 
 
 def n_params(model):
@@ -209,7 +222,8 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=N
     mod = mod_cfg or {}
     model = build_model(X.shape[1], d_item, p, fusion=mod.get("fusion"), text_dim=mod.get("text_dim"))
     td, vd = mod.get("text_dropout", 0.0), mod.get("image_dropout", 0.0)
-    if td or vd:
+    ve, rescale = mod.get("image_elem_dropout", 0.0), mod.get("dropout_rescale", False)
+    if td or vd or ve:
         assert mod.get("text_dim") and P is None and id_cfg is None, "모달리티 드롭아웃은 텍스트 + 이미지 · 인기도 · ID 없음 조건 전용"
         col_text = torch.zeros(X.shape[1], device=device)
         col_text[:mod["text_dim"]] = 1.0
@@ -231,9 +245,15 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=N
             if td:      # 학습 쌍마다 확률 td로 텍스트 블록을 0으로
                 drop = (torch.rand(len(b), 1, device=device) < td).float()
                 item_in = item_in * (1 - drop * col_text)
-            if vd:      # 학습 쌍마다 확률 vd로 이미지 블록을 0으로
+            if vd and not rescale:      # 학습 쌍마다 확률 vd로 이미지 블록을 0으로 (배율 보정 없음, 3차)
                 drop = (torch.rand(len(b), 1, device=device) < vd).float()
                 item_in = item_in * (1 - drop * (1 - col_text))
+            elif vd:                    # 같은 드롭아웃 + 남은 이미지 블록을 1/(1 − vd)배 (배율 보정, 4차)
+                keep = (torch.rand(len(b), 1, device=device) >= vd).float() / (1 - vd)
+                item_in = item_in * (col_text + keep * (1 - col_text))
+            if ve:      # 이미지 블록의 원소마다 확률 ve로 0 (배율 보정 없음, 블록 드롭아웃 비교용, 4차)
+                keep = (torch.rand(len(b), X.shape[1], device=device) >= ve).float()
+                item_in = item_in * (col_text + keep * (1 - col_text))
             if id_cfg is not None:
                 e = model.id_emb(ib)
                 if id_cfg["id_dropout"] > 0:
@@ -254,14 +274,16 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=N
     return model
 
 
-def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None, seen=None):
-    """seen: ID 모델에서 학습 데이터에 등장한 상품 표시 (bool, n_items). 없는 상품의 ID는 0으로 둔다."""
+def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None, seen=None, X_item=None):
+    """seen: ID 모델에서 학습 데이터에 등장한 상품 표시 (bool, n_items). 없는 상품의 ID는 0으로 둔다.
+    X_item: 상품 타워에만 다른 입력을 줄 때 (4차: 추천 시 이미지 배율). 고객 타워는 항상 X의 이력 평균."""
     import torch
     import torch.nn.functional as F
     model.eval()
     with torch.no_grad():
         Xt = torch.from_numpy(X).to(device)
-        item_in = Xt if P_pred is None else torch.cat([Xt, torch.from_numpy(P_pred).to(device)], dim=1)
+        Xi = Xt if X_item is None else torch.from_numpy(X_item).to(device)
+        item_in = Xi if P_pred is None else torch.cat([Xi, torch.from_numpy(P_pred).to(device)], dim=1)
         if hasattr(model, "id_emb"):
             mask = torch.from_numpy(seen.astype(np.float32)).to(device)[:, None]
             item_in = torch.cat([item_in, model.id_emb.weight * mask], dim=1)
@@ -311,7 +333,12 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     users = np.sort(targets["user"].unique())
     flat, offsets, counts = user_history(history, users, p["max_hist"])
     seen = np.bincount(history["item_idx"].values, minlength=X.shape[0]) > 0
-    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred, seen=seen)
+    X_item = None
+    if spec.get("test_img_scale"):     # 4차 대조: 학습은 그대로, 추천 시 상품 타워의 이미지 블록만 s배
+        t_dim = int(np.load(paths.embeddings / "text_minilm.npy", mmap_mode="r").shape[1])
+        X_item = X.copy()
+        X_item[:, t_dim:] *= float(spec["test_img_scale"])
+    cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred, seen=seen, X_item=X_item)
 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
             "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),

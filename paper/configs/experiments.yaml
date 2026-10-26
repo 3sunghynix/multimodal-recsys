@@ -63,6 +63,27 @@ conditions:
   YH_GR:   {text: true, image: marqo, shuffle: null,   fusion: gate}
   YH_GG:   {text: true, image: marqo, shuffle: global, fusion: gate}
 
+  # 4차 사전 등록 김유환 (prereg_yh_imgdrop.yaml), s2 분할에서 실행. 기존 조건(C2 · C3 · YH_VD · YH_TD)도 s2 묶음에서 재사용
+  # dropout_rescale: 남은 이미지 블록 1/(1−p)배 / image_elem_dropout: 원소 단위 / test_img_scale: 추천 때 상품 이미지 s배
+  # image_control: random(상품별 무작위 벡터) | const(모든 상품 같은 벡터), image 값은 차원 참조용
+  YH_VS1R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.1, dropout_rescale: true}
+  YH_VS1G: {text: true, image: marqo, shuffle: global, image_dropout: 0.1, dropout_rescale: true}
+  YH_VS3R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.3, dropout_rescale: true}
+  YH_VS3G: {text: true, image: marqo, shuffle: global, image_dropout: 0.3, dropout_rescale: true}
+  YH_VS5R: {text: true, image: marqo, shuffle: null,   image_dropout: 0.5, dropout_rescale: true}
+  YH_VS5G: {text: true, image: marqo, shuffle: global, image_dropout: 0.5, dropout_rescale: true}
+  YH_VE1R: {text: true, image: marqo, shuffle: null,   image_elem_dropout: 0.1}
+  YH_VE3R: {text: true, image: marqo, shuffle: null,   image_elem_dropout: 0.3}
+  YH_VE5R: {text: true, image: marqo, shuffle: null,   image_elem_dropout: 0.5}
+  YH_TV1R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.1, image_dropout: 0.1}
+  YH_TV3R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.1, image_dropout: 0.3}
+  YH_TV5R: {text: true, image: marqo, shuffle: null,   text_dropout: 0.1, image_dropout: 0.5}
+  YH_TS2R: {text: true, image: marqo, shuffle: null,   test_img_scale: 2.0}
+  YH_RN0:  {text: true, image: marqo, shuffle: null,   image_control: random}
+  YH_RN5:  {text: true, image: marqo, shuffle: null,   image_control: random, text_dropout: 0.5}
+  YH_CN0:  {text: true, image: marqo, shuffle: null,   image_control: const}
+  YH_CN5:  {text: true, image: marqo, shuffle: null,   image_control: const,  text_dropout: 0.5}
+
 # 인코더별 조건 묶음 (분석에서 기여도 계산에 사용)
 families:
   marqo:    {text_only: C0, image_only: C1, real: C2, shuffle_global: C3, shuffle_type: C4}
@@ -100,6 +121,18 @@ groups:
   YH_VD:   # 이미지 드롭아웃 대조 (탐색적), 18회
     - {conds: [YH_VD1R, YH_VD1G, YH_VD3R, YH_VD3G, YH_VD5R, YH_VD5G], seeds: [42, 43, 44], split: main}
 
+  # ---- 4차 사전 등록 김유환 (prereg_yh_imgdrop.yaml). 09 노트북이 실행한다. 모두 s2 분할
+  YH2_BASE:  # 기준 (이어 붙이기) 6회
+    - {conds: [C2, C3], seeds: [42, 43, 44], split: s2}
+  YH2_VD:    # 이미지 드롭아웃 (배율 보정 없음) 18회 — H5
+    - {conds: [YH_VD1R, YH_VD1G, YH_VD3R, YH_VD3G, YH_VD5R, YH_VD5G], seeds: [42, 43, 44], split: s2}
+  YH2_VS:    # 배율 보정 이미지 드롭아웃 18회 — H6
+    - {conds: [YH_VS1R, YH_VS1G, YH_VS3R, YH_VS3G, YH_VS5R, YH_VS5G], seeds: [42, 43, 44], split: s2}
+  YH2_X:     # 탐색: 원소 단위 · 텍스트 + 이미지 드롭아웃 · 추천 때 배율 · H3 재현, 27회
+    - {conds: [YH_VE1R, YH_VE3R, YH_VE5R, YH_TV1R, YH_TV3R, YH_TV5R, YH_TS2R, YH_TD1R, YH_TD1G], seeds: [42, 43, 44], split: s2}
+  YH2_CTRL:  # 탐색 0-2: 대조군 종류 × 텍스트 드롭아웃 0 · 0.5, 15회 (섞은 이미지 td 0은 YH2_BASE의 C3)
+    - {conds: [YH_TD5G, YH_RN0, YH_RN5, YH_CN0, YH_CN5], seeds: [42, 43, 44], split: s2}
+
 # 2차 분석의 조건 묶음: (묶음, 조건). text_only는 상대 기여도에 쓰지 않고 표의 참고값으로만 쓴다
 v2_cells:
   noid_marqo:        {real: [A, C2],  shuffle_global: [A, C3],  shuffle_type: [A, C4],  text_only: [A, C0]}
@@ -124,3 +157,27 @@ yh_cells:
   vd50:        {real: [YH_VD, YH_VD5R], shuffle_global: [YH_VD, YH_VD5G]}
   late:        {real: [YH_FU, YH_LR],   shuffle_global: [YH_FU, YH_LG]}
   gate:        {real: [YH_FU, YH_GR],   shuffle_global: [YH_FU, YH_GG]}
+
+# 4차 분석 (김유환)의 조건 묶음 — 모두 s2 분할의 실행
+yh2_cells:
+  base:   {real: [YH2_BASE, C2],     shuffle_global: [YH2_BASE, C3]}
+  vd10:   {real: [YH2_VD, YH_VD1R],  shuffle_global: [YH2_VD, YH_VD1G]}
+  vd30:   {real: [YH2_VD, YH_VD3R],  shuffle_global: [YH2_VD, YH_VD3G]}
+  vd50:   {real: [YH2_VD, YH_VD5R],  shuffle_global: [YH2_VD, YH_VD5G]}
+  vs10:   {real: [YH2_VS, YH_VS1R],  shuffle_global: [YH2_VS, YH_VS1G]}
+  vs30:   {real: [YH2_VS, YH_VS3R],  shuffle_global: [YH2_VS, YH_VS3G]}
+  vs50:   {real: [YH2_VS, YH_VS5R],  shuffle_global: [YH2_VS, YH_VS5G]}
+  ve10:   {real: [YH2_X, YH_VE1R]}
+  ve30:   {real: [YH2_X, YH_VE3R]}
+  ve50:   {real: [YH2_X, YH_VE5R]}
+  tv10:   {real: [YH2_X, YH_TV1R]}
+  tv30:   {real: [YH2_X, YH_TV3R]}
+  tv50:   {real: [YH2_X, YH_TV5R]}
+  ts2:    {real: [YH2_X, YH_TS2R]}
+  td10:   {real: [YH2_X, YH_TD1R],   shuffle_global: [YH2_X, YH_TD1G]}
+  ctrl_shuf0:  {real: [YH2_BASE, C3]}
+  ctrl_shuf5:  {real: [YH2_CTRL, YH_TD5G]}
+  ctrl_rand0:  {real: [YH2_CTRL, YH_RN0]}
+  ctrl_rand5:  {real: [YH2_CTRL, YH_RN5]}
+  ctrl_const0: {real: [YH2_CTRL, YH_CN0]}
+  ctrl_const5: {real: [YH2_CTRL, YH_CN5]}

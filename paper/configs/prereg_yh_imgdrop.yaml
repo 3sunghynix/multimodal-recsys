@@ -1,0 +1,61 @@
+# 4차 사전 등록 (김유환): 이미지 드롭아웃 재검증과 원인 분리 (노션 2-1a · 2-1b · 2-1c · 2-1d · 0-2)
+# 근거: 3차 결과(docs/실험기록.md 2026-10-14). 이미지 드롭아웃은 3차에서 대조군으로 넣었다가 결과를 보고 찾은 효과라
+# 확증이 아니다. 그래서 한 번도 평가 · 튜닝에 쓰지 않은 새 테스트 주(s2)에서 재검증한다.
+# 이 파일의 커밋 시점이 설계 동결 시점이다. s2 분할 생성과 모든 실행은 이 커밋 이후에 한다.
+
+status: final
+registered: 2026-10-14
+owner: 김유환
+hypothesis_ids: [YH_imgdrop_replication, YH_imgdrop_rescale]
+question: "학습 중 이미지 블록을 가리면(이미지 드롭아웃) 추천 성능이 오르는가, 그 이득은 '테스트 때 이미지가 상대적으로 커지는 효과'가 아닌가"
+
+data:
+  split: s2
+  definition: >
+    data_prep.build_split(shift_weeks=2), 기존 items.parquet(53,232개, idx 순서) 그대로.
+    테스트 2020-09-02 ~ 08, 검증 2020-08-26 ~ 09-01, 학습 그 이전 26주. 상품 집합 밖 상품의 구매는 제외(기존 분할과 같은 규칙).
+  why_new: "main 테스트(09-16 ~ 22) · main 검증 = alt 테스트(09-09 ~ 15)는 이미 결과를 봤다. 09-02 ~ 08은 어떤 평가 · 튜닝에도 쓰지 않았다"
+features: {text: text_minilm, image: marqo}
+model:
+  base: "ID 없는 Two-Tower, 이어 붙이기, paper.yaml train.default (h2). 기준 = s2에서 새로 학습한 C2 · C3"
+  image_dropout: "학습 중 상품 타워 입력의 이미지 블록을 학습 쌍마다 확률 p로 0 (배율 보정 없음, 3차와 같은 코드)"
+  image_dropout_rescaled: "같은 드롭아웃 + 남은 이미지 블록을 1/(1 − p)배 (학습 때 이미지 기댓값 = 추천 때 이미지)"
+  image_elem_dropout: "이미지 블록의 원소마다 확률 p로 0 (배율 보정 없음). 블록 단위 대 원소 단위 비교용"
+  test_img_scale: "학습은 C2와 같고, 추천 때 상품 타워 이미지 블록만 2배 (배율 효과만 흉내)"
+  image_control: "random: 상품마다 무작위 단위 벡터(학습 seed로 생성) / const: 모든 상품에 같은 단위 벡터"
+
+tuning:
+  image_dropout:
+    candidates: [0.1, 0.3, 0.5]
+    select_by: "s2 검증 주, 텍스트 + Marqo 진짜 이미지, seed 42, 고객별 평균 Recall@300 1등 (p*)"
+  image_dropout_rescaled:
+    candidates: [0.1, 0.3, 0.5]
+    select_by: "같은 규칙으로 따로 선택 (p*_rs)"
+  note: "p*, p*_rs는 분석 코드가 튜닝 결과 파일에서 자동으로 고른다. 모든 p를 테스트에서 실행하지만 확증에는 선택값만 쓴다"
+seeds: [42, 43, 44]
+
+measure:
+  primary: "R = 고객별 평균 Recall@300, 구간 all"
+  also_report: "상대 · 절대 내용 기여도 (진짜 − 전체 섞기), 구간 all · established · sparse · new_item"
+  bootstrap: {n: 1000, unit: customer, paired: true, seed: 42}
+
+confirmatory:
+  correction: bonferroni
+  ci_level: 0.975
+  H5:
+    name: "이미지 드롭아웃 재검증"
+    comparison: "R_all(이미지 드롭아웃 p*) − R_all(C2), s2"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지"
+  H6:
+    name: "배율 보정 이미지 드롭아웃"
+    comparison: "R_all(배율 보정 이미지 드롭아웃 p*_rs) − R_all(C2), s2"
+    decision: "차이의 97.5% 부트스트랩 구간 하한 > 0 이면 지지 (지지되면 이득이 배율 효과만은 아님)"
+  report_regardless: true
+
+exploratory:
+  - "2-1c: 블록 드롭아웃 − 원소 단위 드롭아웃 (같은 p)"
+  - "2-1d: 텍스트 드롭아웃 0.1 + 이미지 드롭아웃 p − 이미지 드롭아웃 p"
+  - "배율 대조: 추천 때 이미지 2배(test_img_scale) − C2"
+  - "3차 H3 재현: 텍스트 드롭아웃 0.1 − C2 (s2)"
+  - "0-2: 대조군별 텍스트 드롭아웃 0.5의 효과 = R(대조군, td 0.5) − R(대조군, td 0). 대조군 = 섞은 이미지 · random · const. 예측: 섞은 이미지와 random은 오르고 const는 오르지 않음 (섞은 이미지가 가짜 상품 ID처럼 작동)"
+  - "모든 p의 R · 내용 기여도 (용량-반응), 진짜 · 섞은 이미지 변화 분해"

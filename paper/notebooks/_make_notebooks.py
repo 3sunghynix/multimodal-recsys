@@ -457,4 +457,68 @@ cols = ["cell", "segment", "R_real", "R_minus_base", "content_absolute", "conten
 display(table[cols])
 display(pd.read_csv(paths.root / "results_yh" / "gate_alpha_summary.csv"))
 print(open(paths.root / "results_yh" / "gate_alpha_corr.json", encoding="utf-8").read())''']))
+save("09_yh_imgdrop.ipynb", nb(
+    "09. 4차 사전 등록 (김유환): 이미지 드롭아웃 재검증과 원인 분리 (새 테스트 주 s2)",
+    "`configs/prereg_yh_imgdrop.yaml` 대로 실행한다. 순서: s2 분할 만들기(처음 한 번, 약 10분) → 튜닝 7회 → "
+    "학습 84회(약 40~50분) → 분석. p*는 분석 코드가 튜닝 결과에서 자동으로 고르므로 중간에 멈추지 않는다.\n\n"
+    "끝난 실행은 건너뛰므로 끊기면 **새 런타임**에서 처음부터 다시 모두 실행하면 된다.",
+    [SETUP, VERIFY,
+     '''# @title 2. 사전 등록 확인 + s2 분할 만들기 (없을 때만, 약 10분)
+from msrs_paper.config import load_yaml
+from msrs_paper import data_prep as dp
+from msrs_paper.utils import read_json, write_manifest
+prereg = load_yaml("prereg_yh_imgdrop")
+assert prereg["status"] == "final", "prereg_yh_imgdrop.yaml 확정 · 커밋이 필요합니다"
+assert cfg["train"]["tuned"]
+if not (paths.split_dir("s2") / "stats.json").exists():
+    tx = dp.load_transactions(paths.raw / "transactions_train.csv")
+    items = dp.load_items(paths).sort_values("idx").reset_index(drop=True)
+    history, vt, tt, stats = dp.build_split(tx, items, cfg["data"]["window_weeks"], cfg["data"]["min_user_purchases"], 2)
+    dp.save_split(paths.split_dir("s2"), history, vt, tt, stats)
+    del tx
+    m = write_manifest(paths)
+    print("s2 분할 생성, 체크섬 목록 갱신:", len(m["files"]), "개 파일")
+stats = read_json(paths.split_dir("s2") / "stats.json")
+print({k: v for k, v in stats.items() if k != "test_cells"})''',
+     '''# @title 3. 진행 현황
+GROUPS = ["YH2_BASE", "YH2_VD", "YH2_VS", "YH2_X", "YH2_CTRL"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+print(f"사전 등록 {prereg['registered']} · 담당 {prereg['owner']}")
+status()''',
+     '''# @title 4. 튜닝 (s2 검증 주, seed 42): 이미지 드롭아웃 3회 + 배율 보정 3회 + 기준 C2 1회
+import pandas as pd
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_imgdrop.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+rows = []
+for cond in ["C2", "YH_VD1R", "YH_VD3R", "YH_VD5R", "YH_VS1R", "YH_VS3R", "YH_VS5R"]:
+    info = two_tower.run(cfg, exps, paths, cond, 42, "s2", "tuning", mode="tune", hp_name="h2", log=log)
+    rows.append({"cond": cond, "valid_recall@300": info["valid_recall@300"], "train_seconds": info["train_seconds"]})
+pd.DataFrame(rows)''',
+     '''# @title 5. 학습 84회: 기준 → 이미지 드롭아웃 → 배율 보정 → 탐색 → 대조군 (약 40~50분)
+import time
+t0 = time.time()
+for g in GROUPS:
+    log(f"===== 묶음 {g} =====")
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+    log(f"===== 묶음 {g} 완료 ({(time.time() - t0) / 60:.1f}분 경과) =====")
+status()''',
+     '''# @title 6. 분석: 확증 H5 · H6 + 탐색 대비
+from msrs_paper import analysis_yh2
+confirmatory, table, contrasts, tuning = analysis_yh2.run(cfg, exps, paths, log=log)
+display(tuning)
+contrasts[contrasts["segment"] == "all"][["description", "R_a", "R_b", "estimate", "ci_low", "ci_high"]]''',
+     '''# @title 7. 조건별 R과 진짜 · 섞은 이미지 분해 (탐색적)
+cols = ["cell", "segment", "R_real", "R_minus_base", "R_minus_base_ci_low", "R_minus_base_ci_high",
+        "R_global_minus_base", "content_relative", "content_absolute"]
+display(table[table["segment"] == "all"][[c for c in cols if c in table.columns]])
+display(table[table["segment"].isin(["established", "new_item"])][["cell", "segment", "R_real", "R_minus_base"]])''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
