@@ -35,7 +35,7 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .wide p.tcap, .narrow p.tcap { font-size: 8pt; margin: 0 0 3px; text-align: center; }
 .narrow { margin: 6px 0 8px; break-inside: avoid; }
 table { border-collapse: collapse; margin: 0 auto; font-size: 8.2pt; border-top: 1.4px solid #0b0b0b; border-bottom: 1.4px solid #0b0b0b; }
-th, td { padding: 1.6px 12px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
+th, td { padding: 1.6px 9px; text-align: center; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .t3 table { font-size: 7.6pt; }
 .t3 td:nth-child(4) { white-space: normal; }
 th:first-child, td:first-child { text-align: left; padding-left: 4px; }
