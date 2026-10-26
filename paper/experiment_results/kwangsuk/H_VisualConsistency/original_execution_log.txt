@@ -1,0 +1,93 @@
+Original uploaded notebook stream outputs; not re-executed during recovery. Trailing whitespace trimmed.
+
+--- Original cell 3 ---
+Customers with sufficient same-type history: 21508
+
+Selected customer groups:
+consistency_group
+high    6871
+low     6870
+
+Eligible product-type/history strata: 23
+    product_type history_band  low_threshold  high_threshold  low_users  high_users
+      Bikini top        10-19       0.454399        0.501602         36          36
+      Bikini top          5-9       0.464527        0.530023        252         252
+          Blouse        10-19       0.337361        0.393285         46          46
+          Blouse          5-9       0.328727        0.413142        209         209
+             Bra        10-19       0.515970        0.602100         41          41
+             Bra          5-9       0.506109        0.632206        307         307
+           Dress        10-19       0.338285        0.392703        817         817
+           Dress        20-50       0.345675        0.394154        129         129
+           Dress          5-9       0.335582        0.408635       1602        1602
+           Shirt          5-9       0.452553        0.558463         55          55
+          Shorts        10-19       0.390654        0.450633         54          54
+          Shorts          5-9       0.395670        0.482963        246         246
+           Skirt          5-9       0.417174        0.496695         86          86
+           Socks          5-9       0.491024        0.559164         40          40
+         Sweater          5-9       0.360816        0.440449        139         139
+ Swimwear bottom          5-9       0.567074        0.639638        139         139
+         T-shirt        10-19       0.415694        0.518964        114         114
+         T-shirt          5-9       0.426344        0.546301        626         626
+             Top          5-9       0.279048        0.367902        157         157
+        Trousers        10-19       0.370090        0.451435        386         386
+        Trousers          5-9       0.371493        0.481108       1076        1076
+Underwear bottom          5-9       0.575090        0.658371         95          95
+        Vest top          5-9       0.424782        0.510379        218         219
+
+Mean visual consistency by group:
+consistency_group
+high    0.540314
+low     0.325322
+
+Saved to: /content/drive/MyDrive/kwangsuk_visual_consistency/20261014T082339075594Z
+
+--- Original cell 4 ---
+Customers with qualifying purchases:
+consistency_group              low  high
+product_type     history_band
+Bikini top       10-19           1     2
+                 5-9             3     6
+Blouse           10-19          13    20
+                 5-9            46    40
+Bra              10-19          13     9
+                 5-9            59    45
+Dress            10-19         302   321
+                 20-50          55    71
+                 5-9           395   421
+Shirt            5-9            11    14
+Shorts           10-19           3     1
+                 5-9             9     6
+Skirt            5-9            12    12
+Socks            5-9             1     1
+Sweater          5-9            50    57
+Swimwear bottom  5-9             4     2
+T-shirt          10-19          31    19
+                 5-9           102   117
+Top              5-9            35    36
+Trousers         10-19         161   173
+                 5-9           412   413
+Underwear bottom 5-9            12    23
+Vest top         5-9            21    28
+
+Included strata: 10
+Evaluated customers: 3311
+Evaluated purchases: 5941
+Scoring seed 42...
+Scoring seed 43...
+Scoring seed 44...
+
+Adjusted group results:
+consistency_group  adjusted_real_recall  adjusted_shuffled_recall  adjusted_image_contribution
+              low              0.158188                  0.136134                     0.022054
+             high              0.306022                  0.277368                     0.028654
+
+Per-seed results:
+ seed  low_contribution  high_contribution  difference_high_minus_low
+   42          0.025073           0.047528                   0.022455
+   43          0.010380           0.013132                   0.002752
+   44          0.030708           0.025301                  -0.005407
+
+High minus low contribution: +0.006600
+95% customer-bootstrap interval: [-0.009907, +0.022624]
+
+Saved to: /content/drive/MyDrive/kwangsuk_visual_consistency/20261014T082339075594Z/results/20261014T082606643804Z

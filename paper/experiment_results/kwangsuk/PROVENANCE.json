@@ -1,0 +1,71 @@
+{
+  "original_notebook": "08_text_pattern_analysis.ipynb",
+  "original_notebook_sha256": "0255314485704a442a93aaa37d351d3024ec4c9d2557396b60826c0466bb3a35",
+  "original_zip": "kwangsuk_experiment_results_20261014T111817.zip",
+  "original_zip_sha256": "48e1b60baa0737109887e448cc6e6e30831d864f285c5ac87f36b41505c1bc60",
+  "core_commit": "e6b73dc4a8aee549b4310cf4f3266e373b8632ca",
+  "source_cell_map": {
+    "H_TextMention": {
+      "group_definition": 8,
+      "evaluation": 9
+    },
+    "H_TextMask": {
+      "preparation": "missing; reconstructed",
+      "embeddings": 5,
+      "training": 6,
+      "evaluation": 7
+    },
+    "H_VisualConsistency": {
+      "group_definition": 3,
+      "evaluation": 4
+    }
+  },
+  "recovery_changes": [
+    "Removed unrelated team-analysis, label-generation, download and troubleshooting cells.",
+    "Split into three notebooks and reordered prerequisites.",
+    "Restored missing masking preparation from frozen JSON and conversation.",
+    "Added explicit imports and pinned core checkout.",
+    "Made retraining opt-in and write new reproduction outputs separately.",
+    "Kept archived CSV, JSON, bootstrap arrays and training metadata byte-for-byte."
+  ],
+  "limits": [
+    "Original raw catalog, prediction arrays and customer-level cohort files are not in the ZIP.",
+    "Full H&M replay or training was not performed during local recovery.",
+    "Mask preparation byte identity to historical Parquet requires the original environment."
+  ],
+  "artifact_sha256": {
+    "H_TextMention/results/bootstrap_estimates.npy": "596e754f54babe93276435335859ae37366fad4813890fa43f5404febacb14e3",
+    "H_TextMention/results/group_scores.csv": "e0f2c80b286f92583e39b375d0f1d71b1bdce948b3077ebcbc0a30d250ac2b9f",
+    "H_TextMention/results/purchase_counts.csv": "3f9db20d1639a4841ba42befb3a77f0b770a8d88421f7f061a2bf10696062480",
+    "H_TextMention/results/summary.json": "8a947ddd05f1b1c313d524b10582a8730b95a8fecaf8946149f170461366733e",
+    "H_TextMask/results/bootstrap_estimates.npy": "4f62d275c1a8a9faf303ddacddd03ff05e0eba1cc192df3085ba78b750a125a5",
+    "H_TextMask/results/condition_scores.csv": "ca84f0a310ab7035bcef21daf1cecf20792c5c6c92a0ac9c184df98b56cf78a9",
+    "H_TextMask/results/seed_scores.csv": "41228c1db32d1cec9fd692572bbc4252e01c20fc6eeedf62117fb3a3e5899d52",
+    "H_TextMask/results/summary.json": "c29249da0eb9bd53006477078731ac1785c3125f62a2012274c8bb5f1615252a",
+    "H_TextMask/settings/experiment_plan.json": "16550d35131ae878b4f68bb89b393db4d2e65c2a50717727e0085b7fa0bdec17",
+    "H_TextMask/settings/training_settings.json": "b7116ad54dc259ed92c09d9a3b64ad7419ccba5cc85bd68e1de80f859193ce5a",
+    "H_TextMask/settings/embedding_info.json": "1d42565b6063cffb7d0753facd8e913c68cc7518e9ab317e2d2131920bca9cb1",
+    "H_TextMask/training_metadata/masked/main/C2_seed42/run_info.json": "d59897c9b87c676708c142a539b953a39c4d1dcddab3ec4110ead00242aa7d4c",
+    "H_TextMask/training_metadata/masked/main/C4_seed42/run_info.json": "087833aaa45eb530166dd33abd01408a206346959d1e4d5c1b97e5c54cf4581f",
+    "H_TextMask/training_metadata/masked/main/C2_seed43/run_info.json": "b28f959a9851a9d588d214d5379fbd696934355a43ab1769cb95e503b7454d48",
+    "H_TextMask/training_metadata/masked/main/C4_seed43/run_info.json": "635765790da9f02cc126d7a77197d2c8a139b3a2325d91ae615e35631818a3a6",
+    "H_TextMask/training_metadata/masked/main/C2_seed44/run_info.json": "ed4f5c0cc42aecad1498c84628069ded906e52698c47186870e533e1e6bed95a",
+    "H_TextMask/training_metadata/masked/main/C4_seed44/run_info.json": "b5d3962ed6a922e3f69bdb26eb91cde997de568ef7c4c7258344851936080b1c",
+    "H_TextMask/training_metadata/original/main/C2_seed42/run_info.json": "fac8e6cefc588e7a529f2c57553563634e97ae3e1e8a3c073328dcc35d5d8828",
+    "H_TextMask/training_metadata/original/main/C4_seed42/run_info.json": "2bce53b93e3450fb39ec391e214ddb4a6943835beaa3224d0c80a2a00c626dab",
+    "H_TextMask/training_metadata/original/main/C2_seed43/run_info.json": "ebd3ab006cc063d80e7406eefb051d1de5347474f6b1e9a41cdad1f73a1379cd",
+    "H_TextMask/training_metadata/original/main/C4_seed43/run_info.json": "f4c6f43fa4d6977c3d4c6f700a096826dd2e39141b8ab69d222de065f40c07ed",
+    "H_TextMask/training_metadata/original/main/C2_seed44/run_info.json": "e808b8a6fe33c809727c9f1cbdbe8d2e185339f33d3ee5d96be00353bd024eff",
+    "H_TextMask/training_metadata/original/main/C4_seed44/run_info.json": "8bafe27374dbd8ce41b07acd16b342711ebab860668108451b93aae1c959b120",
+    "H_VisualConsistency/results/bootstrap_estimates.npy": "0cb3b858247642deb3da0b224d2fdf852e0193f16e1283c9eeed5c7c399a6eac",
+    "H_VisualConsistency/results/evaluation_customer_counts.csv": "204d84b74ac26f868f1be0821d6c833266b4e0e8c9a42cdfeae327d5276c038e",
+    "H_VisualConsistency/results/group_summary.csv": "bac409949d136920e27456681caa4554b47b07e05ef6af970267907080eaa91d",
+    "H_VisualConsistency/results/seed_scores.csv": "304d472c2c04410d9ba616f3d159615050965a1f8722e106a4048e13c43534c5",
+    "H_VisualConsistency/results/stratum_scores.csv": "2b235dbc650fc8df90b0a47b76e4be567e6f43e407b4176da662a8d0b83e833a",
+    "H_VisualConsistency/results/stratum_weights.csv": "215db5707d61c96ccca8ee48080f3d5bb88ef94b6e372d73a25a9b4b77358d2b",
+    "H_VisualConsistency/results/summary.json": "898679c896f43fc83c3abfa3cb22df68022a9361ff3bac9429c61d08cc6c7f91",
+    "H_VisualConsistency/settings/analysis_plan.json": "d49a2f737d1648f73a1c4d6f101e936aebde5f9eeb8ffeaea0d3320efbdf4798",
+    "H_VisualConsistency/settings/evaluation_plan.json": "c3ce11e7cb2f11b2744e9fedf075dd281e6ce98f3ce5e7d7bb7bdff639cbef06",
+    "H_VisualConsistency/settings/group_thresholds.csv": "00b87fa1aed349a5b95dc001742bebd7476b3c0ba59c16317c0ea0ed0297ca25"
+  }
+}

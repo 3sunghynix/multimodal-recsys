@@ -1,0 +1,37 @@
+{
+  "status": "exploratory; previously examined main test split",
+  "contrast": "not_mentioned minus mentioned image contribution",
+  "measure": "C2 minus C4; purchase-level Recall@300 within cells",
+  "segment": "pattern products, non_repurchase",
+  "eligible_categories": [
+    "full",
+    "lower",
+    "other",
+    "upper"
+  ],
+  "category_weights": {
+    "full": 0.17620706819313092,
+    "lower": 0.149463776641477,
+    "other": 0.14376216118376398,
+    "upper": 0.5305669939816281
+  },
+  "min_cell_purchases": 300,
+  "seeds": [
+    42,
+    43,
+    44
+  ],
+  "estimate": -0.013112002204634154,
+  "ci95_customer_bootstrap": [
+    -0.020492154514249655,
+    -0.006294516112404247
+  ],
+  "seed_estimates": {
+    "42": -0.009719511455046227,
+    "43": -0.009517326907248802,
+    "44": -0.020099168251607177
+  },
+  "bootstrap_samples": 1000,
+  "bootstrap_seed": 42,
+  "code_commit": "e6b73dc4a8aee549b4310cf4f3266e373b8632ca"
+}

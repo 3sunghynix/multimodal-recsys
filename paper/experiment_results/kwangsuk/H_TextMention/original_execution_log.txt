@@ -1,0 +1,45 @@
+Original uploaded notebook stream outputs; not re-executed during recovery. Trailing whitespace trimmed.
+
+--- Original cell 8 ---
+Test-purchase counts:
+description_group  not_mentioned  mentioned
+pgroup
+accessories                  542        142
+full                        3227        667
+lower                       2994        309
+other                       2759        418
+shoes                         48        100
+upper                       9095       2630
+
+Eligible categories: ['full', 'lower', 'other', 'upper']
+
+Fixed category weights:
+pgroup
+full     0.176207
+lower    0.149464
+other    0.143762
+upper    0.530567
+
+Ready: comparison groups have been defined.
+
+--- Original cell 9 ---
+Reading predictions for seed 42...
+Reading predictions for seed 43...
+Reading predictions for seed 44...
+
+Group results:
+category description_group  purchases  real_recall_at_300  shuffled_recall_at_300  image_contribution
+    full     not_mentioned       3227            0.135523                0.119203            0.016321
+    full         mentioned        667            0.083958                0.049475            0.034483
+   lower     not_mentioned       2994            0.080160                0.070140            0.010020
+   lower         mentioned        309            0.087379                0.046386            0.040992
+   other     not_mentioned       2759            0.048327                0.038782            0.009545
+   other         mentioned        418            0.061404                0.048644            0.012759
+   upper     not_mentioned       9095            0.079238                0.066777            0.012461
+   upper         mentioned       2630            0.073638                0.052091            0.021546
+
+Difference: -0.013112
+95% customer-bootstrap interval: [-0.020492, -0.006295]
+Per-seed differences: {42: -0.009719511455046227, 43: -0.009517326907248802, 44: -0.020099168251607177}
+
+Saved to: /content/drive/MyDrive/kwangseok_text_pattern_results/20261013T014905518765Z

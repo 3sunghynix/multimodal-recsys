@@ -1,0 +1,32 @@
+{
+  "hypothesis_id": "H_TextMask",
+  "status": "exploratory; main test data previously examined",
+  "hypothesis": "Masking pattern-related words increases image contribution.",
+  "text_change": "Replace each regex match with [MASK]",
+  "mask_regex": "\\b(stripe[sd]?|print(ed|s)?|check(ed)?|pattern(ed)?|dot(s|ted)?|polka|floral|flower(s|ed)?|logo|graphic|motif|plaid|tartan|leopard|animal|camouflage|paisley|tie-dye|slogan|embroider(ed|y))\\b",
+  "evaluation": {
+    "split": "main",
+    "segment": "non_repurchase",
+    "appearance": "pattern",
+    "products": "Fixed products whose original text matched the regex",
+    "n_products": 5972,
+    "k": 300,
+    "measure": "Purchase-level Recall@300",
+    "contrast": "(masked real - masked type-shuffled) - (original real - original type-shuffled)"
+  },
+  "training_seeds": [
+    42,
+    43,
+    44
+  ],
+  "bootstrap": {
+    "unit": "customer",
+    "samples": 1000,
+    "seed": 42,
+    "ci": 0.95
+  },
+  "preprocessing": "Fit one PCA on original text embeddings; apply it to both original and masked embeddings; L2-normalize both.",
+  "training": "Retrain all four conditions with the same settings",
+  "code_commit": "e6b73dc4a8aee549b4310cf4f3266e373b8632ca",
+  "created_at": "20261014T073142381530Z"
+}

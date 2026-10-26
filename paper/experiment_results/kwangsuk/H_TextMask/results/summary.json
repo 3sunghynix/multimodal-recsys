@@ -1,0 +1,25 @@
+{
+  "hypothesis_id": "H_TextMask",
+  "status": "exploratory",
+  "measure": "Purchase-level Recall@300",
+  "segment": "Non-repurchase purchases of fixed changed pattern products",
+  "n_fixed_products": 5972,
+  "n_products_with_test_purchases": 1045,
+  "n_test_purchases": 5420,
+  "n_evaluated_customers": 4409,
+  "original_image_contribution": 0.022447724477244774,
+  "masked_image_contribution": 0.02570725707257074,
+  "difference_masked_minus_original": 0.0032595325953259646,
+  "ci95_customer_bootstrap": [
+    -0.001101706988636689,
+    0.007367748016159979
+  ],
+  "training_seeds": [
+    42,
+    43,
+    44
+  ],
+  "bootstrap_samples": 1000,
+  "bootstrap_seed": 42,
+  "interpretation_limit": "Customer bootstrap conditional on the trained models; effects are specific to this keyword-masking procedure."
+}

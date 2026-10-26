@@ -1,0 +1,9 @@
+{
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "n_items": 53232,
+  "raw_dim": 384,
+  "output_dim": 256,
+  "pca_fit": "original text only; shared by both versions",
+  "explained_variance": 0.9861146807670593,
+  "device": "cuda"
+}
