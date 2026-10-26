@@ -27,6 +27,14 @@ ID 드롭아웃 p: 학습 중 표본마다 확률 p로 ID 부분 전체를 0으�
 4차 사전 등록 (prereg_yh_imgdrop.yaml): dropout_rescale(남은 이미지 블록 1/(1 − p)배), image_elem_dropout(원소 단위),
 test_img_scale(추천 때 상품 타워 이미지 블록만 s배), image_control(random: 상품별 무작위 단위 벡터, const: 모든 상품 같은 벡터).
 3차까지의 조건은 이 옵션 추가 전후 결과가 같다 (합성 데이터 확인).
+
+6차 사전 등록 (prereg_yh_balance.yaml): 묶음 블록에 counterfactual: true면, 학습한 같은 모델로 이미지(또는 텍스트) 블록을
+전체 상품 평균 벡터로 바꿔 한 번 더 추천해 candidates_cf_img.npy / candidates_cf_txt.npy로 저장한다 (활용도 지표).
+원래 추천(candidates.npy)은 바뀌지 않는다.
+
+7차 사전 등록 (prereg_yh_image_use.yaml): image_noise σ(학습 중 이미지 블록에 N(0, σ²) 잡음), 묶음 블록 옵션
+save_vectors(고객 · 상품 벡터 저장, 따로 학습한 모델의 점수 합산용), insample(학습에 포함된 검증 주를 같은 모델로 다시 채점).
+save_model: 가중치(model.pt)와 구조 설정(model_config.json) 저장. load_trained()로 다시 불러온다 (MMR · ONNX 비교용).
 """
 import time
 
@@ -180,7 +188,7 @@ def id_settings(cfg, spec, mode, hp_name):
 def modality_settings(paths, spec):
     """3 · 4차 사전 등록 조건의 학습 설정. 해당 없으면 None (기존과 같은 경로).
     fusion · text_dropout · image_dropout (3차), dropout_rescale · image_elem_dropout (4차)."""
-    keys = ("fusion", "text_dropout", "image_dropout", "image_elem_dropout")
+    keys = ("fusion", "text_dropout", "image_dropout", "image_elem_dropout", "image_noise")
     if not any(spec.get(k) for k in keys):
         return None
     assert spec["text"] and spec["image"] and not spec.get("pop") and not spec.get("id"), spec
@@ -188,7 +196,8 @@ def modality_settings(paths, spec):
     return {"fusion": spec.get("fusion", "concat"), "text_dim": text_dim,
             "text_dropout": float(spec.get("text_dropout", 0.0)), "image_dropout": float(spec.get("image_dropout", 0.0)),
             "dropout_rescale": bool(spec.get("dropout_rescale", False)),
-            "image_elem_dropout": float(spec.get("image_elem_dropout", 0.0))}
+            "image_elem_dropout": float(spec.get("image_elem_dropout", 0.0)),
+            "image_noise": float(spec.get("image_noise", 0.0))}
 
 
 def n_params(model):
@@ -223,7 +232,8 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=N
     model = build_model(X.shape[1], d_item, p, fusion=mod.get("fusion"), text_dim=mod.get("text_dim"))
     td, vd = mod.get("text_dropout", 0.0), mod.get("image_dropout", 0.0)
     ve, rescale = mod.get("image_elem_dropout", 0.0), mod.get("dropout_rescale", False)
-    if td or vd or ve:
+    vn = mod.get("image_noise", 0.0)
+    if td or vd or ve or vn:
         assert mod.get("text_dim") and P is None and id_cfg is None, "모달리티 드롭아웃은 텍스트 + 이미지 · 인기도 · ID 없음 조건 전용"
         col_text = torch.zeros(X.shape[1], device=device)
         col_text[:mod["text_dim"]] = 1.0
@@ -254,6 +264,8 @@ def train(X, samples, p, seed, device, log=print, P=None, id_cfg=None, mod_cfg=N
             if ve:      # 이미지 블록의 원소마다 확률 ve로 0 (배율 보정 없음, 블록 드롭아웃 비교용, 4차)
                 keep = (torch.rand(len(b), X.shape[1], device=device) >= ve).float()
                 item_in = item_in * (col_text + keep * (1 - col_text))
+            if vn:      # 이미지 블록에 N(0, vn²) 잡음 (7차)
+                item_in = item_in + torch.randn(len(b), X.shape[1], device=device) * vn * (1 - col_text)
             if id_cfg is not None:
                 e = model.id_emb(ib)
                 if id_cfg["id_dropout"] > 0:
@@ -296,7 +308,21 @@ def predict(model, X, flat, offsets, k, device, chunk=4096, P_pred=None, seen=No
     return np.concatenate(out)
 
 
-def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print):
+def embed(model, X, flat, offsets, device, chunk=4096):
+    """정규화된 고객 · 상품 벡터 (U: 고객 수 × d, V: 상품 수 × d). 콘텐츠 입력만 쓰는 모델용 (7차 UME)."""
+    import torch
+    import torch.nn.functional as F
+    model.eval()
+    with torch.no_grad():
+        Xt = torch.from_numpy(X).to(device)
+        V = F.normalize(model.item(Xt), dim=1)
+        Uin = mean_features(Xt, flat, offsets, device)
+        U = torch.cat([F.normalize(model.user(Uin[s:s + chunk]), dim=1) for s in range(0, len(Uin), chunk)])
+    return U.cpu().numpy(), V.cpu().numpy()
+
+
+def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print,
+        counterfactual=False, save_vectors=False, insample=False, save_model=False):
     """실험 1회. 드라이브에 run_info.json이 이미 있으면 건너뛴다 (중단 후 이어 돌리기 가능)."""
     import torch
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -339,15 +365,35 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
         X_item = X.copy()
         X_item[:, t_dim:] *= float(spec["test_img_scale"])
     cands = predict(model, X, flat, offsets, cfg["eval"]["k"], device, P_pred=P_pred, seen=seen, X_item=X_item)
+    cf = {}
+    if counterfactual and spec["text"] and spec.get("image") and P is None and not spec.get("id"):
+        # 6차: 한 모달리티 블록을 전체 상품 평균으로 바꿔 다시 추천 (상품 · 고객 입력 모두). 같은 모델에서 활용도를 잰다
+        t_dim = int(np.load(paths.embeddings / "text_minilm.npy", mmap_mode="r").shape[1])
+        for tag, sl in (("img", slice(t_dim, None)), ("txt", slice(0, t_dim))):
+            Xc = X.copy()
+            Xc[:, sl] = X[:, sl].mean(axis=0, keepdims=True)
+            cf[tag] = predict(model, Xc, flat, offsets, cfg["eval"]["k"], device)
+
+    extra = {}
+    if insample and mode == "final":
+        # 7차: 같은 모델로 학습에 포함된 마지막 주(검증 주)를 다시 채점 → 학습 주 대비 테스트 주 성능 차이(외우기 정도)
+        vstart = pd.Timestamp(stats["valid_start"])
+        users_v = np.sort(valid_targets["user"].unique())
+        flat_v, off_v, _ = user_history(history[history["t_dat"] < vstart], users_v, p["max_hist"])
+        cands_v = predict(model, X, flat_v, off_v, cfg["eval"]["k"], device)
+        extra["insample_recall@300"] = metrics.recall_user_mean(cands_v, users_v, valid_targets, cfg["eval"]["k"])
+        extra["test_recall@300"] = metrics.recall_user_mean(cands, users, targets, cfg["eval"]["k"])
+        log(f"[{name}] 학습 주 R {extra['insample_recall@300']:.4f} · 테스트 주 R {extra['test_recall@300']:.4f}")
+    vecs = embed(model, X, flat, offsets, device) if save_vectors and P is None and id_cfg is None else None
 
     info = {"name": name, "cond": cond, "spec": spec, "seed": seed, "split": split, "group": group, "mode": mode,
             "hp_name": hp_name, "params": p, "n_items": int(X.shape[0]),
             "input_dim": int(X.shape[1]) + (0 if P is None else P.shape[2]) + (0 if id_cfg is None else id_cfg["id_dim"]),
-            "id_setting": id_name, "id_cfg": id_cfg, "mod_cfg": mod_cfg, "n_params": n_params(model),
+            "id_setting": id_name, "id_cfg": id_cfg, "mod_cfg": mod_cfg, "n_params": n_params(model), "counterfactual": sorted(cf),
             "n_seen_items": int(seen.sum()),
             "n_train_pairs": int(len(samples["pair_key"])), "n_users": int(len(users)),
             "users_without_history": int((counts == 0).sum()), "train_seconds": round(time.time() - t0, 1),
-            "created_at": now(), **environment_info()}
+            **extra, "saved_vectors": vecs is not None, "created_at": now(), **environment_info()}
     if mode == "tune":
         info["valid_recall@300"] = metrics.recall_user_mean(cands, users, targets, cfg["eval"]["k"])
         log(f"[{name}] valid Recall@300 = {info['valid_recall@300']:.4f}")
@@ -356,7 +402,19 @@ def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, 
     if mod_cfg and mod_cfg.get("fusion") == "gate":      # 상품별 이미지 가중치 α (탐색 분석용)
         np.save(tmp / "gate_alpha.npy", gate_alpha(model, X, device))
     np.save(tmp / "candidates.npy", cands.astype(np.int32))
+    for tag, c in cf.items():
+        np.save(tmp / f"candidates_cf_{tag}.npy", c.astype(np.int32))
     np.save(tmp / "users.npy", users.astype(np.int64))
+    if vecs is not None:
+        np.save(tmp / "user_vectors.npy", vecs[0].astype(np.float16))
+        np.save(tmp / "item_vectors.npy", vecs[1].astype(np.float16))
+    if save_model:
+        import torch
+        assert P is None and id_cfg is None, "save_model은 인기도 · ID 입력이 없는 조건 전용"
+        torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()}, tmp / "model.pt")
+        write_json(tmp / "model_config.json", {"cond": cond, "spec": spec, "seed": seed, "split": split, "group": group,
+                                                "d_user": int(X.shape[1]), "d_item": int(X.shape[1]), "params": p,
+                                                "fusion": (mod_cfg or {}).get("fusion"), "text_dim": (mod_cfg or {}).get("text_dim")})
     write_json(tmp / "run_info.json", info)
     publish_dir(tmp, out_dir)
     log(f"[{name}] 저장 → {out_dir}")
@@ -367,4 +425,29 @@ def run_group(cfg, exps, paths, group, log=print):
     for block in exps["groups"][group]:
         for seed in block["seeds"]:
             for cond in block["conds"]:
-                run(cfg, exps, paths, cond, seed, block["split"], group, log=log)
+                run(cfg, exps, paths, cond, seed, block["split"], group, log=log,
+                    counterfactual=block.get("counterfactual", False),
+                    save_vectors=block.get("save_vectors", False), insample=block.get("insample", False),
+                    save_model=block.get("save_model", False))
+
+
+def load_trained(paths, run_dir, device="cpu"):
+    """save_model로 저장한 실행을 다시 불러온다. 반환: (모델, 상품 입력 X, 고객 입력 Uin, users).
+    X: 상품 타워 입력 (상품 idx 순서), Uin: 고객 타워 입력 = 테스트 시작 전 최근 구매 max_hist개의 X 평균 (users.npy 순서)."""
+    import torch
+    from pathlib import Path
+    run_dir = Path(run_dir)
+    mc = read_json(run_dir / "model_config.json")
+    p = mc["params"]
+    model = build_model(mc["d_user"], mc["d_item"], p, fusion=mc.get("fusion"), text_dim=mc.get("text_dim"))
+    model.load_state_dict(torch.load(run_dir / "model.pt", map_location=device))
+    model = model.to(device).eval()
+    X = item_features(paths, mc["spec"], mc["seed"])
+    stats = read_json(paths.split_dir(mc["split"]) / "stats.json")
+    history, _, _ = load_split(paths, mc["split"])
+    history = history[history["t_dat"] < pd.Timestamp(stats["test_start"])]
+    users = np.load(run_dir / "users.npy")
+    flat, offsets, _ = user_history(history, users, p["max_hist"])
+    with torch.no_grad():
+        Uin = mean_features(torch.from_numpy(X).to(device), flat, offsets, device).cpu().numpy()
+    return model, X, Uin, users

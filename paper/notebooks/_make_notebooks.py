@@ -564,4 +564,172 @@ cols = ["cell", "segment", "R_real", "R_minus_text_only", "R_minus_const_ctrl", 
 display(encoders[[c for c in cols if c in encoders.columns]])
 display(hybrid[hybrid["segment"].isin(["all", "new_item"])].pivot_table(
     index=["model", "n_baseline"], columns="segment", values="R").round(4))''']))
+save("11_yh_balance.ipynb", nb(
+    "11. 6차 사전 등록 (김유환): 우세 모달리티 억제 + 반사실 이미지 활용도 (s2)",
+    "`configs/prereg_yh_balance.yaml` 대로 실행한다. 인코더 4종 × {기준, 이미지 드롭아웃, 텍스트 드롭아웃, 이미지만} 48회(약 20~25분, "
+    "평균 대체 추천 포함) → 분석(약 10분). 텍스트만(C0)은 5차(10 노트북) 결과를 재사용한다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 · 진행 현황
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_balance")
+assert prereg["status"] == "final" and (paths.split_dir("s2") / "stats.json").exists()
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']}")
+def status():
+    b = exps["groups"]["YH4"][0]
+    runs = [(c, s) for s in b["seeds"] for c in b["conds"]]
+    done = [r for r in runs if (paths.run_dir("YH4", "s2", f"{r[0]}_seed{r[1]}") / "run_info.json").exists()]
+    c0 = [paths.run_dir("YH3_ENC", "s2", f"C0_seed{s}") / "run_info.json" for s in (42, 43, 44)]
+    print(f"묶음 YH4: 전체 {len(runs)}회, 완료 {len(done)}회 · 재사용 텍스트만 C0 (YH3_ENC): {sum(f.exists() for f in c0)} / 3")
+status()''',
+     '''# @title 2. 학습 48회 (평균 대체 추천 포함, 약 20~25분)
+import time
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_balance.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+two_tower.run_group(cfg, exps, paths, "YH4", log=log)
+log(f"6차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")
+status()''',
+     '''# @title 3. 분석: 확증 H10 · H11 + 인코더 × 처방 효과 (약 10분)
+from msrs_paper import analysis_yh4
+confirmatory, effects, dominance, util = analysis_yh4.run(cfg, exps, paths, log=log)
+effects[effects["segment"] == "all"][["encoder", "treatment", "R_base", "R_treat", "delta", "ci_low", "ci_high"]]''',
+     '''# @title 4. 우세 모달리티 · 반사실 활용도 · 구간별 효과 (탐색적)
+display(dominance)
+display(util.pivot_table(index=["encoder", "model"], columns="measure", values="utilization").round(3))
+display(effects[effects["segment"].isin(["established", "new_item"])][["encoder", "treatment", "segment", "delta", "ci_low", "ci_high"]])''']))
+save("12_yh_image_use.ipynb", nb(
+    "12. 7차 사전 등록 (김유환): 텍스트만 대비 이미지를 함께 쓰는 방식 비교 (새 테스트 주 s4)",
+    "`configs/prereg_yh_image_use.yaml` 대로 실행한다. s4 분할 만들기(처음 한 번, 약 10분) → 튜닝 4회 → 학습 42회(약 20분) → "
+    "분석(점수 합산 포함 약 10분). σ*는 분석 코드가 튜닝 결과에서 자동으로 고른다.",
+    [SETUP, VERIFY,
+     '''# @title 2. 사전 등록 확인 + s4 분할 만들기 (없을 때만, 약 10분)
+from msrs_paper.config import load_yaml
+from msrs_paper import data_prep as dp
+from msrs_paper.utils import read_json, write_manifest
+prereg = load_yaml("prereg_yh_image_use")
+assert prereg["status"] == "final", "prereg_yh_image_use.yaml 확정 · 커밋이 필요합니다"
+if not (paths.split_dir("s4") / "stats.json").exists():
+    tx = dp.load_transactions(paths.raw / "transactions_train.csv")
+    items = dp.load_items(paths).sort_values("idx").reset_index(drop=True)
+    history, vt, tt, stats = dp.build_split(tx, items, cfg["data"]["window_weeks"], cfg["data"]["min_user_purchases"], 4)
+    dp.save_split(paths.split_dir("s4"), history, vt, tt, stats)
+    del tx
+    m = write_manifest(paths)
+    print("s4 분할 생성, 체크섬 목록 갱신:", len(m["files"]), "개 파일")
+stats = read_json(paths.split_dir("s4") / "stats.json")
+print({k: v for k, v in stats.items() if k != "test_cells"})''',
+     '''# @title 3. 진행 현황
+GROUPS = ["YH5_ENC", "YH5_NOISE", "YH5_UME"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+status()''',
+     '''# @title 4. 튜닝 (s4 검증 주, seed 42): 기준 C2 + 이미지 잡음 σ 3개
+import pandas as pd
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_image_use.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+rows = []
+for cond in ["C2", "YH5_N1", "YH5_N2", "YH5_N3"]:
+    info = two_tower.run(cfg, exps, paths, cond, 42, "s4", "tuning", mode="tune", hp_name="h2", log=log)
+    rows.append({"cond": cond, "image_noise": exps["conditions"][cond].get("image_noise", 0.0),
+                 "valid_recall@300": info["valid_recall@300"], "train_seconds": info["train_seconds"]})
+pd.DataFrame(rows)''',
+     '''# @title 5. 학습 42회: 인코더 × 드롭아웃 → 이미지 잡음 → 텍스트만 · 이미지만 (약 20분)
+import time
+t0 = time.time()
+for g in GROUPS:
+    log(f"===== 묶음 {g} =====")
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+    log(f"===== 묶음 {g} 완료 ({(time.time() - t0) / 60:.1f}분 경과) =====")
+status()''',
+     '''# @title 6. 분석: 확증 H12 · H13 · H14 + 텍스트만 대비 표 (약 10분)
+from msrs_paper import analysis_yh5
+confirmatory, methods, contrasts, memo, tuning = analysis_yh5.run(cfg, exps, paths, log=log)
+display(tuning)
+methods[methods["segment"] == "all"][["method", "R", "R_minus_text_only", "ci_low", "ci_high"]]''',
+     '''# @title 7. 탐색: 대비 · 외우기 정도 · 구간별
+display(contrasts[contrasts["segment"] == "all"][["description", "R_a", "R_b", "estimate", "ci_low", "ci_high"]])
+display(memo)
+display(methods[methods["segment"].isin(["established", "new_item"])].pivot_table(
+    index="method", columns="segment", values="R_minus_text_only").round(4))''']))
+save("13_yh_ume.ipynb", nb(
+    "13. 8차 사전 등록 (김유환): 따로 학습 후 점수 합산(UME) 확증 — s2 확증, main 재현",
+    "`configs/prereg_yh_ume.yaml` 대로 실행한다. 학습 24회(벡터 저장, 약 12분) → 앙상블 · 베이스라인 결합 · 분석(약 10~15분).",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 · 진행 현황
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_ume")
+assert prereg["status"] == "final"
+for sp, rel in prereg["hybrid"]["b2_runs"].items():
+    print(sp, "B2 있음:", (paths.root / rel / "candidates.npy").exists())
+GROUPS = ["YH6_S2", "YH6_MAIN"]
+def status():
+    for g in GROUPS:
+        runs = [(b["split"], c, s) for b in exps["groups"][g] for s in b["seeds"] for c in b["conds"]]
+        done = [r for r in runs if (paths.run_dir(g, r[0], f"{r[1]}_seed{r[2]}") / "run_info.json").exists()]
+        print(f"묶음 {g}: 전체 {len(runs)}회, 완료 {len(done)}회")
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']}")
+status()''',
+     '''# @title 2. 학습 24회 (벡터 저장, 약 12분)
+import time
+from msrs_paper import two_tower
+from msrs_paper.utils import now
+log_file = paths.logs / "yh_ume.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")
+t0 = time.time()
+for g in GROUPS:
+    two_tower.run_group(cfg, exps, paths, g, log=log)
+log(f"8차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")
+status()''',
+     '''# @title 3. 분석: 확증 H15 · H16 · H17 + 탐색 대비 (약 10~15분)
+from msrs_paper import analysis_yh6
+confirmatory, table, contrasts, det = analysis_yh6.run(cfg, exps, paths, log=log)
+contrasts[contrasts["segment"] == "all"][["split", "description", "R_a", "R_b", "estimate", "ci_low", "ci_high"]]''',
+     '''# @title 4. 방식별 R과 텍스트만 대비 · 구간별 · 결정성
+display(table[table["segment"] == "all"].pivot_table(index="series", columns="split", values="R").round(4))
+display(table[table["segment"].isin(["established", "new_item"])].pivot_table(
+    index="series", columns=["split", "segment"], values="R_minus_text_only").round(4))
+display(det.groupby(["split", "cond"])["identical"].all())''']))
+save("14_yh_slots.ipynb", nb(
+    "14. 9차 사전 등록 (김유환): 베이스라인 + UME 자리 (s4 확증, 학습 없음)",
+    "`configs/prereg_yh_slots.yaml` 대로 실행한다. s4의 B2 계산(약 1분) → 결합 · 분석(약 10분). 7 · 8차의 저장 벡터를 쓴다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 + s4 베이스라인 B2 계산
+from msrs_paper.utils import verify_manifest
+from msrs_paper.config import load_yaml
+from msrs_paper import baselines
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_slots")
+assert prereg["status"] == "final"
+baselines.run(cfg, paths, "B2", "s4", group="YH7_BASE")
+need = [paths.run_dir("YH5_UME", "s4", f"{c}_seed{s}") / "user_vectors.npy" for c in ("C0", "C1") for s in (42, 43, 44)]
+print(f"준비물 {len(m['files'])}개 일치 · s4 UME 벡터 {sum(f.exists() for f in need)} / 6")''',
+     '''# @title 2. 분석: 확증 H18 · H19 + 자리 수 · 분할별 탐색 (약 10분)
+from msrs_paper import analysis_yh7
+confirmatory, table, contrasts = analysis_yh7.run(cfg, exps, paths)
+table[table["segment"] == "all"].pivot_table(index="series", columns="split", values="R").round(4)''',
+     '''# @title 3. 탐색: 전용 자리 대비 · 구간별
+c = contrasts[contrasts["description"].str.contains(" 20")]
+display(c[c["segment"] == "all"][["split", "description", "estimate", "ci_low", "ci_high"]])
+display(c[c["segment"].isin(["established", "new_item", "sparse"])].pivot_table(
+    index=["split", "description"], columns="segment", values="estimate").round(4))''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))
