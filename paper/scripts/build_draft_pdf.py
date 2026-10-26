@@ -19,7 +19,7 @@ BROWSERS = [Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),     
 
 CSS = """
 @page { size: A4; margin: 13mm 13mm 13mm 13mm; }
-body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.45; margin: 0; }
+body { font-family: 'Malgun Gothic', sans-serif; color: #0b0b0b; font-size: 9pt; line-height: 1.4; margin: 0; }
 .banner { border-bottom: 1px solid #c9c8c2; padding: 0 0 4px; font-size: 7.4pt; color: #52514e; margin-bottom: 8px; text-align: center; }
 .banner p { margin: 2px 0; }
 h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
@@ -28,7 +28,8 @@ h1 { font-size: 15pt; text-align: center; margin: 0 0 6px; line-height: 1.35; }
 .abstract h2 { font-size: 10pt; text-align: center; margin: 0 0 4px; }
 .cols { column-count: 2; column-gap: 6mm; text-align: justify; }
 .cols h2 { font-size: 10.5pt; margin: 9px 0 4px; break-after: avoid; }
-.cols h3 { font-size: 9.5pt; margin: 8px 0 3px; break-after: avoid; }
+.cols h3 { font-size: 9.5pt; margin: 6px 0 2px; break-after: avoid; }
+.cols h4 { font-size: 9pt; margin: 4px 0 1px; break-after: avoid; }
 .cols p { margin: 0 0 5px; }
 .cols ol, .cols ul { margin: 0 0 4px; padding-left: 14px; }
 .wide { column-span: all; margin: 8px 0 10px; break-inside: avoid; }
@@ -42,10 +43,10 @@ th:first-child, td:first-child { text-align: left; padding-left: 4px; }
 th { font-weight: 600; border-bottom: 0.8px solid #0b0b0b; }
 tr.sep td { border-top: 0.6px solid #8a8984; }
 tr.best td { background: #eef3fa; }
-img { width: 74%; display: block; margin: 0 auto; }
+img { width: 66%; display: block; margin: 0 auto; }
 .caption { font-size: 7.6pt; color: #333; margin-top: 2px; }
-.refs { font-size: 7.3pt; }
-.refs p { margin: 0 0 2px; }
+.refs { font-size: 7.1pt; line-height: 1.3; }
+.refs p { margin: 0 0 1px; }
 code { font-size: 8pt; }
 .appendix { break-before: page; }
 .appendix h2 { font-size: 10.5pt; margin: 0 0 6px; }

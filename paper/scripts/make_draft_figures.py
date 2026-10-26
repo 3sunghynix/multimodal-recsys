@@ -81,7 +81,7 @@ def arrow(ax, x0, y0, x1, y1):
 def fig_fusion():
     fig, axes = plt.subplots(1, 3, figsize=(7.0, 2.1), dpi=300)
     fig.patch.set_facecolor(SURFACE)
-    titles = ["(a) 함께 학습", "(b) 따로 학습 후 결합 (UME)", "(c) 앙상블 대조"]
+    titles = ["(a) 이른 결합 (공동 학습)", "(b) 늦은 결합 (UME)", "(c) 앙상블 대조군"]
     for ax, t in zip(axes, titles):
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
@@ -92,8 +92,8 @@ def fig_fusion():
     a = axes[0]
     box(a, 0.05, 0.74, 0.40, 0.14, "텍스트 임베딩", BOX_TXT)
     box(a, 0.55, 0.74, 0.40, 0.14, "이미지 임베딩", BOX_IMG)
-    box(a, 0.20, 0.47, 0.60, 0.14, "이어 붙이기 (512차원)", BOX_MOD)
-    box(a, 0.20, 0.22, 0.60, 0.14, "Two-Tower 1개", BOX_MOD, bold=True)
+    box(a, 0.20, 0.47, 0.60, 0.14, "임베딩 연결 (512차원)", BOX_MOD)
+    box(a, 0.20, 0.22, 0.60, 0.14, "단일 Two-Tower", BOX_MOD, bold=True)
     box(a, 0.30, 0.01, 0.40, 0.12, "추천 점수", SURFACE)
     arrow(a, 0.25, 0.74, 0.40, 0.61); arrow(a, 0.75, 0.74, 0.60, 0.61)
     arrow(a, 0.50, 0.47, 0.50, 0.36); arrow(a, 0.50, 0.22, 0.50, 0.13)
@@ -104,17 +104,17 @@ def fig_fusion():
     box(b, 0.55, 0.74, 0.40, 0.14, "이미지 임베딩", BOX_IMG)
     box(b, 0.05, 0.47, 0.40, 0.14, "텍스트 모델", BOX_TXT, bold=True)
     box(b, 0.55, 0.47, 0.40, 0.14, "이미지 모델", BOX_IMG, bold=True)
-    box(b, 0.05, 0.22, 0.90, 0.14, "고객별 z 점수 합 (1:1)", BOX_MOD)
+    box(b, 0.05, 0.22, 0.90, 0.14, "고객별 z 점수 합산 (1:1)", BOX_MOD)
     box(b, 0.30, 0.01, 0.40, 0.12, "추천 점수", SURFACE)
     arrow(b, 0.25, 0.74, 0.25, 0.61); arrow(b, 0.75, 0.74, 0.75, 0.61)
     arrow(b, 0.25, 0.47, 0.40, 0.36); arrow(b, 0.75, 0.47, 0.60, 0.36); arrow(b, 0.50, 0.22, 0.50, 0.13)
 
     # (c) 같은 모델 × 2 (seed 다름) → z 점수 합
     c = axes[2]
-    box(c, 0.05, 0.74, 0.90, 0.14, "같은 입력 (텍스트 · 이미지 · 둘 다)", BOX_MOD)
+    box(c, 0.05, 0.74, 0.90, 0.14, "동일 입력 (텍스트 · 이미지 · 둘 다)", BOX_MOD)
     box(c, 0.05, 0.47, 0.40, 0.14, "모델 (seed A)", BOX_MOD, bold=True)
     box(c, 0.55, 0.47, 0.40, 0.14, "모델 (seed B)", BOX_MOD, bold=True)
-    box(c, 0.05, 0.22, 0.90, 0.14, "고객별 z 점수 합 (1:1)", BOX_MOD)
+    box(c, 0.05, 0.22, 0.90, 0.14, "고객별 z 점수 합산 (1:1)", BOX_MOD)
     box(c, 0.30, 0.01, 0.40, 0.12, "추천 점수", SURFACE)
     arrow(c, 0.30, 0.74, 0.25, 0.61); arrow(c, 0.70, 0.74, 0.75, 0.61)
     arrow(c, 0.25, 0.47, 0.40, 0.36); arrow(c, 0.75, 0.47, 0.60, 0.36); arrow(c, 0.50, 0.22, 0.50, 0.13)
