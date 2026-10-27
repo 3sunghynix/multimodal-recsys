@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from .config import settings
@@ -27,4 +27,10 @@ def get_db():
 
 def init_db(bind=None):
     from . import models  # noqa: F401  테이블 등록
-    Base.metadata.create_all(bind=bind or engine)
+    bind = bind or engine
+    # PostgreSQL이면 pgvector 확장을 먼저 켠다. items 테이블의 임베딩 컬럼이 이 확장에 의존한다.
+    # SQLite(테스트)에서는 EmbeddingVector 타입이 JSON으로 fallback 되므로 아무 것도 하지 않는다.
+    if bind.dialect.name == "postgresql":
+        with bind.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    Base.metadata.create_all(bind=bind)

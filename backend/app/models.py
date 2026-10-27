@@ -8,6 +8,9 @@ from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text,
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
+from .types import EmbeddingVector
+
+EMBEDDING_DIM = 256  # 논문 파이프라인(PCA 256 + L2) 기본값과 일치
 
 EVENT_TYPES = ("view", "click", "add_to_cart", "purchase", "search")
 
@@ -29,6 +32,10 @@ class Item(Base):
     category: Mapped[str] = mapped_column(String(200), default="")
     price: Mapped[float | None] = mapped_column(Float)
     image_path: Mapped[str | None] = mapped_column(String(500))      # 로컬 경로 또는 URL
+    # 멀티모달 임베딩. 논문의 Two-Tower + PCA 256 + L2 산출물을 저장한다.
+    # PostgreSQL에서는 pgvector로 코사인 ANN 검색, SQLite(테스트)에서는 JSON으로 보관만 한다.
+    text_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVector(EMBEDDING_DIM), nullable=True)
+    image_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVector(EMBEDDING_DIM), nullable=True)
 
 
 class User(Base):
