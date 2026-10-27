@@ -1,0 +1,26 @@
+{
+  "group": "YH5_EXPORT",
+  "split": "s4",
+  "condition": "C2",
+  "seed": 42,
+  "candidate_count": 300,
+  "final_k": 50,
+  "lambdas": [
+    1.0,
+    0.999,
+    0.995,
+    0.99,
+    0.98,
+    0.95,
+    0.9,
+    0.7,
+    0.5,
+    0.3
+  ],
+  "relevance": "cosine from normalized saved model vectors",
+  "redundancy": "cosine from normalized Marqo image embeddings",
+  "first_item": "original highest-ranked candidate",
+  "analysis_type": "exploratory; grid expanded after test pilot",
+  "source_directory": "/content/drive/MyDrive/msrs_paper (1)/outputs/YH5_EXPORT/s4/C2_seed42",
+  "device": "cuda"
+}

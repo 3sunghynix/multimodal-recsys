@@ -1,0 +1,43 @@
+{
+  "seed": 42,
+  "warmup_per_scope_backend": 20,
+  "requests_per_round": 500,
+  "rounds": 3,
+  "request_batch_size": 1,
+  "computational_threads": 1,
+  "catalogue_products": 53232,
+  "cached_item_vectors": "shared PyTorch FP32 vectors",
+  "platform": "Linux-6.6.122+-x86_64-with-glibc2.39",
+  "logical_cpu_count": 2,
+  "torch_version": "2.11.0+cu130",
+  "onnxruntime_version": "1.31.0",
+  "threadpools_during_measurement": [
+    {
+      "user_api": "blas",
+      "internal_api": "openblas",
+      "num_threads": 1,
+      "prefix": "libscipy_openblas",
+      "filepath": "/usr/local/lib/python3.13/dist-packages/numpy.libs/libscipy_openblas64_-ff651d7f.so",
+      "version": "0.3.27",
+      "threading_layer": "pthreads",
+      "architecture": "SkylakeX"
+    },
+    {
+      "user_api": "openmp",
+      "internal_api": "openmp",
+      "num_threads": 1,
+      "prefix": "libgomp",
+      "filepath": "/usr/local/lib/python3.13/dist-packages/torch/lib/libgomp.so.1",
+      "version": null
+    }
+  ],
+  "excluded": [
+    "model loading",
+    "file and database access",
+    "history averaging",
+    "text/image encoding",
+    "item-tower precomputation",
+    "MMR",
+    "HTTP/API handling"
+  ]
+}
