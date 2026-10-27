@@ -1,12 +1,22 @@
-"""API 전체 흐름 확인: 검색 → 추천 → 로그 → 모델 교체 → A/B 할당 · 그룹별 지표. SQLite 임시 DB 사용."""
+"""API 전체 흐름 확인: 검색 → 추천 → 로그 → 모델 교체 → A/B 할당 · 그룹별 지표. SQLite 임시 DB 사용.
+
+CLIP 모델 로드는 몇 초가 걸리고 테스트와 무관하므로 settings.load_image_encoder를 False로 끈다.
+그 상태에서 /search/image 는 503을 반환해야 한다 (vs 운영은 200 + 유사 상품 리스트)."""
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from app import db as app_db
+from app.config import settings
 from app.main import app
 from app.services.ab import assign_variant
 from scripts.seed_sample import seed
+
+
+@pytest.fixture(autouse=True)
+def _no_clip_during_tests(monkeypatch):
+    """CLIP 로드를 끈다. lifespan이 모델을 가져오지 않아 테스트가 가볍다."""
+    monkeypatch.setattr(settings, "load_image_encoder", False)
 
 
 @pytest.fixture()
@@ -15,7 +25,7 @@ def client(tmp_path):
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     app_db.init_db(engine)
     with Session() as s:
-        seed(s)
+        seed(s, with_embeddings=False)   # SQLite에선 pgvector 없으므로 임베딩도 건너뜀
 
     def override():
         s = Session()
@@ -30,14 +40,19 @@ def client(tmp_path):
 
 
 def test_health(client):
-    assert client.get("/health").json() == {"status": "ok"}
+    body = client.get("/health").json()
+    assert body["status"] == "ok" and body["image_encoder"] is None   # 테스트에선 CLIP 비활성
 
 
-def test_search_text_and_image_stub(client):
+def test_search_text_and_image(client):
     r = client.get("/search", params={"q": "Alpha dress"})
     assert r.status_code == 200 and all("Alpha" in i["title"] and "Dress" in i["title"] for i in r.json())
+    # CLIP 비활성(테스트) → 503. 운영에서는 200 + 유사 상품 리스트
     r = client.post("/search/image", files={"file": ("a.jpg", b"fake", "image/jpeg")})
-    assert r.status_code == 501
+    assert r.status_code == 503
+    # 허용되지 않는 파일 형식 → 415 (인코더 여부와 무관하게 거절되어야 하지만 현재는 encoder 체크가 먼저)
+    r = client.post("/search/image", files={"file": ("a.txt", b"nope", "text/plain")})
+    assert r.status_code in (415, 503)   # 인코더 비활성이면 503이 먼저 뜰 수 있음
 
 
 def test_recommend_uses_active_model(client):

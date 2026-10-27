@@ -7,6 +7,9 @@ EmbeddingVector: PostgreSQL에서는 pgvector의 Vector(dim), 그 외 방언에�
 JSON serializer(SQLite 경로)와 pgvector adapter(PostgreSQL 경로) 모두 안전하게 처리한다.
 출력(result): 방언에 따라 pgvector는 numpy, JSON은 list를 돌려주므로 **list로 통일**한다.
 (pydantic 응답·JSON 직렬화 호환이 쉬움)
+
+pgvector의 Vector 타입이 노출하는 cosine_distance 등의 메서드는 TypeDecorator로 감싸면
+자동으로 포워딩되지 않으므로 comparator_factory에서 명시적으로 다시 제공한다.
 """
 from sqlalchemy.types import JSON, TypeDecorator
 
@@ -40,3 +43,15 @@ class EmbeddingVector(TypeDecorator):
         if hasattr(value, "tolist"):   # PostgreSQL + pgvector 경로는 numpy로 돌아옴
             return value.tolist()
         return value
+
+    class comparator_factory(TypeDecorator.Comparator):
+        """pgvector 거리 연산자. PostgreSQL에서만 의미 있다 (`<=>`, `<->`, `<#>`)."""
+
+        def cosine_distance(self, other):
+            return self.op("<=>")(other)
+
+        def l2_distance(self, other):
+            return self.op("<->")(other)
+
+        def max_inner_product(self, other):
+            return self.op("<#>")(other)
