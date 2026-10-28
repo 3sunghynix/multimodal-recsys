@@ -13,6 +13,8 @@ kaggle.json
 *.db
 data/raw/
 data/processed/
+data/dev_subset/
+data/embeddings/
 models_store/
 
 # 편집기

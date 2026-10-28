@@ -1,6 +1,7 @@
 # 로컬 개발 환경: API + PostgreSQL(pgvector, 임베딩 검색 대비)
 # 실행: docker compose up --build  →  API 문서 http://localhost:8000/docs
 # 샘플 데이터: docker compose exec api python -m scripts.seed_sample
+# Amazon dev_subset: data/dev_subset 에 내려받은 뒤 docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -23,6 +24,8 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@db:5432/${POSTGRES_DB:-recsys}
     ports:
       - "8000:8000"
+    volumes:
+      - ./data:/data          # dev_subset 등 적재용 (python -m scripts.load_dev_subset --data /data/dev_subset)
     depends_on:
       db:
         condition: service_healthy
