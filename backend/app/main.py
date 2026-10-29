@@ -1,4 +1,10 @@
-"""멀티 브랜드 멀티모달 추천 서비스 API. 실행: uvicorn app.main:app --reload (backend/ 에서), 문서: /docs"""
+"""멀티 브랜드 멀티모달 추천 서비스 API. 실행: uvicorn app.main:app --reload (backend/ 에서), 문서: /docs
+
+데모 접근:
+- API 문서: http://localhost:8000/docs
+- 데모 프론트: http://localhost:8000/app/
+- 상품 이미지: http://localhost:8000/images/{source}/{item_id}.jpg (load_dev_subset이 압축 해제한 파일)
+"""
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +41,10 @@ for r in (search.router, recommend.router, events.router, admin.router, items.ro
 # 디렉토리가 없어도 서버는 뜨고, 요청 시 FastAPI가 자연스럽게 404로 응답한다.
 if Path(settings.images_root).exists():
     app.mount("/images", StaticFiles(directory=settings.images_root), name="images")
+
+# 데모 프론트 (/app/). HTML/JS 한 페이지로 네 가지 API 흐름(텍스트·이미지·추천·상품조회)을 보여준다.
+if Path(settings.frontend_root).exists():
+    app.mount("/app", StaticFiles(directory=settings.frontend_root, html=True), name="frontend")
 
 
 @app.get("/health", tags=["health"])
