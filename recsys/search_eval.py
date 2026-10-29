@@ -103,10 +103,16 @@ class Encoders:
             return self.marqo.encode_text(self.tok(qs).to(self.dev)).float().cpu().numpy()
 
     def translate(self, qs):
+        # transformers 5에서 translation 파이프라인이 없어져 모델을 직접 호출한다
         if self._mt is None:
-            from transformers import pipeline
-            self._mt = pipeline("translation", model=MT_MODEL, device=0 if self.dev == "cuda" else -1)
-        return [r["translation_text"] for r in self._mt(qs, max_length=64)]
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+            self._mt = (AutoTokenizer.from_pretrained(MT_MODEL),
+                        AutoModelForSeq2SeqLM.from_pretrained(MT_MODEL).to(self.dev).eval())
+        tok, model = self._mt
+        batch = tok(qs, return_tensors="pt", padding=True).to(self.dev)
+        with self.torch.no_grad():
+            out = model.generate(**batch, max_new_tokens=32, num_beams=4)
+        return tok.batch_decode(out, skip_special_tokens=True)
 
 
 def relevant(doc: str, rule) -> bool:
