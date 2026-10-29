@@ -17,6 +17,19 @@ class ItemOut(BaseModel):
     image_path: str | None
 
 
+class SearchHit(ItemOut):
+    score: float                      # 결합 점수 (merge 방식에 따라 척도가 다르다. 순서만 의미 있음)
+
+
+class SearchOut(BaseModel):
+    query: str | None                 # 받은 검색어
+    query_en: str | None              # 인코더에 넣은 영어 검색어 (한국어면 사전 번역 결과)
+    untranslated: list[str]           # 사전에 없어 번역하지 못한 한국어 단어 (화면 안내용)
+    weights: dict[str, float]         # text (MiniLM → 상품 텍스트) · text_image (Marqo 텍스트 → 상품 이미지) · image (업로드 이미지)
+    merge: str
+    items: list[SearchHit]
+
+
 class EventIn(BaseModel):
     user_id: int
     type: EventType
