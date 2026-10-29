@@ -322,17 +322,19 @@ def embed(model, X, flat, offsets, device, chunk=4096):
 
 
 def run(cfg, exps, paths, cond, seed, split, group, mode="final", hp_name=None, device=None, log=print,
-        counterfactual=False, save_vectors=False, insample=False, save_model=False):
-    """실험 1회. 드라이브에 run_info.json이 이미 있으면 건너뛴다 (중단 후 이어 돌리기 가능)."""
+        counterfactual=False, save_vectors=False, insample=False, save_model=False, overrides=None):
+    """실험 1회. 드라이브에 run_info.json이 이미 있으면 건너뛴다 (중단 후 이어 돌리기 가능).
+    overrides: 학습 설정을 직접 바꿀 때 (10차 규제 튜닝: 튜닝 후보와, 고른 설정으로 하는 최종 학습). 없으면 기존 규칙."""
     import torch
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     if mode == "final":
-        name, out_dir, overrides = f"{cond}_seed{seed}", paths.run_dir(group, split, f"{cond}_seed{seed}"), None
+        name, out_dir = f"{cond}_seed{seed}", paths.run_dir(group, split, f"{cond}_seed{seed}")
     else:
         name = f"{cond}_seed{seed}_{hp_name}"
         out_dir = paths.outputs / "tuning" / split / name
         # 학습 설정 후보(h1~h3)면 학습 설정을, ID 후보(i1~i4)면 ID 설정만 바꾼다
-        overrides = cfg["train"]["candidates"].get(hp_name)
+        if overrides is None:
+            overrides = cfg["train"]["candidates"].get(hp_name)
     if (out_dir / "run_info.json").exists():
         log(f"[skip] {out_dir} 이미 완료")
         return read_json(out_dir / "run_info.json")
