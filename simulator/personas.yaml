@@ -1,7 +1,7 @@
 # 팀 검토용 초안. 실제 로그 생성기와 연결하기 전 합의가 필요합니다.
 # 확률·가중치·페르소나 비중은 Retailrocket에서 추정한 값이 아닙니다.
-version: "0.1-draft"
-status: "pending_team_review"
+version: "0.2-draft"
+status: "data_feedback_addressed_backend_contract_pending"
 owner: "김광석"
 created: "2026-10-29"
 
@@ -9,7 +9,8 @@ provenance:
   reference: "msrs_project/processed/retailrocket/sim_stats.json"
   reference_received_as: "user-provided screenshot; selected values transcribed"
   probabilities: "proposed synthetic settings; not calibrated"
-  names: "김유환과 합의 전 후보"
+  names: "설계 방향 동의; 백엔드 계약과 선호 브랜드 선정 규칙 최종 확인 필요"
+  reviewer_statistics: "Amazon brand concentration statistics quoted from team review; not independently recomputed"
 
 retailrocket_reference:
   usage: "diagnostic reference only; not direct transition probabilities"
@@ -36,7 +37,10 @@ retailrocket_reference:
   view_share_top1pct_items: 0.227
 
 pilot:
-  status: "proposal_only"
+  status: "four_persona_pilot_pending_backend_readiness"
+  active_personas: ["brand_loyal", "price_sensitive", "explorer", "repeat_purchaser"]
+  deferred_personas: ["trend_following", "new_item_seeking"]
+  planned_customers: 400
   seed: 42
   customers_per_persona: 100
   sessions_per_customer: 1
@@ -47,7 +51,14 @@ pilot:
   # 부족한 특성이 있는 페르소나는 임의 대체하지 않고 실행을 막습니다.
   on_missing_required_feature: "block_affected_persona_and_report"
   customer_source: "sim"
-  history_source: "train_only"
+  history_source: "processed/{amazon_v2,hm}/events.parquet filtered to split=train"
+  history_kind: "synthetic preference-compatible history derived only from train catalog/interactions; not an actual cross-source person"
+  baseline_model_name: "popularity"
+  require_backend_user_creation: true
+  require_backend_idempotency_contract: true
+  require_backend_exposure_attribution_contract: true
+  on_ambiguous_post_before_idempotency: "record_unknown_outcome_and_stop; do not automatically retry"
+  seed_history_in_experiment_metrics: false
   event_sequence: ["view", "click", "add_to_cart", "purchase"]
   log_only_displayed_items_as_view: true
   carry_recommendation_attribution:
@@ -81,7 +92,16 @@ behavior:
 features:
   brand_affinity:
     definition: "1 if item belongs to the customer's fixed preferred-brand set; otherwise 0"
-    setup: "choose 1-3 preferred brands before the experiment; store choices"
+    setup: "fix preferred category first; uniformly sample brands without replacement from its train-only brand pool; persist choices before model assignment"
+    selection_status: "proposal_for_team_confirmation"
+    min_train_items_per_brand_in_category: 3
+    preferred_brand_count_candidates: [1, 2, 3]
+    preferred_brand_count_sampling: "uniform, capped by available brands"
+    use_popularity_weighted_brand_sampling: false
+    on_empty_brand_pool: "skip_customer_and_report; do not silently switch category"
+    initialization: "sample initial purchased items from selected brands within the train pool; keep separate from A/B events"
+    stress_test_persona: "brand_loyal"
+    real_population_representativeness_claim: false
   price_affinity:
     definition: "clip(1 - item.price / customer.budget, 0, 1)"
     setup: "positive budget from the train-catalog price distribution within the preferred category"
@@ -89,16 +109,27 @@ features:
     budget_sampling_weights: [0.3333333333, 0.3333333333, 0.3333333334]
     estimated_price_policy: "use listed value but report price_source separately; no claim of actual willingness to pay"
   popularity_affinity:
-    definition: "percentile rank of past positive purchase-signal counts in a fixed 7-day window"
-    history_end: "before simulation start; frozen within each A/B run"
-    note: "recent popularity proxy, not a measured fashion trend"
+    definition: "percentile rank of recent train-event counts, separately within each source catalog"
+    group_by: "source"
+    count_rule: "count feedback>0 purchase-signal rows; pending team confirmation before enabling trend persona"
+    window_days: 7
+    window_anchor: "each source's own final train calendar day D"
+    interval: "D-6 days 00:00 inclusive to D+1 day 00:00 exclusive; consistent source timestamp interpretation"
+    include_zero_count_catalog_items: true
+    percentile_ties: "average rank"
+    degenerate_source_policy: "all equal counts -> neutral 0.5; report degenerate source"
+    history_end: "fixed separately for amazon and hm before simulation; never current wall-clock day"
+    freeze_during_run: true
+    note: "do not pool 2020 H&M and 2023 Amazon counts/dates; recent popularity is not a measured fashion trend"
   novelty_affinity:
     definition: "1 if both item and brand are absent from the customer's pre-experiment history; otherwise 0"
     history_policy: "initialize nonempty history from train; freeze preference-history features during the pilot"
   newness_affinity:
     definition: "clip(1 - days_since_catalog_added / 30, 0, 1)"
     required_field: "catalog_added_at (semantics and availability pending team confirmation)"
-    note: "catalog recency, not a verified product launch date; never substitute first review date silently"
+    status: "unavailable; persona disabled in pilot"
+    allow_first_event_date_as_proxy: false
+    note: "no reliable date currently exists; a truncated H&M history makes first event misleading; agree on a new definition before enabling"
   repurchase_affinity:
     definition: "1 if the item is in the customer's pre-experiment purchase history; otherwise 0"
     note: "exact-item repeat only in v0.1; similar-item repeat is a separate future rule"
@@ -107,6 +138,11 @@ personas:
   - id: "brand_loyal"
     name_ko: "브랜드 충성형"
     name_status: "proposed"
+    pilot_enabled: true
+    purpose: "stress test of strong brand preference; not representative of actual Amazon customers"
+    empirical_reference_from_team:
+      dominant_brand_share_median: 0.17
+      fraction_at_least_0_5: 0.013
     sampling_weight: 1
     required_features: ["brand_affinity", "price_affinity", "novelty_affinity"]
     preference_weights:
@@ -115,6 +151,7 @@ personas:
       novelty_affinity: 0.05
 
   - id: "price_sensitive"
+    pilot_enabled: true
     name_ko: "가격 민감형"
     name_status: "proposed"
     sampling_weight: 1
@@ -125,6 +162,7 @@ personas:
       novelty_affinity: 0.05
 
   - id: "trend_following"
+    pilot_enabled: false
     name_ko: "트렌드 추종형"
     name_status: "proposed; v0.1 uses recent popularity as proxy"
     sampling_weight: 1
@@ -135,6 +173,7 @@ personas:
       popularity_affinity: 0.75
 
   - id: "explorer"
+    pilot_enabled: true
     name_ko: "탐색형"
     name_status: "proposed"
     sampling_weight: 1
@@ -145,6 +184,7 @@ personas:
       novelty_affinity: 0.80
 
   - id: "new_item_seeking"
+    pilot_enabled: false
     name_ko: "신상품 선호형"
     name_status: "proposed; needs agreement on newness definition"
     sampling_weight: 1
@@ -155,6 +195,7 @@ personas:
       newness_affinity: 0.75
 
   - id: "repeat_purchaser"
+    pilot_enabled: true
     name_ko: "재구매형"
     name_status: "proposed"
     sampling_weight: 1
@@ -164,7 +205,37 @@ personas:
       price_affinity: 0.10
       repurchase_affinity: 0.80
 
+session_probability_sanity_check:
+  status: "hypothetical neutral score; not observed simulation output"
+  assumptions: "10 independent displayed items, score=0.5, fixed click/cart/purchase probabilities"
+  any_cart_formula: "1 - (1 - 0.04 * 0.10)^10"
+  any_purchase_formula: "1 - (1 - 0.04 * 0.10 * 0.30)^10"
+  calibration_claim: false
+
+backend_contract:
+  status: "pending Hyungwoo PR and agreement; no assumption that planned fields work today"
+  create_user_planned: "POST /users {source, persona, source_user_id}"
+  assignment_owner: "server GET /recommend/{user_id}; fixed by customer and experiment hash"
+  currently_available_attribution: ["model_version_id", "experiment_id", "variant"]
+  planned_attribution: ["request_id", "impression_id or agreed equivalent"]
+  event_deduplication_proposal: "client-generated event UUID, persisted once per logical event and reused on retries; server unique key/upsert required"
+  event_type_specific_uniqueness: true
+  send_unsupported_fields: false
+  server_created_at: "receipt time only; do not send unsupported simulated timestamps"
+  logical_time_storage: "separate local run log until server contract supports it"
+  feedback_and_split_storage: "parquet only, not current DB"
+  price_storage: "DB"
+  price_source_storage: "parquet metadata until backend column is available"
+
 reporting:
+  primary_comparison: "models within the same persona, relative to the popularity baseline"
+  compare_raw_ctr_across_personas_as_model_quality: false
+  relative_uplift_formula: "(model_metric - popularity_metric) / popularity_metric"
+  on_zero_baseline_metric: "relative uplift undefined; report counts and absolute difference"
+  show_absolute_percentage_point_difference: true
+  lock_baseline_model_version_and_run_settings: true
+  combined_summary: "secondary only, with a fixed declared persona mixture"
+  interpret_brand_loyal_as_stress_test: true
   distinguish_simulation_from_real_user_results: true
   report_by_persona_and_variant: true
   report_customer_counts_and_denominators: true
