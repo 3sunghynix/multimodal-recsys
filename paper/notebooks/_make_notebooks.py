@@ -732,4 +732,72 @@ c = contrasts[contrasts["description"].str.contains(" 20")]
 display(c[c["segment"] == "all"][["split", "description", "estimate", "ci_low", "ci_high"]])
 display(c[c["segment"].isin(["established", "new_item", "sparse"])].pivot_table(
     index=["split", "description"], columns="segment", values="estimate").round(4))''']))
+save("15_yh_tuned.ipynb", nb(
+    "15. 10차 사전 등록 (김유환): 규제를 튜닝한 함께 학습 대비 UME, 상위 12개 지표 (새 테스트 주 s6)",
+    "`configs/prereg_yh_tuned.yaml` 대로 실행한다. s6 분할 만들기(처음 한 번, 약 10분) → 튜닝 54회(약 20분) → "
+    "학습 18회 + B2(약 8분) → 분석(약 15분). 모든 단계는 중단 후 다시 실행하면 이어서 진행한다.",
+    [SETUP,
+     '''# @title 1. 준비물 · 사전 등록 확인 + s6 분할 만들기 (없을 때만, 약 10분)
+from msrs_paper.config import load_yaml
+from msrs_paper import data_prep as dp
+from msrs_paper.utils import read_json, verify_manifest, write_manifest, now
+m = verify_manifest(paths)
+prereg = load_yaml("prereg_yh_tuned")
+assert prereg["status"] == "final", "prereg_yh_tuned.yaml 확정 · 커밋이 필요합니다"
+if not (paths.split_dir("s6") / "stats.json").exists():
+    tx = dp.load_transactions(paths.raw / "transactions_train.csv")
+    items = dp.load_items(paths).sort_values("idx").reset_index(drop=True)
+    history, vt, tt, stats = dp.build_split(tx, items, cfg["data"]["window_weeks"], cfg["data"]["min_user_purchases"], 6)
+    dp.save_split(paths.split_dir("s6"), history, vt, tt, stats)
+    del tx
+    m = write_manifest(paths)
+    print("s6 분할 생성, 체크섬 목록 갱신:", len(m["files"]), "개 파일")
+stats = read_json(paths.split_dir("s6") / "stats.json")
+print(f"준비물 {len(m['files'])}개 일치 · 사전 등록 {prereg['registered']}")
+print({k: v for k, v in stats.items() if k != "test_cells"})
+log_file = paths.logs / "yh_tuned.log"
+def log(msg):
+    print(msg)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(f"{now()} {msg}\\n")''',
+     '''# @title 2. 튜닝 54회: C0 · C1 · C2 × 규제 격자 18 (s6 검증 주, seed 42, 약 20분)
+import time
+from msrs_paper import analysis_yh8
+t0 = time.time()
+tuning, selected = analysis_yh8.tune(cfg, exps, paths, log=log)
+log(f"튜닝 완료 ({(time.time() - t0) / 60:.1f}분) · 선택 {selected}")
+tuning.pivot_table(index="hp", columns="cond", values="valid_recall@300").round(4)''',
+     '''# @title 3. 학습 18회 (기본 · 튜닝 설정 × C0 · C1 · C2 × seed 3, 벡터 저장) + B2 (약 8분)
+t0 = time.time()
+analysis_yh8.train(cfg, exps, paths, log=log)
+log(f"10차 학습 완료 ({(time.time() - t0) / 60:.1f}분)")''',
+     '''# @title 4. 분석: 확증 H20 · H21 · H22 + 탐색 (약 15분)
+confirmatory, table, contrasts, hits, memo = analysis_yh8.run(cfg, exps, paths, log=log)
+c = contrasts[contrasts["segment"] == "all"]
+c[c["split"] == "s6"][["description", "metric", "value_a", "value_b", "estimate", "ci_low", "ci_high", "status"]]''',
+     '''# @title 5. 탐색: 지표 표 · 결합 방식 · 적중 분해 · 외우기 정도 · 다른 주
+display(table[table["segment"] == "all"].pivot_table(index="series", columns=["split", "metric"], values="value").round(4))
+display(c[c["description"].str.startswith("결합")].pivot_table(index=["split", "description"], columns="metric", values="estimate").round(4))
+display(hits.set_index(["split", "K"]).T.round(3))
+display(memo.groupby(["setting", "cond"])["gap"].mean().unstack().round(4))
+display(c[c["split"] != "s6"][["split", "description", "metric", "estimate", "ci_low", "ci_high"]])''',
+     '''# @title 6. 김광석 전달용 (분석과 무관): UME 지연 시간용 C0 · C1 가중치 저장 + MAP@12 교차 확인 파일
+import numpy as np
+from msrs_paper import two_tower, metrics
+from msrs_paper.data_prep import load_split
+from msrs_paper.utils import write_json
+two_tower.run_group(cfg, exps, paths, "YH5_EXPORT", log=log)       # s4 · seed 42 · 기본 설정, 이미 있는 C2는 건너뜀
+for c in ("C0", "C1"):
+    same = np.array_equal(np.load(paths.run_dir("YH5_EXPORT", "s4", f"{c}_seed42") / "candidates.npy"),
+                          np.load(paths.run_dir("YH5_UME", "s4", f"{c}_seed42") / "candidates.npy"))
+    print(f"{c}: 논문에 쓴 YH5_UME 실행과 같은 추천 = {same}")
+d = paths.run_dir("YH8_TUNED", "s6", "C2_seed42")
+_, _, tt = load_split(paths, "s6")
+users = np.load(d / "users.npy")
+um = analysis_yh8.user_metrics(np.load(d / "candidates.npy"), metrics.target_rows(users, tt), tt["item_idx"].values, len(users))
+check = {"run": str(d), "targets": str(paths.split_dir("s6") / "test_targets.parquet"),
+         "map12": float(um["map12"][um["has"]].mean()), "n_users": int(um["has"].sum()),
+         "definition": "고객별 AP@12 = (1/min(구매 수, 12)) Σ_{j≤12} 정밀도@j × 적중_j 의 평균. 정답은 (고객, 상품) 중복 제거, 재구매 포함, users.npy의 모든 테스트 고객"}
+write_json(analysis_yh8.results_dir(paths) / "map12_check.json", check)
+check''']))
 print("ok", sorted(p.name for p in OUT.glob("*.ipynb")))

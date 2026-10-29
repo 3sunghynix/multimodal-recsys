@@ -165,8 +165,9 @@ groups:
     - {conds: [C0, C1, C5], seeds: [42, 43, 44], split: s4, save_vectors: true, insample: true}
 
   # 김광석 보너스 과제(MMR · ONNX)용: 7차 기준 조건 C2를 같은 설정으로 다시 학습해 가중치 · 벡터 저장 (사전 등록 대상 아님)
+  # 2026-10-24: UME 지연 시간 측정용으로 텍스트만 C0 · 이미지만 C1 추가 (같은 s4 · seed 42 · 기본 설정. 학습이 결정적이라 YH5_UME와 같은 추천)
   YH5_EXPORT:
-    - {conds: [C2], seeds: [42], split: s4, save_model: true, save_vectors: true}
+    - {conds: [C2, C0, C1], seeds: [42], split: s4, save_model: true, save_vectors: true}
 
   # ---- 8차 사전 등록 김유환 (prereg_yh_ume.yaml). 모든 실행 벡터 저장 (앙상블 · UME 계산용)
   YH6_S2:     # s2 확증: 텍스트만 · 이미지만(Marqo · SigLIP · ResNet) · 함께 학습, 15회
