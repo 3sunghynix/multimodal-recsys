@@ -26,6 +26,9 @@ docker compose up --build                              # http://localhost:8000/d
 docker compose exec api python -m scripts.seed_sample  # 데모 데이터 (브랜드 3 · 상품 30 · 고객 10)
 ```
 
+> 스키마가 바뀌면(새 컬럼·테이블 추가) `docker compose down -v` 로 볼륨까지 지우고 다시 올려야 한다.
+> `init_db`의 `create_all`은 **이미 있는 테이블에 컬럼을 추가하지 않는다**. 스키마 변경이 잦아지면 Alembic 도입을 검토한다.
+
 **로컬 (SQLite)**
 
 ```bash

@@ -8,6 +8,11 @@ from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text,
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .db import Base
+from .types import EmbeddingVector
+
+# 콘텐츠 임베딩(검색용)의 차원. 지금은 논문 파이프라인(PCA 256 + L2) 가정 기본값이며,
+# 실제 운영 인코더가 결정되면 그 산출물 차원으로 조정한다 (예: CLIP ViT-B/32 raw = 512).
+EMBEDDING_DIM = 256
 
 EVENT_TYPES = ("view", "click", "add_to_cart", "purchase", "search")
 
@@ -29,6 +34,14 @@ class Item(Base):
     category: Mapped[str] = mapped_column(String(200), default="")
     price: Mapped[float | None] = mapped_column(Float)
     image_path: Mapped[str | None] = mapped_column(String(500))      # 로컬 경로 또는 URL
+    # 콘텐츠 임베딩(검색용). 상품마다 고정값이며 인코더가 바뀔 때만 재계산한다.
+    # 인코더 산출물(MiniLM·Marqo·CLIP 등 L2 정규화 완료 벡터)을 그대로 저장한다 — 차원은 위 EMBEDDING_DIM.
+    # Two-Tower 학습 결과 상품 벡터(모델마다 달라짐, A/B로 모델 두 개 동시 서빙 가능)는
+    # items에 넣지 않고 item_vectors(model_version_id, item_id, vector) 같은 별도 테이블로 분리할 예정.
+    # 쿼리 이미지에도 같은 전처리(인코더 + 필요시 PCA)를 적용해야 하므로 PCA 변환 행렬도 산출물로 함께 저장한다.
+    # PostgreSQL에서는 pgvector로 코사인 ANN 검색, SQLite(테스트)에서는 JSON으로 보관만 한다.
+    text_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVector(EMBEDDING_DIM), nullable=True)
+    image_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVector(EMBEDDING_DIM), nullable=True)
 
 
 class User(Base):
