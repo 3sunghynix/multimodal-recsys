@@ -5,7 +5,7 @@ from fastapi import FastAPI
 
 from .config import settings
 from .db import init_db
-from .routers import admin, events, recommend, search
+from .routers import admin, events, items, recommend, search
 
 
 @asynccontextmanager
@@ -26,7 +26,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Multimodal RecSys", version="0.1.0", lifespan=lifespan)
-for r in (search.router, recommend.router, events.router, admin.router):
+for r in (search.router, recommend.router, events.router, admin.router, items.router):
     app.include_router(r)
 
 
