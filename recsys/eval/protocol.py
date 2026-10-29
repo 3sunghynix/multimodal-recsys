@@ -13,7 +13,7 @@ import pandas as pd
 
 @dataclass
 class EvalSet:
-    history: pd.DataFrame       # 학습 이력 (user_id, item_id, feedback, ts, ...)
+    history: pd.DataFrame       # 학습 이력 — 전체 고객 (user_id, item_id, feedback, ts, ...)
     truth: pd.DataFrame         # 정답 (user_id, item_id), 중복 없음
     users: np.ndarray           # 평가 고객 (정렬)
     split: str
@@ -32,5 +32,6 @@ def build_eval_set(events: pd.DataFrame, split: str = "test", positive_min: floa
     target = target[target.user_id.isin(history.user_id.unique())]
     truth = target[["user_id", "item_id"]].drop_duplicates().reset_index(drop=True)
     users = np.sort(truth.user_id.unique())
-    history = history[history.user_id.isin(users)].reset_index(drop=True)
+    # 학습 이력은 평가 고객만이 아니라 전체 고객의 것 (모델은 모든 고객 로그로 학습한다)
+    history = history.reset_index(drop=True)
     return EvalSet(history=history, truth=truth, users=users, split=split, positive_min=positive_min)

@@ -78,6 +78,8 @@ def test_protocol():
     # 고객 2의 test 이벤트는 feedback 0.5 → 정답 아님
     assert set(t.users) == {1, 3, 4} and set(map(tuple, t.truth.values)) == {(1, 13), (3, 10), (4, 11)}
     assert set(t.history.split) == {"train", "valid"}
+    # 학습 이력은 평가 고객이 아닌 고객(2)의 이벤트도 포함 → 인기 모델 등이 전체 로그로 학습
+    assert len(t.history) == 9 and 2 in set(t.history.user_id)
     v = build_eval_set(ev, "valid")
     # valid 평가는 train만 이력 → 고객 4(train 이력 없음)는 제외
     assert set(v.users) == {1, 2} and set(v.history.split) == {"train"}
