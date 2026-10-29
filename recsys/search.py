@@ -9,7 +9,7 @@
 """
 import numpy as np
 
-MERGES = ("global", "per_source_z")
+MERGES = ("global", "per_source_z", "per_source_rank")
 
 
 def l2(x: np.ndarray) -> np.ndarray:
@@ -46,15 +46,29 @@ def combine(scores: dict, weights: dict, groups: np.ndarray | None, merge: str =
 
     global: 모달리티가 하나면 코사인 그대로, 여럿이면 전체 기준 표준화 후 가중 합 (데이터셋 구분 없음).
     per_source_z: 데이터셋별 표준화 후 가중 합.
+    per_source_rank: per_source_z 점수를 데이터셋 안의 순위 백분위로 바꾼다 (1 = 그 데이터셋 1위).
+        상위 k가 카탈로그 비율대로 섞인다 (H&M 19% → 상위 20 중 약 4개). 표준화만으로는 질의마다
+        꼬리가 더 긴 데이터셋이 통째로 차지하는 문제(실측: 두 데이터셋이 함께 나온 질의 46%)를 막는다.
     """
     assert merge in MERGES, merge
     used = [m for m, w in weights.items() if w > 0 and m in scores]
     assert used, "가중치가 0보다 큰 모달리티가 없습니다"
     if merge == "global" and len(used) == 1:
         return np.asarray(scores[used[0]], np.float32)
-    g = groups if merge == "per_source_z" else None
+    g = None if merge == "global" else groups
     total = sum(weights[m] for m in used)
-    return sum(weights[m] / total * standardize(scores[m], g) for m in used)
+    z = sum(weights[m] / total * standardize(scores[m], g) for m in used)
+    return z if merge != "per_source_rank" else rank_percentile(z, groups)
+
+
+def rank_percentile(scores: np.ndarray, groups: np.ndarray) -> np.ndarray:
+    """그룹마다 (Q, n_g) 점수 → 1 − 순위/n_g (1위 = 1, 꼴찌 ≈ 0). 그룹 크기가 달라도 같은 척도."""
+    out = np.empty_like(scores, dtype=np.float32)
+    for g in np.unique(groups):
+        m = np.flatnonzero(groups == g)
+        r = (-scores[:, m]).argsort(1).argsort(1)
+        out[:, m] = 1.0 - r / len(m)
+    return out
 
 
 def top_k(final: np.ndarray, k: int) -> np.ndarray:

@@ -51,3 +51,20 @@ def test_project_matches_pca_transform():
     ref = (S.l2(x) - mean) @ comp.T
     assert np.allclose(v, ref / np.linalg.norm(ref, axis=1, keepdims=True), atol=1e-5)
     assert np.allclose(np.linalg.norm(S.project(x, mean, comp, center=False), axis=1), 1, atol=1e-5)
+
+
+def test_per_source_rank_follows_catalog_share():
+    emb, g = two_sources()                                # A 80% · B 20%
+    q = S.l2(np.array([[1.0, 0.3] + [0] * 14]))
+    idx, _ = S.search({"text": q}, {"text": emb}, {"text": 1.0}, g, k=20, merge="per_source_rank")
+    assert (g[idx[0]] == "b").sum() == 4                  # 20 × 20% = 4
+
+
+def test_translate_ko():
+    from recsys.translate import translate_ko
+    assert translate_ko("검은색 원피스")[0] == "black dress"
+    assert translate_ko("청자켓")[0] == "denim jacket"
+    assert translate_ko("하이웨이스트청바지")[0] == "high waist jeans"         # 붙여 쓴 복합어
+    assert translate_ko("여름에 입을 원피스", mt=lambda ws: ["wear"] * len(ws)) == ("summer wear dress", ["입을"])
+    assert translate_ko("트위드 자켓") == ("트위드 jacket", ["트위드"])         # mt 없으면 원문 유지
+    assert translate_ko("Nike 운동화")[0] == "Nike sneakers"

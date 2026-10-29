@@ -5,7 +5,8 @@
           image : Marqo-FashionSigLIP 텍스트 질의 → 상품 이미지 임베딩 (다른 모달리티)
           mix   : 두 점수를 표준화 후 가중 합 (화면의 텍스트 · 이미지 우선순위)
   결합    global (원래 점수) vs per_source_z (데이터셋별 표준화)
-  언어    영어 질의 vs 한국어 질의 → 번역(opus-mt-ko-en) → 같은 경로
+  결합    + per_source_rank (데이터셋 안의 순위 백분위 → 카탈로그 비율대로 섞임)
+  언어    en: 영어 질의, ko_mt: 한국어 → 번역 모델만, ko_dict: 한국어 → 패션 용어 사전 + 없는 단어만 번역 모델
 지표 (상위 20)
   precision : 상품 제목 · 설명 · 카테고리가 질의 키워드 규칙을 만족하는 비율 (예: "black dress" → dress 그리고 black)
   hm_share  : 결과 중 H&M 비율 (카탈로그 비율 약 19%. 한쪽 독차지 여부)
@@ -25,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from recsys import search as S
+from recsys.translate import translate_ko
 
 K = 20
 TEXT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -61,6 +63,19 @@ QUERIES = [
     ("kids t-shirt", "아동 티셔츠", [r"t-?shirt|\btee|top", r"kid|child|boy|girl|baby|toddler"]),
     ("striped shirt", "스트라이프 셔츠", [r"shirt|top|blouse", r"stripe"]),
     ("red dress", "빨간 원피스", [r"dress", r"\bred\b"]),
+    ("plaid shirt", "체크 셔츠", [r"shirt", r"plaid|check|flannel"]),
+    ("puffer vest", "패딩 조끼", [r"vest|gilet", r"puffer|padded|quilted|down"]),
+    ("wide leg pants", "와이드 팬츠", [r"pant|trouser", r"wide"]),
+    ("trench coat", "트렌치코트", [r"trench"]),
+    ("cargo pants", "카고 바지", [r"cargo"]),
+    ("mini dress", "미니 원피스", [r"dress", r"mini|short"]),
+    ("loafers", "로퍼", [r"loafer"]),
+    ("backpack", "백팩", [r"backpack"]),
+    ("bucket hat", "버킷햇", [r"bucket"]),
+    # 사전에 없는 단어 포함 → 번역 모델 보조 확인용
+    ("tweed jacket", "트위드 자켓", [r"jacket|blazer|coat", r"tweed"]),
+    ("velvet dress", "벨벳 원피스", [r"dress", r"velvet"]),
+    ("corduroy pants", "코듀로이 바지", [r"pant|trouser", r"corduroy|\bcord"]),
 ]
 DOC_COLS = ["title", "cat_target", "cat_type", "categories", "product_type_name", "description", "features"]
 
@@ -111,7 +126,7 @@ class Encoders:
         tok, model = self._mt
         batch = tok(qs, return_tensors="pt", padding=True).to(self.dev)
         with self.torch.no_grad():
-            out = model.generate(**batch, max_new_tokens=32, num_beams=4)
+            out = model.generate(**batch, max_new_tokens=16, num_beams=4, no_repeat_ngram_size=2)
         return tok.batch_decode(out, skip_special_tokens=True)
 
 
@@ -133,7 +148,6 @@ def evaluate(docs, idx, rules):
 METHODS = {   # 이름: (가중치, image 질의 평균 빼기)
     "text": ({"text": 1.0}, True),
     "image": ({"image": 1.0}, False),
-    "image_centered": ({"image": 1.0}, True),
     "mix_5_5": ({"text": 0.5, "image": 0.5}, False),
     "mix_7_3": ({"text": 0.7, "image": 0.3}, False),
 }
@@ -147,9 +161,12 @@ def run(root: Path, out: Path | None):
     ko = [q[1] for q in QUERIES]
     rules = [q[2] for q in QUERIES]
     t = time.time()
-    ko_en = enc.translate(ko)
-    langs = {"en": en, "ko": ko_en}
-    print("번역:", *[f"{a} → {b}" for a, b in zip(ko, ko_en)], sep="\n  ")
+    ko_mt = enc.translate(ko)
+    ko_dict = [translate_ko(q, enc.translate) for q in ko]
+    langs = {"en": en, "ko_mt": ko_mt, "ko_dict": [d[0] for d in ko_dict]}
+    print("번역 (번역 모델 | 사전 + 번역 모델, [사전에 없던 단어]):")
+    for a, b, (c, unk) in zip(ko, ko_mt, ko_dict):
+        print(f"  {a} → {b} | {c}" + (f"  {unk}" if unk else ""))
 
     table, per_query, examples = [], [], {}
     for lang, qs in langs.items():
@@ -162,7 +179,7 @@ def run(root: Path, out: Path | None):
                 ev = evaluate(docs, idx, rules)
                 table.append({"lang": lang, "method": name, "merge": merge, **ev.mean().round(4).to_dict()})
                 per_query.append(ev.assign(lang=lang, method=name, merge=merge, query=qs))
-                if lang == "en" and merge == "per_source_z":
+                if lang == "en" and merge == "per_source_rank":
                     examples[name] = {qs[i]: docs.title.values[idx[i, :5]].tolist() for i in (0, 5, 10)}
     table = pd.DataFrame(table)
     print(f"\n상위 {K} 기준 ({time.time() - t:.0f}s)")
@@ -171,7 +188,7 @@ def run(root: Path, out: Path | None):
         out.mkdir(parents=True, exist_ok=True)
         table.to_csv(out / "search_compare.csv", index=False)
         pd.concat(per_query).to_csv(out / "search_per_query.csv", index=False)
-        (out / "search_examples.json").write_text(json.dumps({"translations": dict(zip(ko, ko_en)), "top5": examples},
+        (out / "search_examples.json").write_text(json.dumps({"translations": {a: {"mt": b, "dict": c} for a, b, c in zip(ko, ko_mt, langs["ko_dict"])}, "top5": examples},
                                                              ensure_ascii=False, indent=2), encoding="utf-8")
     return table
 
