@@ -32,7 +32,7 @@ GLOSSARY = {
     "폴로": "polo", "티": "t-shirt",
     # 아우터
     "자켓": "jacket", "재킷": "jacket", "청자켓": "denim jacket", "청재킷": "denim jacket",
-    "가죽자켓": "leather jacket", "코트": "coat", "트렌치코트": "trench coat", "패딩": "puffer jacket",
+    "가죽자켓": "leather jacket", "코트": "coat", "트렌치코트": "trench coat", "패딩": "puffer",
     "롱패딩": "long puffer coat", "조끼": "vest", "베스트": "vest", "블레이저": "blazer", "점퍼": "jacket",
     "바람막이": "windbreaker", "야상": "parka", "정장": "suit",
     # 하의
@@ -57,12 +57,13 @@ GLOSSARY = {
     "가죽": "leather", "울": "wool", "린넨": "linen", "리넨": "linen", "실크": "silk", "면": "cotton",
     "코튼": "cotton", "데님": "denim", "청": "denim", "캐시미어": "cashmere", "꽃무늬": "floral",
     "플로럴": "floral", "스트라이프": "striped", "줄무늬": "striped", "체크": "plaid", "도트": "polka dot",
-    "땡땡이": "polka dot", "레이스": "lace", "기모": "fleece", "플리스": "fleece",
+    "땡땡이": "polka dot", "레이스": "lace", "벨벳": "velvet", "코듀로이": "corduroy", "골덴": "corduroy",
+    "트위드": "tweed", "새틴": "satin", "시폰": "chiffon", "스웨이드": "suede", "퍼": "fur", "니트웨어": "knitwear", "기모": "fleece", "플리스": "fleece",
     # 대상 · 계절 · 용도 · 핏
     "남성": "men's", "남자": "men's", "여성": "women's", "여자": "women's", "아동": "kids", "키즈": "kids",
     "어린이": "kids", "아기": "baby", "유아": "toddler", "여름": "summer", "겨울": "winter", "봄": "spring",
     "가을": "fall", "요가": "yoga", "스포츠": "sports", "운동": "workout", "러닝": "running", "등산": "hiking",
-    "골프": "golf", "하이웨이스트": "high waist", "오버핏": "oversized", "슬림": "slim", "긴팔": "long sleeve",
+    "골프": "golf", "야구": "baseball", "테니스": "tennis", "축구": "soccer", "하이웨이스트": "high waist", "오버핏": "oversized", "슬림": "slim", "긴팔": "long sleeve",
     "반팔": "short sleeve", "캐주얼": "casual", "포멀": "formal", "빈티지": "vintage", "웨딩": "wedding",
 }
 _MAX = max(map(len, GLOSSARY))

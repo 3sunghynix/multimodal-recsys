@@ -13,4 +13,6 @@ pgvector==0.3.6
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.5.1
 open_clip_torch==2.29.0
+# 텍스트 검색용 — MiniLM(all-MiniLM-L6-v2). Marqo 텍스트 토크나이저도 transformers를 쓴다
+sentence-transformers==3.3.1
 Pillow==11.0.0

@@ -23,5 +23,10 @@ class Settings(BaseSettings):
     # /search/image 업로드 크기 상한 (bytes). 기본 10MB
     max_image_bytes: int = 10 * 1024 * 1024
 
+    # 텍스트 검색 (POST /search). 상품 text_embedding과 같은 MiniLM → L2 → PCA 256 → L2.
+    text_encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    pca_text_path: str = "/data/embeddings/v2/pca_text.npz"
+    load_text_encoder: bool = True
+
 
 settings = Settings()

@@ -17,6 +17,7 @@ from scripts.seed_sample import seed
 def _no_clip_during_tests(monkeypatch):
     """CLIP 로드를 끈다. lifespan이 모델을 가져오지 않아 테스트가 가볍다."""
     monkeypatch.setattr(settings, "load_image_encoder", False)
+    monkeypatch.setattr(settings, "load_text_encoder", False)
 
 
 @pytest.fixture()

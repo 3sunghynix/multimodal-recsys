@@ -56,6 +56,25 @@ class ClipImageEncoder:
     def pca_ready(self) -> bool:
         return self.pca_mean is not None and self.pca_components is not None
 
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
+        """텍스트 질의 → 상품 이미지 임베딩 공간 (n, pca_dim). 텍스트→이미지 검색용.
+
+        이미지 평균을 빼지 않는다 (center=False). 텍스트 질의는 이미지 평균과 멀어서 빼면 모든 질의가
+        한 방향으로 쏠린다 — 실측 정확도@20: 빼면 0.32, 안 빼면 0.92 (docs/project/검색.md).
+        """
+        import torch
+
+        from ..services.search_core import project
+
+        if not self.pca_ready:
+            raise RuntimeError("PCA 변환 행렬이 로드되지 않았다 (pca_image_path 확인)")
+        if not hasattr(self, "_tokenizer"):
+            import open_clip
+            self._tokenizer = open_clip.get_tokenizer(self.model_name)
+        with torch.no_grad():
+            v = self.model.encode_text(self._tokenizer(texts).to(self.device)).float().cpu().numpy()
+        return project(v, self.pca_mean, self.pca_components, center=False)
+
     def encode_image_bytes(self, data: bytes) -> np.ndarray:
         """이미지 바이트 → L2 정규화된 임베딩 (pca_dim,). PCA 미설치면 RuntimeError."""
         from PIL import Image, ImageOps

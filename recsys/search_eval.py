@@ -72,7 +72,7 @@ QUERIES = [
     ("loafers", "로퍼", [r"loafer"]),
     ("backpack", "백팩", [r"backpack"]),
     ("bucket hat", "버킷햇", [r"bucket"]),
-    # 사전에 없는 단어 포함 → 번역 모델 보조 확인용
+    # 1차 실험에서 사전에 없던 단어 (번역 모델이 belvet · coduroy로 틀려 사전에 추가함)
     ("tweed jacket", "트위드 자켓", [r"jacket|blazer|coat", r"tweed"]),
     ("velvet dress", "벨벳 원피스", [r"dress", r"velvet"]),
     ("corduroy pants", "코듀로이 바지", [r"pant|trouser", r"corduroy|\bcord"]),

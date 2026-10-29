@@ -17,6 +17,11 @@ async def lifespan(app: FastAPI):
     if settings.load_image_encoder:
         from .encoders.clip_image import load_encoder
         app.state.image_encoder = load_encoder(settings.image_encoder_model, settings.pca_image_path)
+    # 텍스트 인코더 (MiniLM + PCA 256). POST /search 텍스트 질의용
+    app.state.text_encoder = None
+    if settings.load_text_encoder:
+        from .encoders.text import load_text_encoder
+        app.state.text_encoder = load_text_encoder(settings.text_encoder_model, settings.pca_text_path)
     yield
 
 
@@ -29,4 +34,6 @@ for r in (search.router, recommend.router, events.router, admin.router):
 def health():
     # TestClient처럼 lifespan을 실행하지 않는 환경에선 app.state.image_encoder가 없을 수 있다.
     enc = getattr(app.state, "image_encoder", None)
-    return {"status": "ok", "image_encoder": settings.image_encoder_model if enc else None}
+    txt = getattr(app.state, "text_encoder", None)
+    return {"status": "ok", "image_encoder": settings.image_encoder_model if enc else None,
+            "text_encoder": settings.text_encoder_model if txt else None}

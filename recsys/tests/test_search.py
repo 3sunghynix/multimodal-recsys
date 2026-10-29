@@ -66,5 +66,14 @@ def test_translate_ko():
     assert translate_ko("청자켓")[0] == "denim jacket"
     assert translate_ko("하이웨이스트청바지")[0] == "high waist jeans"         # 붙여 쓴 복합어
     assert translate_ko("여름에 입을 원피스", mt=lambda ws: ["wear"] * len(ws)) == ("summer wear dress", ["입을"])
-    assert translate_ko("트위드 자켓") == ("트위드 jacket", ["트위드"])         # mt 없으면 원문 유지
+    assert translate_ko("앙고라 자켓") == ("앙고라 jacket", ["앙고라"])         # mt 없으면 원문 유지
     assert translate_ko("Nike 운동화")[0] == "Nike sneakers"
+
+
+def test_backend_copies_match():
+    """백엔드(Docker 빌드 범위가 backend/)는 같은 코드를 복사해 쓴다. 실험과 서비스가 달라지지 않게 확인."""
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    for a, b in (("recsys/search.py", "backend/app/services/search_core.py"),
+                 ("recsys/translate.py", "backend/app/services/translate_ko.py")):
+        assert (root / a).read_bytes() == (root / b).read_bytes(), f"{b}를 {a}와 같게 복사하세요"
