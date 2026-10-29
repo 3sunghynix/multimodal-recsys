@@ -7,12 +7,13 @@ from datetime import datetime
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
+from .config import settings
 from .db import Base
 from .types import EmbeddingVector
 
-# 콘텐츠 임베딩(검색용)의 차원. 지금은 논문 파이프라인(PCA 256 + L2) 가정 기본값이며,
-# 실제 운영 인코더가 결정되면 그 산출물 차원으로 조정한다 (예: CLIP ViT-B/32 raw = 512).
-EMBEDDING_DIM = 256
+# 콘텐츠 임베딩(검색용)의 차원. 운영 인코더가 OpenAI CLIP ViT-B/32라서 기본값은 settings.embedding_dim = 512.
+# 다른 인코더(예: 논문 PCA 256 + L2)로 교체 시 settings에서 embedding_dim 함께 변경한다.
+EMBEDDING_DIM = settings.embedding_dim
 
 EVENT_TYPES = ("view", "click", "add_to_cart", "purchase", "search")
 

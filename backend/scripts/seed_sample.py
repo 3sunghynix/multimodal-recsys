@@ -1,4 +1,11 @@
-"""데모용 작은 데이터 (브랜드 3 · 상품 30 · 고객 10 · 이벤트 약 150, 기준 모델 2개). 실제 데이터 적재 스크립트가 생기기 전까지 사용.
+"""데모용 작은 데이터 (브랜드 3 · 상품 30 · 고객 10 · 이벤트 약 150, 기준 모델 2개). 테스트 · 빠른 실행용.
+
+실제 멀티모달 검색 데모는 PR #15의 load_dev_subset으로 돌린다 (브랜드 21 · 상품 ~2,000 · Amazon/H&M
+이미지 + Marqo PCA 256 임베딩이 드라이브 msrs_project/embeddings/v2에 있다):
+    docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset --embeddings /data/embeddings/v2
+
+이 스크립트는 image_embedding을 채우지 않는다. text 임베딩을 image 열에 넣으면 열의 의미가 꼬이고,
+실제 이미지와 다른 공간이라 /search/image 결과가 왜곡된다.
 
 실행 (backend/ 에서): python -m scripts.seed_sample
 """
