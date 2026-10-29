@@ -97,3 +97,16 @@ def test_mix_popular():
     rec = np.array([[1, 2, 3, 4]])
     pop = np.array([2, 9, 8, 7])
     assert ume.mix_popular(rec, pop, 2, 4).tolist() == [[1, 2, 9, 8]]      # 앞 2개 rec, 나머지는 rec에 없는 인기
+
+
+def test_popularity_bias_dominates_when_large():
+    h = pd.DataFrame({"user_id": [1, 1, 2, 3, 3, 3], "item_id": [5, 6, 6, 6, 7, 5], "feedback": 1.0,
+                      "ts": pd.to_datetime(["2023-01-01"] * 6)})
+    catalog = np.array([5, 6, 7, 8])
+    z = ume.popularity_score(h, catalog, None)
+    assert z.argmax() == 1 and z[3] == z.min() and abs(z.mean()) < 1e-6        # 6이 가장 인기, 8은 0회
+    rng = np.random.default_rng(0)
+    U = {"text": rng.normal(size=(3, 4)).astype(np.float32), "image": rng.normal(size=(3, 4)).astype(np.float32)}
+    V = {"text": rng.normal(size=(4, 4)).astype(np.float32), "image": rng.normal(size=(4, 4)).astype(np.float32)}
+    rec = ume.recommend(U, V, catalog, 2, "cpu", item_bias=100 * z)
+    assert (rec[:, 0] == 6).all() and (rec[:, 1] == 5).all()

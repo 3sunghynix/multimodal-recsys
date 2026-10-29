@@ -175,12 +175,23 @@ def tower_vectors(model, X, seq: Sequences, users, catalog, max_hist, device, ch
     return np.concatenate(U), V
 
 
-def recommend(U: dict, V: dict, catalog: np.ndarray, k: int, device: str, boost=None, chunk=2048):
+def popularity_score(history: pd.DataFrame, catalog: np.ndarray, recent_days: int | None) -> np.ndarray:
+    """상품별 인기 점수 (n_catalog,): 학습 이력 긍정 이벤트 수(최근 N일)의 log1p를 카탈로그 전체로 표준화."""
+    h = history[history.feedback > 0]
+    if recent_days is not None:
+        h = h[h.ts >= h.ts.max() - pd.Timedelta(days=recent_days)]
+    cnt = np.log1p(h.item_id.value_counts().reindex(catalog).fillna(0).values).astype(np.float32)
+    return (cnt - cnt.mean()) / (cnt.std() + 1e-6)
+
+
+def recommend(U: dict, V: dict, catalog: np.ndarray, k: int, device: str, boost=None, item_bias=None, chunk=2048):
     """U · V: {"text": ..., "image": ...}. 모달리티 하나면 원래 점수, 둘이면 고객별 z 합.
-    boost: (고객별 최다 브랜드 (n_users,), 상품 브랜드 (n_catalog,), β) 또는 None. 반환: (n_users, k) 상품 id."""
+    boost: (고객별 최다 브랜드 (n_users,), 상품 브랜드 (n_catalog,), β) 또는 None.
+    item_bias: 모든 고객에게 같은 상품별 가산 (n_catalog,) — 예: γ · 인기 점수. 반환: (n_users, k) 상품 id."""
     import torch
     mods = list(U)
     Vt = {m: torch.from_numpy(V[m]).to(device) for m in mods}
+    bias = None if item_bias is None else torch.from_numpy(np.ascontiguousarray(item_bias, np.float32)).to(device)[None, :]
     out = []
     for s in range(0, len(U[mods[0]]), chunk):
         total = 0
@@ -192,6 +203,8 @@ def recommend(U: dict, V: dict, catalog: np.ndarray, k: int, device: str, boost=
             tb = torch.from_numpy(np.ascontiguousarray(top_brand[s:s + chunk])).to(device)[:, None]
             ib = torch.from_numpy(item_brand).to(device)[None, :]
             total = total + beta * ((ib == tb) & (ib >= 0)).float()
+        if bias is not None:
+            total = total + bias
         out.append(total.topk(k, dim=1).indices.cpu().numpy())
     return catalog[np.concatenate(out)]
 
@@ -217,8 +230,8 @@ def save_tower(model, path: Path, p: dict, meta: dict):
 # ---------------------------------------------------------------- 실험 (E0 · E1 · E2 · E3)
 
 def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: Path | None = None,
-        feedback_weight: bool = True, epochs: int | None = None, betas=(0.5, 1.0, 2.0), device: str | None = None,
-        ks=(12, 300), log=print):
+        feedback_weight: bool = True, epochs: int | None = None, betas=(0.5, 1.0, 2.0), gammas=(0.5, 1.0, 2.0, 4.0),
+        device: str | None = None, ks=(12, 300), log=print):
     """E0 · E1 · E2 · E3을 한 번에: 두 타워 학습 → 인기 · 텍스트 · 이미지 · UME · 인기 슬롯 · 브랜드 가산을 같은 지표로 채점."""
     import torch
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -258,14 +271,21 @@ def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: P
     n_ume = K // 15
     recs[f"pop{K - n_ume}+ume{n_ume}"] = np.stack([np.concatenate([p_[:K - n_ume], u_[~np.isin(u_, p_[:K - n_ume])][:n_ume]])
                                                    for p_, u_ in zip(recs["popularity"], recs["ume"])])
-    # E3: 브랜드 가산 (브랜드가 여럿인 데이터셋만)
+    # E2b: 인기 점수 가산 — 최종 = UME z 합 + γ · 인기 점수(표준화). 슬롯과 달리 순위 전체에 인기가 섞인다
+    pop_z = popularity_score(es.history, catalog, POP_RECENT[source])
+    for g in gammas:
+        recs[f"ume+popscore{g}"] = recommend(U, V, catalog, K, device, item_bias=g * pop_z)
+    # E3: 브랜드 가산 (브랜드가 여럿인 데이터셋만), 인기 점수와 함께도
     if source == "amazon":
         b = pd.DataFrame({"user_id": es.history.user_id.values, "brand": brand_of[es.history.item_id.values]})
         b = b[b.brand >= 0]
         top = b.groupby(["user_id", "brand"]).size().reset_index(name="c").sort_values(["user_id", "c"], ascending=[True, False])
         top_brand = top.drop_duplicates("user_id").set_index("user_id").brand.reindex(es.users).fillna(-1).astype(np.int64).values
+        boost = lambda beta: (top_brand, brand_of[catalog], beta)  # noqa: E731
         for beta in betas:
-            recs[f"ume+brand{beta}"] = recommend(U, V, catalog, K, device, boost=(top_brand, brand_of[catalog], beta))
+            recs[f"ume+brand{beta}"] = recommend(U, V, catalog, K, device, boost=boost(beta))
+            for g in gammas:
+                recs[f"ume+popscore{g}+brand{beta}"] = recommend(U, V, catalog, K, device, boost=boost(beta), item_bias=g * pop_z)
 
     result = {"source": source, "split": split, "input": kind, "feedback_weight": feedback_weight, "params": p,
               "eval": es.summary(), "timing": timing, "models": {}}
