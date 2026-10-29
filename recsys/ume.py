@@ -28,7 +28,8 @@ import numpy as np
 import pandas as pd
 
 from recsys import baselines
-from recsys.eval import build_eval_set
+from recsys.eval import accuracy_at_k, build_eval_set
+from recsys.eval.stats import paired_bootstrap
 from recsys.run_eval import image_embedding_by_item, load_dataset, metrics_for
 
 DEFAULT = dict(hidden=512, emb_dim=128, dropout=0.1, lr=5e-4, weight_decay=0.0, temperature=0.05,
@@ -295,6 +296,17 @@ def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: P
         result["models"][name] = m = metrics_for(rec, es, brand_of, len(catalog), emb, ks)
         log(f"  {name:<18} R@{k0} {m[f'recall@{k0}']:.4f}  NDCG@{k0} {m[f'ndcg@{k0}']:.4f}  MAP@{k0} {m[f'map@{k0}']:.4f}  "
             f"R@{K} {m[f'recall@{K}']:.4f}  브랜드일치@{k0} {m[f'brand_alignment@{k0}']:.4f}")
+    # 인기 모델 대비 차이의 95% 구간 (고객 단위 짝지은 부트스트랩 1,000회)
+    _, base = accuracy_at_k(recs["popularity"], es.users, es.truth, ks)
+    result["vs_popularity"] = {}
+    for name, rec in recs.items():
+        if name == "popularity":
+            continue
+        _, per = accuracy_at_k(rec, es.users, es.truth, ks)
+        result["vs_popularity"][name] = {mt: paired_bootstrap(base[mt], per[mt])
+                                         for mt in (f"recall@{k0}", f"ndcg@{k0}", f"map@{k0}", f"recall@{K}")}
+        c = result["vs_popularity"][name][f"map@{k0}"]
+        log(f"  {name:<18} MAP@{k0} − 인기 {c['diff']:+.4f} [{c['ci95'][0]:+.4f}, {c['ci95'][1]:+.4f}]")
     if out:
         out.mkdir(parents=True, exist_ok=True)
         tag = f"{source}_{split}_{kind}" + ("" if feedback_weight else "_nofb")

@@ -110,3 +110,13 @@ def test_popularity_bias_dominates_when_large():
     V = {"text": rng.normal(size=(4, 4)).astype(np.float32), "image": rng.normal(size=(4, 4)).astype(np.float32)}
     rec = ume.recommend(U, V, catalog, 2, "cpu", item_bias=100 * z)
     assert (rec[:, 0] == 6).all() and (rec[:, 1] == 5).all()
+
+
+def test_paired_bootstrap():
+    from recsys.eval.stats import paired_bootstrap
+    rng = np.random.default_rng(0)
+    a = rng.random(2000)
+    r = paired_bootstrap(a, a + 0.1)
+    assert abs(r["diff"] - 0.1) < 1e-9 and r["ci95"][0] > 0.09                  # 확실한 차이 → 0 밖
+    r = paired_bootstrap(a, a + rng.normal(0, 0.5, 2000))
+    assert r["ci95"][0] < 0 < r["ci95"][1]                                        # 잡음뿐 → 0 포함
