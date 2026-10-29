@@ -11,11 +11,12 @@ from .routers import admin, events, recommend, search
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # CLIP 이미지 인코더 preload. 테스트에서는 settings.load_image_encoder=False 로 끈다
+    # 이미지 인코더 preload (Marqo-FashionSigLIP + PCA 256). 테스트에서는 settings.load_image_encoder=False 로 끈다.
+    # PCA 파일이 없어도 encoder는 뜨고, /search/image 라우터가 호출 시 503으로 바꿔 응답한다.
     app.state.image_encoder = None
     if settings.load_image_encoder:
         from .encoders.clip_image import load_encoder
-        app.state.image_encoder = load_encoder(settings.image_encoder_model)
+        app.state.image_encoder = load_encoder(settings.image_encoder_model, settings.pca_image_path)
     yield
 
 

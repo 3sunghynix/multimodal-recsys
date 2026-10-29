@@ -25,7 +25,7 @@ def client(tmp_path):
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     app_db.init_db(engine)
     with Session() as s:
-        seed(s, with_embeddings=False)   # SQLite에선 pgvector 없으므로 임베딩도 건너뜀
+        seed(s)   # 샘플은 image_embedding을 채우지 않는다. 실제 데모는 load_dev_subset으로 돈다
 
     def override():
         s = Session()
@@ -47,12 +47,12 @@ def test_health(client):
 def test_search_text_and_image(client):
     r = client.get("/search", params={"q": "Alpha dress"})
     assert r.status_code == 200 and all("Alpha" in i["title"] and "Dress" in i["title"] for i in r.json())
-    # CLIP 비활성(테스트) → 503. 운영에서는 200 + 유사 상품 리스트
+    # 형식(415)은 인코더 상태와 무관하게 항상 먼저 거절된다
+    r = client.post("/search/image", files={"file": ("a.txt", b"nope", "text/plain")})
+    assert r.status_code == 415
+    # 올바른 형식이지만 인코더 비활성(테스트) → 503. 운영은 200 + 유사 상품 리스트.
     r = client.post("/search/image", files={"file": ("a.jpg", b"fake", "image/jpeg")})
     assert r.status_code == 503
-    # 허용되지 않는 파일 형식 → 415 (인코더 여부와 무관하게 거절되어야 하지만 현재는 encoder 체크가 먼저)
-    r = client.post("/search/image", files={"file": ("a.txt", b"nope", "text/plain")})
-    assert r.status_code in (415, 503)   # 인코더 비활성이면 503이 먼저 뜰 수 있음
 
 
 def test_recommend_uses_active_model(client):

@@ -1,16 +1,18 @@
-"""데모용 작은 데이터 (브랜드 3 · 상품 30 · 고객 10 · 이벤트 약 150, 기준 모델 2개). 실제 데이터 적재 스크립트가 생기기 전까지 사용.
+"""데모용 작은 데이터 (브랜드 3 · 상품 30 · 고객 10 · 이벤트 약 150, 기준 모델 2개). 테스트 · 빠른 실행용.
+
+실제 멀티모달 검색 데모는 PR #15의 load_dev_subset으로 돌린다 (브랜드 21 · 상품 ~2,000 · Amazon/H&M
+이미지 + Marqo PCA 256 임베딩이 드라이브 msrs_project/embeddings/v2에 있다):
+    docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset --embeddings /data/embeddings/v2
+
+이 스크립트는 image_embedding을 채우지 않는다. text 임베딩을 image 열에 넣으면 열의 의미가 꼬이고,
+실제 이미지와 다른 공간이라 /search/image 결과가 왜곡된다.
 
 실행 (backend/ 에서): python -m scripts.seed_sample
-
-PostgreSQL + CLIP이 사용 가능하면 상품 title을 CLIP text encoder로 임베딩해 image_embedding
-자리에 저장한다. CLIP은 image/text 공유 공간이라 /search/image의 이미지 쿼리와 바로 비교된다.
-SQLite 또는 encode 실패 시에는 임베딩 없이 적재한다(기능 테스트는 가능).
 """
 import random
 
 from sqlalchemy import select
 
-from app.config import settings
 from app.db import SessionLocal, init_db
 from app.models import Brand, Event, Item, ModelVersion, User
 
@@ -19,7 +21,7 @@ CATEGORIES = ["T-shirt", "Dress", "Trousers", "Sneakers", "Jacket"]
 COLORS = ["black", "white", "blue", "red", "beige", "green"]
 
 
-def seed(db, n_items=30, n_users=10, n_events=150, seed=42, with_embeddings=True):
+def seed(db, n_items=30, n_users=10, n_events=150, seed=42):
     if db.scalars(select(Item)).first() is not None:
         return False
     rng = random.Random(seed)
@@ -34,9 +36,6 @@ def seed(db, n_items=30, n_users=10, n_events=150, seed=42, with_embeddings=True
     users = [User(source="sample", source_user_id=f"u{u}") for u in range(n_users)]
     db.add_all(items + users)
     db.flush()
-    # CLIP text encoder로 상품 title을 임베딩해 image_embedding 자리에 넣는다 (CLIP의 공유 공간)
-    if with_embeddings and db.bind.dialect.name == "postgresql":
-        _attach_text_embeddings(items)
     for _ in range(n_events):
         u = rng.choice(users)
         fav = brands[u.id % len(brands)]                 # 고객마다 선호 브랜드 (브랜드 충성도 예시)
@@ -47,19 +46,6 @@ def seed(db, n_items=30, n_users=10, n_events=150, seed=42, with_embeddings=True
                 ModelVersion(name="brand_popularity", params={"top_brands": 1})])
     db.commit()
     return True
-
-
-def _attach_text_embeddings(items):
-    """상품 title을 CLIP text encoder로 묶어 인코딩해 image_embedding 컬럼에 저장한다."""
-    try:
-        from app.encoders.clip_image import load_encoder
-        enc = load_encoder(settings.image_encoder_model)
-        vecs = enc.encode_texts([it.title for it in items])   # (N, dim) L2 정규화 완료
-        for it, v in zip(items, vecs):
-            it.image_embedding = v.tolist()
-        print(f"CLIP text embedding으로 {len(items)}개 상품의 image_embedding을 채움")
-    except Exception as e:
-        print(f"[주의] CLIP 로드 실패 — 임베딩 없이 적재 ({e})")
 
 
 if __name__ == "__main__":
