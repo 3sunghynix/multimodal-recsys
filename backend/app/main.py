@@ -1,7 +1,9 @@
 """멀티 브랜드 멀티모달 추천 서비스 API. 실행: uvicorn app.main:app --reload (backend/ 에서), 문서: /docs"""
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
@@ -28,6 +30,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Multimodal RecSys", version="0.1.0", lifespan=lifespan)
 for r in (search.router, recommend.router, events.router, admin.router, items.router):
     app.include_router(r)
+
+# 상품 이미지 서빙 (/images/{source}/{item_id}.jpg). load_dev_subset이 images.zip을 압축 해제한 경로를 노출한다.
+# 디렉토리가 없어도 서버는 뜨고, 요청 시 FastAPI가 자연스럽게 404로 응답한다.
+if Path(settings.images_root).exists():
+    app.mount("/images", StaticFiles(directory=settings.images_root), name="images")
 
 
 @app.get("/health", tags=["health"])
