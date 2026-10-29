@@ -238,12 +238,19 @@
     items.forEach((item, idx) => {
       const brand = item.brand_id ? `BRAND #${item.brand_id}` : '';
       const price = item.price != null ? '₩' + Math.round(item.price * 1300).toLocaleString() : '-';
-      const imgSrc = `/images/${item.source}/${item.source_item_id}.jpg`;
+      // 적재 스크립트가 image_path를 "dev_subset/images/{source}/{item_id}.jpg" 포맷으로 저장.
+      // StaticFiles는 /images → /data/dev_subset/images 이므로 접두어만 바꿔 URL 생성.
+      const imgSrc = item.image_path
+        ? '/' + item.image_path.replace(/^dev_subset\/images\//, 'images/')
+        : null;
       const el = document.createElement('article');
       el.className = 'card';
+      const imgTag = imgSrc
+        ? `<img src="${imgSrc}" alt="${item.title}" loading="lazy" onerror="this.remove(); this.parentElement.insertAdjacentHTML('beforeend','<span class=&quot;placeholder&quot;>🛍️</span>');">`
+        : '<span class="placeholder">🛍️</span>';
       el.innerHTML = `
         <div class="thumb">
-          <img src="${imgSrc}" alt="${item.title}" onerror="this.remove(); this.parentElement.insertAdjacentHTML('beforeend','<span class=&quot;placeholder&quot;>🛍️</span>');">
+          ${imgTag}
           <span class="src-badge">${item.source}</span>
           <span class="rank">#${idx + 1}</span>
         </div>
