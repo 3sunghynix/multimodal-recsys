@@ -1,0 +1,6 @@
+{
+  "name": "msrs-demo-browser-tests",
+  "private": true,
+  "scripts": { "test": "node --test unified_search.test.cjs" },
+  "devDependencies": { "playwright": "1.62.1" }
+}

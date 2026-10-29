@@ -19,6 +19,7 @@
       --header-h: 60px;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
     body { padding-top: var(--header-h); }
     a { color: inherit; text-decoration: none; }
@@ -50,7 +51,8 @@
     .hero h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.5px; }
     .hero p { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
 
-    .search-bar { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; align-items: stretch; max-width: 820px; }
+    .search-panel { max-width: 820px; }
+    .search-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: stretch; }
     .search-bar .text-input { position: relative; }
     .search-bar input[type=text] {
       width: 100%; height: 48px; padding: 0 16px 0 44px; border: 1.5px solid var(--line);
@@ -74,6 +76,24 @@
     .file-wrap { position: relative; overflow: hidden; }
     .file-wrap input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .file-name { color: var(--muted); font-size: 12px; margin-top: 6px; display: block; min-height: 1em; }
+    .image-selection { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .image-selection .file-name { margin: 0; overflow-wrap: anywhere; }
+    .clear-image { border: 0; background: none; color: var(--fg); text-decoration: underline; white-space: nowrap; }
+    .weight-control { margin-top: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px; }
+    .weight-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .weight-row input { flex: 1; min-width: 60px; accent-color: var(--accent); }
+    .weight-control output { display: block; margin-top: 6px; color: var(--muted); }
+    .translation-note { margin-top: 12px; font-size: 14px; overflow-wrap: anywhere; }
+    .translation-note .warning { color: #9a4d00; margin-top: 6px; }
+    @media (max-width: 640px) {
+      .search-bar { grid-template-columns: minmax(0, 1fr) auto; }
+      .search-bar .text-input { grid-column: 1 / -1; }
+      .header { padding: 0 12px; gap: 10px; flex-wrap: wrap; height: auto; min-height: var(--header-h); }
+      .logo { margin-right: 0; font-size: 19px; }
+      .nav { gap: 12px; font-size: 13px; }
+      .header-right { gap: 6px; }
+      .header-right .icon-btn { font-size: 12px; }
+    }
 
     /* ───── Status bar ───── */
     .status-bar {
@@ -158,24 +178,35 @@
     <h1>패션의 완성은 MSRS</h1>
     <p>MSRS와 함께라면 당신도 Trendsetter</p>
 
-    <div class="search-bar">
-      <form id="form-text" class="text-input" style="display: contents;">
+    <form id="form-search" class="search-panel" aria-label="텍스트·이미지 통합 검색">
+      <div class="search-bar">
         <div class="text-input">
-          <input type="text" name="q" placeholder="black dress, running shoes, denim jacket…" autocomplete="off" required>
+          <input type="text" name="q" id="search-query" aria-label="검색어" placeholder="검은색 원피스, running shoes…" autocomplete="off">
         </div>
-        <button type="submit" class="btn">검색</button>
-      </form>
-      <div class="file-wrap">
-        <button class="btn ghost" type="button" id="img-btn">📷 이미지로 검색</button>
-        <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp">
+        <button class="btn ghost" type="button" id="img-btn">📷 이미지 선택</button>
+        <button type="submit" class="btn" id="search-submit">검색</button>
       </div>
-    </div>
-    <span class="file-name" id="file-name"></span>
+      <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp" hidden>
+      <div class="image-selection" id="image-selection" hidden>
+        <span class="file-name" id="file-name"></span>
+        <button type="button" class="clear-image" id="clear-image">이미지 제거</button>
+      </div>
+      <div class="weight-control" id="weight-control" hidden>
+        <label for="text-weight">텍스트·이미지 우선순위</label>
+        <div class="weight-row">
+          <span>이미지</span>
+          <input type="range" id="text-weight" name="text_weight" min="0" max="1" step="0.05" value="0.5">
+          <span>텍스트</span>
+        </div>
+        <output id="weight-label" for="text-weight">텍스트 50% · 이미지 50%</output>
+      </div>
+    </form>
   </section>
 
-  <div class="status-bar" id="status">
-    상품 적재 후 사용: <code>docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset --embeddings /data/embeddings/v2</code>
+  <div class="status-bar" id="status" role="status" aria-live="polite">
+    검색어나 이미지를 선택한 후 검색을 눌러 주세요. 둘을 함께 사용할 수도 있어요.
   </div>
+  <div class="translation-note" id="translation-note" aria-live="polite" hidden></div>
 
   <!-- Results Section (dynamic) -->
   <section class="block" id="result-section" hidden>
@@ -198,8 +229,8 @@
   <details class="debug">
     <summary>API 흐름 (디버깅용)</summary>
     <ul>
-      <li><code>GET /search?q=…&amp;k=20</code> → 상품 목록</li>
-      <li><code>POST /search/image</code> (multipart file) → 상품 목록 (Marqo + PCA 256)</li>
+      <li><code>POST /search</code> (FormData: q, file 선택, text_weight, k) → <code>items</code>의 상품 상세를 바로 표시</li>
+      <li>텍스트·이미지 검색은 서버 기본 <code>per_source_rank</code> 결합 사용. 번역 결과는 <code>query_en</code>, 미번역 단어는 <code>untranslated</code>로 안내</li>
       <li><code>GET /recommend/{user_id}?k=20</code> → <code>{items: [id, …]}</code> → <code>GET /items?ids=…</code>로 상세 조회</li>
       <li><code>GET /images/{source}/{item_id}.jpg</code> → 상품 이미지</li>
     </ul>
@@ -216,110 +247,204 @@
   const statusEl = $('#status');
   const emptyEl = $('#empty-state');
   const resultSection = $('#result-section');
-  const resultTitle = $('#result-title');
-  const resultMeta = $('#result-meta');
   const cards = $('#cards');
+  const queryInput = $('#search-query');
+  const imageInput = $('#img-input');
+  const weightInput = $('#text-weight');
+  const translationNote = $('#translation-note');
+  let activeRequest = null;
+  let requestVersion = 0;
 
-  function setStatus(msg, kind = '') {
+  // 검색어·상품명 등 외부 값은 HTML로 해석하지 않는다.
+  function textElement(tag, className, text) {
+    const el = document.createElement(tag);
+    el.className = className;
+    el.textContent = text;
+    return el;
+  }
+
+  function setStatus(message, kind = '') {
     statusEl.className = 'status-bar' + (kind ? ' ' + kind : '');
-    statusEl.innerHTML = msg;
+    statusEl.textContent = message;
+  }
+
+  function clearTranslation() {
+    translationNote.replaceChildren();
+    translationNote.hidden = true;
+  }
+
+  function showTranslation(result, query) {
+    clearTranslation();
+    if (query && result.query_en) {
+      translationNote.append(textElement('div', '', `“${result.query_en}”(으)로 검색했습니다.`));
+    }
+    if (Array.isArray(result.untranslated) && result.untranslated.length) {
+      translationNote.append(textElement('div', 'warning', `번역 못한 단어: ${result.untranslated.join(', ')}`));
+    }
+    translationNote.hidden = !translationNote.childElementCount;
+  }
+
+  function updateSearchControls() {
+    const file = imageInput.files[0];
+    $('#image-selection').hidden = !file;
+    $('#file-name').textContent = file ? `선택: ${file.name} (${(file.size / 1024).toFixed(1)}KB)` : '';
+    $('#weight-control').hidden = !(queryInput.value.trim() && file);
+    const percent = Math.round(Number(weightInput.value) * 100);
+    $('#weight-label').textContent = `텍스트 ${percent}% · 이미지 ${100 - percent}%`;
+  }
+
+  function imageUrl(item) {
+    if (!item.image_path) return null;
+    const path = item.image_path.replace(/^dev_subset\/images\//, '/images/');
+    // 기존 로컬 이미지 경로만 허용한다. 외부 URL 계약은 후속 API 작업에서 정한다.
+    if (!path.startsWith('/images/')) return null;
+    const url = new URL(path, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith('/images/') ? url.href : null;
   }
 
   function render(items, title, meta = '') {
     emptyEl.hidden = true;
     resultSection.hidden = false;
-    resultTitle.textContent = title;
-    resultMeta.textContent = meta;
-    cards.innerHTML = '';
+    $('#result-title').textContent = title;
+    $('#result-meta').textContent = meta;
+    cards.replaceChildren();
     if (!items.length) {
-      cards.innerHTML = '<div class="empty" style="grid-column: 1/-1;">검색 결과가 없어요.</div>';
+      const empty = textElement('div', 'empty', '결과가 없어요. 검색어나 이미지를 바꿔 보세요.');
+      empty.style.gridColumn = '1 / -1';
+      cards.append(empty);
       return;
     }
-    items.forEach((item, idx) => {
-      const brand = item.brand_id ? `BRAND #${item.brand_id}` : '';
-      const price = item.price != null ? '₩' + Math.round(item.price * 1300).toLocaleString() : '-';
-      // 적재 스크립트가 image_path를 "dev_subset/images/{source}/{item_id}.jpg" 포맷으로 저장.
-      // StaticFiles는 /images → /data/dev_subset/images 이므로 접두어만 바꿔 URL 생성.
-      const imgSrc = item.image_path
-        ? '/' + item.image_path.replace(/^dev_subset\/images\//, 'images/')
-        : null;
-      const el = document.createElement('article');
-      el.className = 'card';
-      const imgTag = imgSrc
-        ? `<img src="${imgSrc}" alt="${item.title}" loading="lazy" onerror="this.remove(); this.parentElement.insertAdjacentHTML('beforeend','<span class=&quot;placeholder&quot;>🛍️</span>');">`
-        : '<span class="placeholder">🛍️</span>';
-      el.innerHTML = `
-        <div class="thumb">
-          ${imgTag}
-          <span class="src-badge">${item.source}</span>
-          <span class="rank">#${idx + 1}</span>
-        </div>
-        <div class="info">
-          <div class="brand">${brand}</div>
-          <div class="title">${item.title}</div>
-          <div class="price">${price}</div>
-        </div>
-      `;
-      cards.appendChild(el);
+    items.forEach((item, index) => {
+      const card = textElement('article', 'card', '');
+      const thumb = textElement('div', 'thumb', '');
+      const placeholder = () => textElement('span', 'placeholder', '🛍️');
+      const src = imageUrl(item);
+      if (src) {
+        const img = document.createElement('img');
+        img.alt = item.title;
+        img.loading = 'lazy';
+        img.addEventListener('error', () => img.replaceWith(placeholder()), { once: true });
+        img.src = src;
+        thumb.append(img);
+      } else {
+        thumb.append(placeholder());
+      }
+      thumb.append(textElement('span', 'src-badge', item.source), textElement('span', 'rank', `#${index + 1}`));
+      const info = textElement('div', 'info', '');
+      // 가격 출처를 아직 API에서 받지 못하므로 고정 환산값을 판매가로 단정하지 않는다.
+      const price = item.price != null ? '예상가 ₩' + Math.round(item.price * 1300).toLocaleString() : '가격 정보 없음';
+      const priceEl = textElement('div', 'price', price);
+      if (item.price != null) priceEl.title = '데모 표시용 추정가입니다. 고정 환산 기준: 1 USD = 1,300 KRW.';
+      info.append(textElement('div', 'brand', item.brand_id ? `BRAND #${item.brand_id}` : ''),
+        textElement('div', 'title', item.title), priceEl);
+      card.append(thumb, info);
+      cards.append(card);
     });
   }
 
-  async function handleResponse(r, context) {
-    if (!r.ok) {
-      const text = await r.text().catch(() => '');
-      setStatus(`<strong>HTTP ${r.status}</strong> · ${context} · ${text.slice(0, 180)}`, 'error');
-      return null;
+  async function requestJson(url, options, signal) {
+    const response = await fetch(url, { ...options, signal });
+    if (!response.ok) {
+      const raw = await response.text();
+      let detail = raw.slice(0, 180);
+      try {
+        const body = JSON.parse(raw);
+        if (typeof body.detail === 'string') detail = body.detail;
+        else if (Array.isArray(body.detail)) detail = body.detail.map((entry) => entry.msg).join('; ');
+      } catch (_) { /* JSON이 아닌 오류도 일반 텍스트로만 보여준다. */ }
+      throw new Error(`HTTP ${response.status} · ${detail}`);
     }
-    setStatus(`✓ ${context}`, 'ok');
-    return await r.json();
+    return response.json();
   }
 
-  // ─── 텍스트 검색 ───
-  $('#form-text').onsubmit = async (e) => {
-    e.preventDefault();
-    const q = e.target.querySelector('[name=q]').value.trim();
-    if (!q) return;
-    setStatus(`검색 중… "${q}"`);
-    const r = await fetch(`/search?q=${encodeURIComponent(q)}&k=20`);
-    const items = await handleResponse(r, `텍스트 검색: "${q}"`);
-    if (items) render(items, `"${q}" 검색 결과`, `${items.length}개`);
-  };
+  // 빠른 재검색 또는 추천 전환에서 늦게 도착한 이전 응답이 화면을 덮어쓰지 않는다.
+  async function runRequest(message, task) {
+    if (activeRequest) activeRequest.abort();
+    const controller = new AbortController();
+    activeRequest = controller;
+    const version = ++requestVersion;
+    const current = () => version === requestVersion;
+    clearTranslation();
+    cards.replaceChildren();
+    resultSection.hidden = true;
+    emptyEl.hidden = true;
+    resultSection.setAttribute('aria-busy', 'true');
+    setStatus(message);
+    try {
+      await task(controller.signal, current);
+    } catch (error) {
+      if (current() && error.name !== 'AbortError') {
+        const detail = error.message.startsWith('HTTP ') ? error.message : '서버에 연결하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+        setStatus(detail, 'error');
+      }
+    } finally {
+      if (current()) {
+        activeRequest = null;
+        resultSection.setAttribute('aria-busy', 'false');
+      }
+    }
+  }
 
-  // ─── 이미지 업로드 (버튼 클릭 → 파일 선택 → 자동 업로드) ───
-  $('#img-btn').onclick = () => $('#img-input').click();
-  $('#img-input').onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    $('#file-name').textContent = `선택: ${file.name} (${(file.size / 1024).toFixed(1)}KB)`;
-    setStatus(`이미지 인코딩·검색 중… ${file.name}`);
-    const fd = new FormData();
-    fd.append('file', file);
-    const r = await fetch('/search/image?k=20', { method: 'POST', body: fd });
-    const items = await handleResponse(r, `이미지 검색: ${file.name}`);
-    if (items) render(items, `이미지 유사 상품`, `${file.name} · ${items.length}개`);
-    e.target.value = ''; // 같은 파일 재선택 가능하게
-  };
+  $('#form-search').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const query = queryInput.value.trim();
+    const file = imageInput.files[0];
+    if (!query && !file) {
+      setStatus('검색어 또는 이미지를 입력해 주세요.', 'error');
+      return;
+    }
+    const form = new FormData();
+    if (query) form.append('q', query);
+    if (file) form.append('file', file);
+    form.append('text_weight', query && file ? weightInput.value : '0.5');
+    form.append('k', '20');
+    await runRequest('통합 검색 중…', async (signal, current) => {
+      const result = await requestJson('/search', { method: 'POST', body: form }, signal);
+      if (!current()) return;
+      if (!Array.isArray(result.items)) throw new Error('Invalid search response');
+      showTranslation(result, query);
+      const title = query && file ? `“${query}” + 이미지 검색 결과` : query ? `“${query}” 검색 결과` : '이미지 유사 상품';
+      render(result.items, title, `${result.items.length}개`);
+      setStatus(`✓ 검색 완료 · ${result.items.length}개`, 'ok');
+    });
+  });
 
-  // ─── 추천 (상단 네비 버튼 + 네비 추천 링크 둘 다) ───
+  queryInput.addEventListener('input', updateSearchControls);
+  weightInput.addEventListener('input', updateSearchControls);
+  $('#img-btn').addEventListener('click', () => imageInput.click());
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files[0];
+    if (file && (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 10 * 1024 * 1024)) {
+      imageInput.value = '';
+      setStatus('비어 있지 않은 JPEG·PNG·WebP 이미지(10MB 이하)를 선택해 주세요.', 'error');
+    }
+    updateSearchControls();
+  });
+  $('#clear-image').addEventListener('click', () => {
+    imageInput.value = '';
+    updateSearchControls();
+  });
+
   async function fetchRecommend() {
-    const user_id = $('#user-id').value;
-    if (!user_id) return;
-    setStatus(`고객 ${user_id} 추천 생성 중…`);
-    const r = await fetch(`/recommend/${user_id}?k=20`);
-    const rec = await handleResponse(r, `추천: 고객 ${user_id}`);
-    if (!rec) return;
-    if (!rec.items.length) { render([], `고객 ${user_id} 추천`); return; }
-    const idsParam = rec.items.join(',');
-    const r2 = await fetch(`/items?ids=${idsParam}`);
-    const items = await handleResponse(r2, `상품 상세 조회`);
-    if (items) {
-      const variantTag = rec.variant ? ` · A/B: ${rec.variant}` : '';
-      render(items, `고객 #${user_id} 추천`, `모델: ${rec.model}${variantTag} · ${items.length}개`);
+    const userId = Number($('#user-id').value);
+    if (!Number.isSafeInteger(userId) || userId < 1) {
+      setStatus('고객 ID는 1 이상의 정수로 입력해 주세요.', 'error');
+      return;
     }
+    await runRequest(`고객 ${userId} 추천 생성 중…`, async (signal, current) => {
+      const rec = await requestJson(`/recommend/${userId}?k=20`, {}, signal);
+      if (!current()) return;
+      const items = rec.items.length ? await requestJson(`/items?ids=${rec.items.join(',')}`, {}, signal) : [];
+      if (!current()) return;
+      const variant = rec.variant ? ` · A/B: ${rec.variant}` : '';
+      render(items, `고객 #${userId} 추천`, `모델: ${rec.model}${variant} · ${items.length}개`);
+      setStatus(`✓ 추천 완료 · ${items.length}개`, 'ok');
+    });
   }
-  $('#btn-recommend-top').onclick = fetchRecommend;
-  document.querySelector('a[href="#rec"]').onclick = (e) => { e.preventDefault(); fetchRecommend(); };
-  document.querySelector('a[href="#search"]').onclick = (e) => { e.preventDefault(); $('[name=q]').focus(); };
+  $('#btn-recommend-top').addEventListener('click', fetchRecommend);
+  document.querySelector('a[href="#rec"]').addEventListener('click', (event) => { event.preventDefault(); fetchRecommend(); });
+  document.querySelector('a[href="#search"]').addEventListener('click', (event) => { event.preventDefault(); queryInput.focus(); });
+  updateSearchControls();
 </script>
 </body>
 </html>
