@@ -1,0 +1,175 @@
+# 팀 검토용 초안. 실제 로그 생성기와 연결하기 전 합의가 필요합니다.
+# 확률·가중치·페르소나 비중은 Retailrocket에서 추정한 값이 아닙니다.
+version: "0.1-draft"
+status: "pending_team_review"
+owner: "김광석"
+created: "2026-10-29"
+
+provenance:
+  reference: "msrs_project/processed/retailrocket/sim_stats.json"
+  reference_received_as: "user-provided screenshot; selected values transcribed"
+  probabilities: "proposed synthetic settings; not calibrated"
+  names: "김유환과 합의 전 후보"
+
+retailrocket_reference:
+  usage: "diagnostic reference only; not direct transition probabilities"
+  session_gap_minutes: 30
+  event_share:
+    view: 0.9667
+    addtocart: 0.0252
+    transaction: 0.0081
+  visitor_ratios:
+    view_to_cart: 0.0245
+    view_to_buy: 0.008
+  event_count_ratios:
+    cart_per_view: 0.026
+    buy_per_cart: 0.3239
+  session_count: 1761675
+  session_events_quantiles:
+    q50: 1
+    q75: 1
+    q90: 2
+    q99: 9
+  session_cart_rate: 0.0249
+  session_buy_rate: 0.0081
+  repeat_buyer_rate: 0.2198
+  view_share_top1pct_items: 0.227
+
+pilot:
+  status: "proposal_only"
+  seed: 42
+  customers_per_persona: 100
+  sessions_per_customer: 1
+  recommendations_per_session: 10
+  max_requests_per_second: 2
+  use_development_environment_only: true
+  write_events: false
+  # 부족한 특성이 있는 페르소나는 임의 대체하지 않고 실행을 막습니다.
+  on_missing_required_feature: "block_affected_persona_and_report"
+  customer_source: "sim"
+  history_source: "train_only"
+  event_sequence: ["view", "click", "add_to_cart", "purchase"]
+  log_only_displayed_items_as_view: true
+  carry_recommendation_attribution:
+    - experiment_id
+    - variant
+    - model_version_id
+  # 실행 ID·seed는 별도 실행 기록에 저장. 미지원 필드를 POST /events에 추가하지 않습니다.
+  persist_run_metadata_separately: true
+
+behavior:
+  status: "synthetic_uncalibrated_proposal"
+  click:
+    base_probability: 0.04
+    minimum_probability: 0.005
+    maximum_probability: 0.30
+    preference_strength: 2.0
+    preference_score_range: [0, 1]
+    # 0.5는 중립. exp는 선호가 높을수록 확률을 부드럽게 늘리는 함수입니다.
+    formula: "clip(base_probability * exp(preference_strength * (score - 0.5)), minimum_probability, maximum_probability)"
+  add_to_cart:
+    conditional_on: "click_on_same_item_in_current_session"
+    probability: 0.10
+  purchase:
+    conditional_on: "add_to_cart_on_same_item_in_current_session"
+    probability: 0.30
+  allow_multiple_item_actions: true
+  use_model_score_as_behavior_input: false
+  use_variant_as_behavior_input: false
+  use_model_name_as_behavior_input: false
+
+features:
+  brand_affinity:
+    definition: "1 if item belongs to the customer's fixed preferred-brand set; otherwise 0"
+    setup: "choose 1-3 preferred brands before the experiment; store choices"
+  price_affinity:
+    definition: "clip(1 - item.price / customer.budget, 0, 1)"
+    setup: "positive budget from the train-catalog price distribution within the preferred category"
+    budget_quantiles: [0.25, 0.50, 0.75]
+    budget_sampling_weights: [0.3333333333, 0.3333333333, 0.3333333334]
+    estimated_price_policy: "use listed value but report price_source separately; no claim of actual willingness to pay"
+  popularity_affinity:
+    definition: "percentile rank of past positive purchase-signal counts in a fixed 7-day window"
+    history_end: "before simulation start; frozen within each A/B run"
+    note: "recent popularity proxy, not a measured fashion trend"
+  novelty_affinity:
+    definition: "1 if both item and brand are absent from the customer's pre-experiment history; otherwise 0"
+    history_policy: "initialize nonempty history from train; freeze preference-history features during the pilot"
+  newness_affinity:
+    definition: "clip(1 - days_since_catalog_added / 30, 0, 1)"
+    required_field: "catalog_added_at (semantics and availability pending team confirmation)"
+    note: "catalog recency, not a verified product launch date; never substitute first review date silently"
+  repurchase_affinity:
+    definition: "1 if the item is in the customer's pre-experiment purchase history; otherwise 0"
+    note: "exact-item repeat only in v0.1; similar-item repeat is a separate future rule"
+
+personas:
+  - id: "brand_loyal"
+    name_ko: "브랜드 충성형"
+    name_status: "proposed"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "novelty_affinity"]
+    preference_weights:
+      brand_affinity: 0.80
+      price_affinity: 0.15
+      novelty_affinity: 0.05
+
+  - id: "price_sensitive"
+    name_ko: "가격 민감형"
+    name_status: "proposed"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "novelty_affinity"]
+    preference_weights:
+      brand_affinity: 0.10
+      price_affinity: 0.85
+      novelty_affinity: 0.05
+
+  - id: "trend_following"
+    name_ko: "트렌드 추종형"
+    name_status: "proposed; v0.1 uses recent popularity as proxy"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "popularity_affinity"]
+    preference_weights:
+      brand_affinity: 0.10
+      price_affinity: 0.15
+      popularity_affinity: 0.75
+
+  - id: "explorer"
+    name_ko: "탐색형"
+    name_status: "proposed"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "novelty_affinity"]
+    preference_weights:
+      brand_affinity: 0.05
+      price_affinity: 0.15
+      novelty_affinity: 0.80
+
+  - id: "new_item_seeking"
+    name_ko: "신상품 선호형"
+    name_status: "proposed; needs agreement on newness definition"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "newness_affinity"]
+    preference_weights:
+      brand_affinity: 0.10
+      price_affinity: 0.15
+      newness_affinity: 0.75
+
+  - id: "repeat_purchaser"
+    name_ko: "재구매형"
+    name_status: "proposed"
+    sampling_weight: 1
+    required_features: ["brand_affinity", "price_affinity", "repurchase_affinity"]
+    preference_weights:
+      brand_affinity: 0.10
+      price_affinity: 0.10
+      repurchase_affinity: 0.80
+
+reporting:
+  distinguish_simulation_from_real_user_results: true
+  report_by_persona_and_variant: true
+  report_customer_counts_and_denominators: true
+  report_estimated_price_share: true
+  report_source_exposure_share: true
+  report_disabled_personas: true
+  report_empty_recommendation_responses: true
+  keep_offline_fixed_split_evaluation_separate: true
