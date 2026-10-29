@@ -38,11 +38,10 @@ for r in (search.router, recommend.router, events.router, admin.router, items.ro
     app.include_router(r)
 
 # 상품 이미지 서빙 (/images/{source}/{item_id}.jpg). load_dev_subset이 images.zip을 압축 해제한 경로를 노출한다.
-# 디렉토리가 없어도 서버는 뜨고, 요청 시 FastAPI가 자연스럽게 404로 응답한다.
-if Path(settings.images_root).exists():
-    app.mount("/images", StaticFiles(directory=settings.images_root), name="images")
+# check_dir=False: 서버 시작 후 적재해도 동작하도록 디렉토리 존재 확인을 미룬다 (요청 시 자연스럽게 404).
+app.mount("/images", StaticFiles(directory=settings.images_root, check_dir=False), name="images")
 
-# 데모 프론트 (/app/). HTML/JS 한 페이지로 네 가지 API 흐름(텍스트·이미지·추천·상품조회)을 보여준다.
+# 데모 프론트 (/app/). HTML/JS 한 페이지로 통합 검색 · 추천 · 상품조회를 보여준다.
 if Path(settings.frontend_root).exists():
     app.mount("/app", StaticFiles(directory=settings.frontend_root, html=True), name="frontend")
 
