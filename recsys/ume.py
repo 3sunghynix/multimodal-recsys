@@ -310,9 +310,11 @@ def main():
     ap.add_argument("--input", default="pca", choices=["pca", "raw"], help="E0: 서비스 256차원 vs 원본 임베딩")
     ap.add_argument("--no-feedback-weight", action="store_true", help="E4: 정답 가중치 없이")
     ap.add_argument("--epochs", type=int, default=None)
+    ap.add_argument("--gammas", type=float, nargs="*", default=[0.5, 1.0, 2.0, 4.0], help="인기 점수 가산 γ 후보")
+    ap.add_argument("--betas", type=float, nargs="*", default=[0.5, 1.0, 2.0], help="브랜드 가산 β 후보 (Amazon)")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args()
-    run(a.root, a.source, a.split, a.input, a.out, not a.no_feedback_weight, a.epochs)
+    run(a.root, a.source, a.split, a.input, a.out, not a.no_feedback_weight, a.epochs, betas=tuple(a.betas), gammas=tuple(a.gammas))
 
 
 if __name__ == "__main__":
