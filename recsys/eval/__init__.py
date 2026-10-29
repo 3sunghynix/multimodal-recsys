@@ -2,3 +2,6 @@
 from .metrics import accuracy_at_k, brand_alignment_at_k, brand_diversity_at_k, coverage_at_k, intra_list_diversity_at_k, \
     popularity_percentile_at_k, user_brand_loyalty  # noqa: F401
 from .protocol import EvalSet, build_eval_set  # noqa: F401
+
+# Online concentration over caller-selected event windows; distinct from offline dataset summaries.
+from .online import dominant_brand_share  # noqa: F401

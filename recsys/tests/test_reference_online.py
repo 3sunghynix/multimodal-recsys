@@ -3,15 +3,12 @@
 import json
 from math import log2
 from pathlib import Path
-from tempfile import TemporaryDirectory
-import subprocess
-import sys
 import unittest
 
-from recsys.evaluation import (
-    catalog_coverage, dominant_brand_share, evaluate_report,
-    intralist_diversity, ranking_metrics,
+from recsys.eval.reference import (
+    catalog_coverage, evaluate_report, intralist_diversity, ranking_metrics,
 )
+from recsys.eval.online import dominant_brand_share
 
 
 class RankingTests(unittest.TestCase):
@@ -141,29 +138,6 @@ class ReportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluate_report(rankings={}, targets={"u":[2]}, eligible_users=["u"], catalog=[1])
 
-    def test_cli_does_not_overwrite_results(self):
-        root = Path(__file__).resolve().parents[2]
-        source = root / "recsys/examples/evaluation_toy.json"
-        with TemporaryDirectory() as folder:
-            output = Path(folder) / "result.json"
-            command = [sys.executable,"-m","recsys.evaluation",str(source),"--output",str(output)]
-            subprocess.run(command,cwd=root,check=True,capture_output=True)
-            original = output.read_bytes()
-            second = subprocess.run(command,cwd=root,capture_output=True)
-            self.assertNotEqual(second.returncode,0)
-            self.assertEqual(original,output.read_bytes())
-
-    def test_cli_rejects_json_customer_id_type_mismatch(self):
-        root = Path(__file__).resolve().parents[2]
-        with TemporaryDirectory() as folder:
-            source = Path(folder) / "input.json"
-            source.write_text(json.dumps({
-                "rankings":{"1":[1]}, "targets":{"1":[1]},
-                "eligible_users":[1], "catalog":[1],
-            }))
-            result = subprocess.run([sys.executable,"-m","recsys.evaluation",str(source)],cwd=root,capture_output=True,text=True)
-            self.assertNotEqual(result.returncode,0)
-            self.assertIn("string IDs", result.stderr)
 
 
 if __name__ == "__main__":

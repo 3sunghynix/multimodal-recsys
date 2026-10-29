@@ -1,7 +1,7 @@
 # 관리자 페이지 API 현황 (기초안 v0.1)
 
 > 김광석의 관리자 페이지 설계 · 김형우와의 API 합의를 위한 출발점. 화면 구성은 김광석이 확정하며, 아래 "필요한 것"은 예시다.
-> 기준: upstream main (PR #15 병합 시점). 문서: `docker compose up` 후 http://localhost:8000/docs
+> 기준: 확인한 upstream main e2c657b (PR #19 평가·기준선, #20 통합 검색 반영 시점). 문서: `docker compose up` 후 http://localhost:8000/docs
 
 ## 1. 지금 있는 API
 
@@ -16,7 +16,11 @@
 | `POST /experiments/{id}/stop` | 실험 중지 | A/B 테스트 |
 | `GET /experiments/{id}/metrics` | 그룹별 고객 수 · 노출(view) · 클릭 · 구매 · CTR (누적) | A/B 테스트 |
 | `GET /events/count` | 이벤트 종류별 전체 개수 | 데이터 현황 |
-| `GET /recommend/{user_id}` · `GET /search` · `POST /search/image`(#17) | 서비스 기능 | (시뮬레이터가 호출) |
+| `GET /recommend/{user_id}` | 고객별 추천, 서버 A/B 배정 정보 반환 | 시뮬레이터·서비스 |
+| `POST /search` (#20) | q·선택 file·text_weight·k로 통합 검색. query_en·untranslated·items 반환 | 서비스 검색 |
+| `GET /search` · `POST /search/image` | 단순 키워드·기존 이미지 전용 경로. 통합 검색 화면은 POST /search 사용 | 기존 호환 경로 |
+
+오프라인 평가: #19의 `recsys/eval`·`recsys/run_eval.py`는 main에 있다. 관리자 평가 작업·결과 저장 API가 구현됐다는 뜻은 아니다. 이 PR의 reference는 검증용이며 별도 운영 평가를 만들지 않는다.
 
 DB에는 있지만 API가 없는 것: `metric_snapshots` 테이블(지표 기록).
 

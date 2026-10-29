@@ -1,15 +1,18 @@
-"""Metric definitions v0.1; see docs/project/지표정의서.md.
+"""Slow, explicit reference calculations for recsys.eval.metrics cross-checks.
 
-Inputs use consistent, hashable IDs (DB IDs or source-qualified IDs).
-The caller selects the fixed split, positive feedback, and eligible cohort.
-Undefined means None, not zero. Invalid IDs/duplicate ranked items fail loudly.
-Only Python's standard library is required.
+Not a second production evaluator. Model experiments use recsys.run_eval and
+recsys.eval.metrics. This module intentionally keeps readable independent formulas
+for hand-calculated examples and tests. See docs/project/지표정의.md.
+Caller-selected IDs, cohorts, positive targets and fixed vector versions apply.
+Empty cohorts, short lists and missing vectors have explicit reference policies;
+compare fast and reference implementations only on their common valid domain.
 """
 
-from collections import Counter
 from itertools import combinations
 from math import fsum, isfinite, log2, sqrt
 from typing import Collection, Hashable, Mapping, Sequence
+
+from .online import dominant_brand_share
 
 ID = Hashable
 Rankings = Mapping[ID, Sequence[ID]]
@@ -165,43 +168,6 @@ def intralist_diversity(
     }
 
 
-def dominant_brand_share(
-    user_brand_events: Mapping[ID, Sequence[ID | None]], *, event_type: str,
-) -> dict:
-    """Mean of each customer's most frequent known brand share.
-
-    The caller supplies events of exactly one declared type/window. Repeated
-    genuine events count repeatedly; deduplicate transport retries upstream.
-    Unknown brands are excluded and counted, not pooled into a fake brand.
-    A higher value is concentration, not automatically better recommendations.
-    """
-    if event_type not in {"view", "click", "purchase"}:
-        raise ValueError("event_type must be view, click or purchase")
-    per_user = []
-    excluded = 0
-    missing_total = 0
-    for user, brands in user_brand_events.items():
-        counts = Counter(b for b in brands if b is not None)
-        missing = sum(b is None for b in brands)
-        missing_total += missing
-        n = sum(counts.values())
-        if not n:
-            excluded += 1
-            continue
-        per_user.append({
-            "user_id": user, "value": max(counts.values()) / n,
-            "n_events": n, "n_unknown_brand_events": missing,
-        })
-    return {
-        "event_type": event_type,
-        "value": _mean([u["value"] for u in per_user]),
-        "n_users": len(per_user),
-        "n_excluded_no_known_brand_events": excluded,
-        "n_unknown_brand_events": missing_total,
-        "per_user": per_user,
-    }
-
-
 def evaluate_report(
     *, rankings: Rankings, targets: Mapping[ID, Collection[ID]],
     eligible_users: Sequence[ID], catalog: Collection[ID], k: int = 12,
@@ -209,7 +175,9 @@ def evaluate_report(
     user_brand_events: Mapping[ID, Sequence[ID | None]] | None = None,
     brand_event_type: str = "purchase", metadata: dict | None = None,
 ) -> dict:
-    """Compose JSON-serializable results; no implicit feedback/split filtering.
+    """Compose a reference-example report; not an operational evaluation entry point.
+
+    No implicit feedback/split filtering.
 
     Accuracy excludes users with no relevant targets. Coverage/diversity use all
     supplied eligible customers, including those excluded from accuracy. Every
