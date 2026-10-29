@@ -2,6 +2,13 @@
 
 서비스(API)는 `backend/app/recommenders/`의 `Recommender` 인터페이스로 모델을 불러 쓴다. 여기서는 모델을 학습하고 산출물(가중치 · 벡터)을 만든다.
 
+## 지금 있는 것
+
+- **평가 모듈** `recsys/eval/`: 평가 프로토콜(고정 분할 · 정답 · 평가 고객)과 지표(Recall · HitRate · NDCG · MAP@k, Coverage, BrandDiversity, IntraListDiversity, PopularityPct, BrandAlignment, UserBrandLoyalty). 정의: [docs/project/지표정의.md](../docs/project/지표정의.md)
+- **기준 모델** `recsys/baselines.py`: 인기 기반 (데이터셋별)
+- **실행** `python -m recsys.run_eval --data <processed/hm> --source hm [--embeddings <embeddings/v2>] [--out results.json]`
+- **테스트** `python -m pytest recsys` (저장소 루트, `pip install -r recsys/requirements.txt`)
+
 ## 예정
 
 - **UME 기준 모델:** 논문 코드(`paper/msrs_paper/two_tower.py`, `analysis_yh8.fuse`)를 이식. 텍스트(MiniLM) · 이미지(Marqo-FashionSigLIP) Two-Tower를 따로 학습해 고객별 표준화 점수를 1:1 합산
