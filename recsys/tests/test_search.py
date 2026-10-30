@@ -77,3 +77,18 @@ def test_backend_copies_match():
     for a, b in (("recsys/search.py", "backend/app/services/search_core.py"),
                  ("recsys/translate.py", "backend/app/services/translate_ko.py")):
         assert (root / a).read_bytes() == (root / b).read_bytes(), f"{b}를 {a}와 같게 복사하세요"
+
+
+def test_min_rel_keeps_irrelevant_source_out():
+    rng = np.random.default_rng(3)
+    d = 16
+    q = S.l2(np.eye(d)[[0]])
+    good_a = S.l2(np.eye(d)[0] + rng.normal(scale=0.1, size=(40, d)))       # A: 질의와 맞는 상품
+    b_far = S.l2(np.eye(d)[5] + rng.normal(scale=0.1, size=(10, d)))        # B: 전부 다른 종류 (러닝화 검색의 양말)
+    b_mixed = np.vstack([b_far[:8], S.l2(np.eye(d)[0] + rng.normal(scale=0.1, size=(2, d)))])   # B에 맞는 상품 2개
+    g = np.array(["a"] * 40 + ["b"] * 10)
+    for items, expect_b in ((np.vstack([good_a, b_far]), 0), (np.vstack([good_a, b_mixed]), 2)):
+        idx, _ = S.search({"text": q}, {"text": items}, {"text": 1.0}, g, k=10, merge="per_source_rank", min_rel=0.7)
+        assert (g[idx[0]] == "b").sum() == expect_b
+        idx0, _ = S.search({"text": q}, {"text": items}, {"text": 1.0}, g, k=10, merge="per_source_rank")
+        assert (g[idx0[0]] == "b").sum() == 2                              # 기준 없이는 B 칸(10 × 20%)을 항상 채움

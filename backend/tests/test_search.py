@@ -114,3 +114,11 @@ def test_errors(client):
     assert client.post("/search", data={"q": "dress"}, files={"file": ("a.txt", b"x", "text/plain")}).status_code == 415
     app.state.text_encoder = None
     assert client.post("/search", data={"q": "dress"}).status_code == 503
+
+
+def test_min_rel_threshold(client):
+    # hm 상품은 질의와 코사인 약 0.86 (amazon 약 1.0) → 기준 0.95면 hm은 칸을 못 채움, 0이면 기존처럼 섞임
+    t = titles(client.post("/search", data={"q": "dress", "k": 10, "min_rel": 0.95}))
+    assert not any(x.startswith("hm") for x in t)
+    t = titles(client.post("/search", data={"q": "dress", "k": 10, "min_rel": 0}))
+    assert any(x.startswith("hm") for x in t)
