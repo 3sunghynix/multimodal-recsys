@@ -1,0 +1,2 @@
+-r ../recsys/requirements.txt
+PyYAML==6.0.2
