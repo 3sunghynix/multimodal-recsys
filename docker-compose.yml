@@ -30,5 +30,19 @@ services:
       db:
         condition: service_healthy
 
+  dashboard:
+    build: ./dashboard
+    environment:
+      API_BASE_URL: http://api:8000
+      OFFLINE_RESULTS_DIR: /results
+      SIM_RUNS_DIR: /runs
+      DEV_DATA_DIR: /data/dev_subset
+    ports:
+      - "127.0.0.1:8501:8501"
+    volumes:
+      - ./data:/data:ro
+      - ./simulator/runs:/runs:ro
+      - ./results/ume:/results:ro
+
 volumes:
   pgdata:
