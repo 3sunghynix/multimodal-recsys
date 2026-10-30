@@ -1,0 +1,33 @@
+{
+  "k": 3,
+  "eligible_users": ["sim:u1", "sim:u2", "sim:u3"],
+  "catalog": ["amazon:a", "amazon:b", "amazon:c", "hm:a"],
+  "rankings": {
+    "sim:u1": ["amazon:a", "amazon:b", "amazon:c"],
+    "sim:u2": ["hm:a", "amazon:a"],
+    "sim:u3": []
+  },
+  "targets": {
+    "sim:u1": ["amazon:a", "amazon:c"],
+    "sim:u2": ["amazon:b"],
+    "sim:u3": []
+  },
+  "item_vectors": {
+    "amazon:a": [1, 0], "amazon:b": [0, 1],
+    "amazon:c": [-1, 0], "hm:a": [1, 0]
+  },
+  "user_brand_events": {
+    "sim:u1": ["brand:A", "brand:A", "brand:B"],
+    "sim:u2": ["brand:B", "brand:B"],
+    "sim:u3": []
+  },
+  "brand_event_type": "purchase",
+  "metadata": {
+    "data_version": "hand-calculated-toy-v1",
+    "split": "toy-only; not the shared test data",
+    "cohort": "three invented customers",
+    "relevance_rule": "explicit binary target sets",
+    "vector_version": "fixed hand-written 2D vectors",
+    "purpose": "correctness demonstration, not measured model performance"
+  }
+}
