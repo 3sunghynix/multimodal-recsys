@@ -1,0 +1,36 @@
+{
+  "kind": "document_reported_snapshot",
+  "provenance": {
+    "document": "docs/project/오프라인결과.md, section 4",
+    "commit": "b05ff9271c450a585d5f5ca9ed64779b67224f48",
+    "precision": "rounded document values, not raw evaluation output",
+    "data_version": "embeddings/v2",
+    "seed": 42
+  },
+  "notes": [
+    "문서에 보고된 반올림 수치입니다. 대시보드에서 재학습·재평가한 결과가 아닙니다.",
+    "Amazon 선호 브랜드는 긍정 이력만 사용한 재실행 결과입니다.",
+    "브랜드 일치도@12는 고객별 최다 브랜드 비중과 다른 지표입니다.",
+    "부트스트랩 구간은 이 스냅샷에 옮기지 않았습니다. 원본 결과 JSON을 제공하면 표시합니다."
+  ],
+  "sources": [
+    {
+      "source": "hm",
+      "split": "test",
+      "eval": {"users": 40079, "positive_min": 1.0},
+      "models": {
+        "popularity": {"recall@12": 0.0255, "ndcg@12": 0.0166, "map@12": 0.0091, "recall@300": 0.235, "coverage@12": 0.0006, "brand_alignment@12": 1.0},
+        "ume+popscore2.0": {"recall@12": 0.0626, "ndcg@12": 0.0413, "map@12": 0.0246, "recall@300": 0.330, "coverage@12": 0.31, "brand_alignment@12": 1.0}
+      }
+    },
+    {
+      "source": "amazon",
+      "split": "test",
+      "eval": {"users": 24071, "positive_min": 1.0},
+      "models": {
+        "popularity": {"recall@12": 0.0132, "ndcg@12": 0.0106, "map@12": 0.0079, "recall@300": 0.054, "coverage@12": 0.0001, "brand_alignment@12": 0.002},
+        "ume+popscore2.0+brand2.0": {"recall@12": 0.0193, "ndcg@12": 0.0134, "map@12": 0.0091, "recall@300": 0.099, "coverage@12": 0.04, "brand_alignment@12": 0.107}
+      }
+    }
+  ]
+}
