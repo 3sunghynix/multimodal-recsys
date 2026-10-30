@@ -122,3 +122,10 @@ def test_min_rel_threshold(client):
     assert not any(x.startswith("hm") for x in t)
     t = titles(client.post("/search", data={"q": "dress", "k": 10, "min_rel": 0}))
     assert any(x.startswith("hm") for x in t)
+
+
+def test_min_rel_demotes_not_removes(client):
+    # 후순위: 다른 데이터셋(amazon 40개)을 다 쓴 뒤에만 hm이 나오고, 결과는 항상 k개 (리뷰 재현: k=45, min_rel=0.95)
+    r = client.post("/search", data={"q": "dress", "k": 45, "min_rel": 0.95}).json()["items"]
+    src = [i["source"] for i in r]
+    assert len(r) == 45 and src[:40] == ["amazon"] * 40 and src[40:] == ["hm"] * 5

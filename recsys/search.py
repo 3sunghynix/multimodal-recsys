@@ -51,7 +51,9 @@ def combine(scores: dict, weights: dict, groups: np.ndarray | None, merge: str =
         상위 k가 카탈로그 비율대로 섞인다 (H&M 19% → 상위 20 중 약 4개). 표준화만으로는 질의마다
         꼬리가 더 긴 데이터셋이 통째로 차지하는 문제(실측: 두 데이터셋이 함께 나온 질의 46%)를 막는다.
     min_rel (per_source_rank 전용): 데이터셋의 최고 상품조차 원래 코사인(가중 평균)이 그 질의의 카탈로그 최고값 × min_rel
-        미만이면 그 데이터셋은 이번 질의에서 빠진다 (칸을 받지 못하고 맨 뒤). 참여 데이터셋끼리는 비율대로 섞는다.
+        미만이면 그 데이터셋은 이번 질의에서 **후순위**가 된다 — 비율 칸을 받지 못하고, 다른 데이터셋 상품을 모두 쓴 뒤에만
+        (유사도 순으로) 채워진다. 제외가 아니므로 k가 다른 데이터셋 상품 수보다 크면 나올 수 있고, 결과는 항상 k개
+        (오프라인 평가의 고정 길이와 같음). 참여 데이터셋끼리는 비율대로 섞는다.
         상품 단위로 자르면 코사인이 전반적으로 높은 H&M이 칸을 독차지한다 (두 데이터셋이 임베딩 공간에서 떨어져 있음, 진단 D1).
         맞는 상품이 없는 데이터셋의 "그중 1등"이
         끼는 문제 방지 — 데이터셋 내 z는 상대값이라 이를 구분하지 못한다 (실측: 러닝화 검색의 H&M 양말 z 2.8 ≈ 정답 수준,
@@ -71,8 +73,8 @@ def combine(scores: dict, weights: dict, groups: np.ndarray | None, merge: str =
     if min_rel:
         raw = sum(weights[m] / total * np.asarray(scores[m], np.float32) for m in used)
         floor = raw.max(axis=1, keepdims=True) * min_rel
-        # 데이터셋의 최고 상품도 기준 미달이면 그 데이터셋은 이번 질의에서 빠진다 (예: 러닝화 검색의 H&M 양말, 치마 검색의 H&M 반바지).
-        # 참여하는 데이터셋끼리는 그대로 비율 순서. 빠진 데이터셋은 맨 뒤(유사도 순)
+        # 데이터셋의 최고 상품도 기준 미달이면 그 데이터셋은 후순위 (예: 러닝화 검색의 H&M 양말, 치마 검색의 H&M 반바지).
+        # 참여하는 데이터셋끼리는 그대로 비율 순서. 후순위 데이터셋은 맨 뒤(유사도 순)
         absent = np.zeros(raw.shape, bool)
         for g in np.unique(groups):
             m = groups == g

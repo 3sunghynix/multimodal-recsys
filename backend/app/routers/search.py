@@ -11,7 +11,8 @@ POST /search/image  이미지 → pgvector 코사인 상위 k (데이터셋 결�
   이미지 업로드 → image : Marqo 이미지 질의 → 상품 image_embedding
   텍스트 · 이미지를 둘 다 주면 text_weight : (1 − text_weight) 로 섞는다 (화면의 우선순위 슬라이더)
   데이터셋 결합 per_source_rank: 데이터셋 안의 순위 백분위 → 상위 k가 카탈로그 비율대로 섞인다.
-      단 원래 코사인이 그 질의 최고값의 min_rel(기본 0.7) 미만인 상품은 칸을 채우지 못한다 (맞는 상품이 없는 데이터셋 방지)
+      단 최고 상품의 원래 코사인이 그 질의 최고값의 min_rel(기본 0.7) 미만인 데이터셋은 후순위 — 비율 칸을 받지 못하고
+      다른 데이터셋 상품을 다 쓴 뒤에만 채워진다 (제외가 아님, 결과는 항상 k개)
 """
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -61,7 +62,7 @@ async def search(
     text_weight: float = Form(0.5, ge=0, le=1, description="텍스트와 이미지를 함께 줄 때 텍스트 비중"),
     k: int = Form(20, ge=1, le=100),
     merge: str = Form("per_source_rank", description="per_source_rank · per_source_z · global"),
-    min_rel: float = Form(0.7, ge=0, le=1, description="per_source_rank에서 데이터셋 칸을 채울 최소 관련도 (질의 최고 코사인 대비 비율, 0이면 끔)"),
+    min_rel: float = Form(0.7, ge=0, le=1, description="per_source_rank: 최고 상품이 이 비율(질의 최고 코사인 대비) 미만인 데이터셋은 후순위 (0이면 끔)"),
     source: str | None = Form(None, description="데이터셋 한정 (amazon · hm)"),
     brand_id: int | None = Form(None),
     db: Session = Depends(get_db),
