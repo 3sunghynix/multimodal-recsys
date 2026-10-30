@@ -65,6 +65,25 @@ GLOSSARY = {
     "가을": "fall", "요가": "yoga", "스포츠": "sports", "운동": "workout", "러닝": "running", "등산": "hiking",
     "골프": "golf", "야구": "baseball", "테니스": "tennis", "축구": "soccer", "하이웨이스트": "high waist", "오버핏": "oversized", "슬림": "slim", "긴팔": "long sleeve",
     "반팔": "short sleeve", "캐주얼": "casual", "포멀": "formal", "빈티지": "vintage", "웨딩": "wedding",
+    # 무늬 · 프린트 (민무늬 = 무늬 없음)
+    "민무늬": "plain", "무지": "plain", "무지티": "plain t-shirt", "단색": "solid", "솔리드": "solid",
+    "프린트": "print", "프린팅": "print", "로고": "logo", "그래픽": "graphic", "자수": "embroidered", "레터링": "lettering",
+    "호피": "leopard", "카모": "camo", "밀리터리": "military", "타이다이": "tie dye", "페이즐리": "paisley",
+    "헤링본": "herringbone", "아가일": "argyle",
+    # 핏 · 기장
+    "크롭": "crop", "루즈핏": "loose fit", "루즈": "loose", "오버사이즈": "oversized", "레귤러핏": "regular fit",
+    "슬림핏": "slim fit", "스키니": "skinny", "부츠컷": "bootcut", "스트레이트": "straight", "테이퍼드": "tapered",
+    "하이라이즈": "high rise", "미디": "midi", "맥시": "maxi", "숏": "short", "경량": "lightweight",
+    # 넥라인 · 디테일
+    "브이넥": "v-neck", "라운드넥": "crew neck", "터틀넥": "turtleneck", "폴라": "turtleneck", "하이넥": "mock neck",
+    "카라": "collar", "집업": "zip-up", "후드집업": "zip hoodie", "단추": "button", "주머니": "pocket", "포켓": "pocket",
+    "프릴": "ruffle", "셔링": "shirred", "리본": "bow", "퍼프": "puff sleeve", "오프숄더": "off shoulder",
+    "원숄더": "one shoulder",
+    # 품목 보강
+    "캐미솔": "camisole", "끈나시": "camisole", "탱크탑": "tank top", "뷔스티에": "bustier", "점프수트": "jumpsuit",
+    "멜빵": "overalls", "오버롤": "overalls", "블루종": "bomber jacket", "항공점퍼": "bomber jacket",
+    "무스탕": "shearling jacket", "스웨트셔츠": "sweatshirt", "트랙탑": "track jacket", "와이셔츠": "dress shirt",
+    "드레스셔츠": "dress shirt",
 }
 _MAX = max(map(len, GLOSSARY))
 

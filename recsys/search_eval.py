@@ -6,6 +6,7 @@
           mix   : 두 점수를 표준화 후 가중 합 (화면의 텍스트 · 이미지 우선순위)
   결합    global (원래 점수) vs per_source_z (데이터셋별 표준화)
   결합    + per_source_rank (데이터셋 안의 순위 백분위 → 카탈로그 비율대로 섞임)
+          + per_source_rank+rel0.7 (최고 상품의 코사인이 질의 최고값 × 0.7 미만인 데이터셋은 그 질의에서 후순위)
   언어    en: 영어 질의, ko_mt: 한국어 → 번역 모델만, ko_dict: 한국어 → 패션 용어 사전 + 없는 단어만 번역 모델
 지표 (상위 20)
   precision : 상품 제목 · 설명 · 카테고리가 질의 키워드 규칙을 만족하는 비율 (예: "black dress" → dress 그리고 black)
@@ -174,8 +175,9 @@ def run(root: Path, out: Path | None):
         for name, (w, center_img) in METHODS.items():
             q = {"text": S.project(raw["text"], pca["text"]["mean"], pca["text"]["components"]),
                  "image": S.project(raw["image"], pca["image"]["mean"], pca["image"]["components"], center=center_img)}
-            for merge in S.MERGES:
-                idx, _ = S.search(q, items, w, groups, K, merge)
+            for merge in [*S.MERGES, "per_source_rank+rel0.7"]:     # +rel: 최고 상품도 기준 미달인 데이터셋은 후순위
+                base, _, rel = merge.partition("+rel")
+                idx, _ = S.search(q, items, w, groups, K, base, float(rel) if rel else None)
                 ev = evaluate(docs, idx, rules)
                 table.append({"lang": lang, "method": name, "merge": merge, **ev.mean().round(4).to_dict()})
                 per_query.append(ev.assign(lang=lang, method=name, merge=merge, query=qs))
