@@ -1,11 +1,19 @@
-"""멀티 브랜드 멀티모달 추천 서비스 API. 실행: uvicorn app.main:app --reload (backend/ 에서), 문서: /docs"""
+"""멀티 브랜드 멀티모달 추천 서비스 API. 실행: uvicorn app.main:app --reload (backend/ 에서), 문서: /docs
+
+데모 접근:
+- API 문서: http://localhost:8000/docs
+- 데모 프론트: http://localhost:8000/app/
+- 상품 이미지: http://localhost:8000/images/{source}/{item_id}.jpg (load_dev_subset이 압축 해제한 파일)
+"""
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
-from .routers import admin, events, recommend, search
+from .routers import admin, events, items, recommend, search
 
 
 @asynccontextmanager
@@ -26,8 +34,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Multimodal RecSys", version="0.1.0", lifespan=lifespan)
-for r in (search.router, recommend.router, events.router, admin.router):
+for r in (search.router, recommend.router, events.router, admin.router, items.router):
     app.include_router(r)
+
+# 상품 이미지 서빙 (/images/{source}/{item_id}.jpg). load_dev_subset이 images.zip을 압축 해제한 경로를 노출한다.
+# check_dir=False: 서버 시작 후 적재해도 동작하도록 디렉토리 존재 확인을 미룬다 (요청 시 자연스럽게 404).
+app.mount("/images", StaticFiles(directory=settings.images_root, check_dir=False), name="images")
+
+# 데모 프론트 (/app/). HTML/JS 한 페이지로 통합 검색 · 추천 · 상품조회를 보여준다.
+if Path(settings.frontend_root).exists():
+    app.mount("/app", StaticFiles(directory=settings.frontend_root, html=True), name="frontend")
 
 
 @app.get("/health", tags=["health"])

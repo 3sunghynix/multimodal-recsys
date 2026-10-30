@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MSRS — Multimodal Shopping Recommender System</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #0f0f0f;
+      --muted: #8a8a8a;
+      --line: #ebebeb;
+      --surface: #f7f7f7;
+      --accent: #0f0f0f;
+      --accent-fg: #ffffff;
+      --radius: 10px;
+      --header-h: 60px;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+    body { padding-top: var(--header-h); }
+    a { color: inherit; text-decoration: none; }
+    button { cursor: pointer; font: inherit; }
+    input, button { outline: none; }
+    input:focus { border-color: var(--fg) !important; }
+
+    /* ───── Header ───── */
+    .header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--header-h); background: var(--bg); border-bottom: 1px solid var(--line);
+      display: flex; align-items: center; padding: 0 24px;
+    }
+    .logo { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; margin-right: 40px; }
+    .logo .dot { color: #ff5b2b; }
+    .nav { display: flex; gap: 28px; font-size: 15px; font-weight: 700; }
+    .nav a { padding: 6px 0; position: relative; color: var(--muted); }
+    .nav a.active { color: var(--fg); }
+    .nav a.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -4px; height: 2px; background: var(--fg); }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: 20px; }
+    .icon-btn { background: none; border: none; padding: 6px; color: var(--fg); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+    .icon-btn:hover { color: #555; }
+    .user-pill { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; font-weight: 600; }
+    .user-pill input { width: 48px; border: none; background: transparent; font-weight: 700; font-family: inherit; text-align: center; }
+
+    /* ───── Hero + Search ───── */
+    main { max-width: 1280px; margin: 0 auto; padding: 24px; }
+    .hero { padding: 32px 0 24px; border-bottom: 1px solid var(--line); margin-bottom: 32px; }
+    .hero h1 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.5px; }
+    .hero p { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+
+    .search-panel { max-width: 820px; }
+    .search-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: stretch; }
+    .search-bar .text-input { position: relative; }
+    .search-bar input[type=text] {
+      width: 100%; height: 48px; padding: 0 16px 0 44px; border: 1.5px solid var(--line);
+      border-radius: var(--radius); font-size: 15px; background: var(--surface); font-family: inherit;
+      transition: border-color .15s, background .15s;
+    }
+    .search-bar input[type=text]:focus { background: var(--bg); }
+    .search-bar .text-input::before {
+      content: "🔍"; position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+      font-size: 16px; opacity: 0.5;
+    }
+    .btn {
+      height: 48px; padding: 0 20px; border: none; border-radius: var(--radius); background: var(--accent); color: var(--accent-fg);
+      font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; gap: 6px;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn.ghost { background: var(--surface); color: var(--fg); border: 1.5px solid var(--line); }
+    .btn.ghost:hover { background: var(--line); opacity: 1; }
+
+    .file-wrap { position: relative; overflow: hidden; }
+    .file-wrap input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .file-name { color: var(--muted); font-size: 12px; margin-top: 6px; display: block; min-height: 1em; }
+    .image-selection { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .image-selection .file-name { margin: 0; overflow-wrap: anywhere; }
+    .clear-image { border: 0; background: none; color: var(--fg); text-decoration: underline; white-space: nowrap; }
+    .weight-control { margin-top: 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px; }
+    .weight-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+    .weight-row input { flex: 1; min-width: 60px; accent-color: var(--accent); }
+    .weight-control output { display: block; margin-top: 6px; color: var(--muted); }
+    .translation-note { margin-top: 12px; font-size: 14px; overflow-wrap: anywhere; }
+    .translation-note .warning { color: #9a4d00; margin-top: 6px; }
+    @media (max-width: 640px) {
+      .search-bar { grid-template-columns: minmax(0, 1fr) auto; }
+      .search-bar .text-input { grid-column: 1 / -1; }
+      .header { padding: 0 12px; gap: 10px; flex-wrap: wrap; height: auto; min-height: var(--header-h); }
+      .logo { margin-right: 0; font-size: 19px; }
+      .nav { gap: 12px; font-size: 13px; }
+      .header-right { gap: 6px; }
+      .header-right .icon-btn { font-size: 12px; }
+    }
+
+    /* ───── Status bar ───── */
+    .status-bar {
+      display: flex; align-items: center; gap: 10px; margin-top: 16px;
+      padding: 12px 16px; background: var(--surface); border-radius: var(--radius);
+      font-size: 13px; color: var(--muted); min-height: 20px;
+    }
+    .status-bar.error { background: #fff1ef; color: #c0392b; }
+    .status-bar.ok { background: #f0f7ff; color: #1e5aa6; }
+    .status-bar code { background: var(--bg); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+    /* ───── Section ───── */
+    section.block { margin-top: 48px; }
+    section.block header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 16px; }
+    section.block h2 { font-size: 20px; margin: 0; letter-spacing: -0.3px; }
+    section.block .meta { font-size: 13px; color: var(--muted); }
+
+    /* ───── Cards ───── */
+    .cards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+    @media (max-width: 1200px) { .cards { grid-template-columns: repeat(4, 1fr); } }
+    @media (max-width: 900px)  { .cards { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 640px)  { .cards { grid-template-columns: repeat(2, 1fr); } }
+
+    .card { position: relative; cursor: pointer; transition: transform .15s; }
+    .card:hover { transform: translateY(-2px); }
+    .card .thumb {
+      width: 100%; aspect-ratio: 1; background: var(--surface);
+      border-radius: var(--radius); overflow: hidden; display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .card .thumb .placeholder { color: #cbcbcb; font-size: 36px; }
+    .card .src-badge {
+      position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,0.75); color: #fff;
+      font-size: 10px; font-weight: 700; padding: 3px 7px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .card .rank {
+      position: absolute; top: 8px; right: 8px; background: var(--bg); color: var(--fg);
+      font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 999px;
+      border: 1px solid var(--line);
+    }
+    .card .info { padding: 10px 2px 0; }
+    .card .brand { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; }
+    .card .title { font-size: 13px; color: var(--fg); line-height: 1.3; margin: 0 0 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.6em; }
+    .card .price { font-size: 14px; font-weight: 800; }
+
+    /* ───── Empty + Debug ───── */
+    .empty { padding: 48px 0; text-align: center; color: var(--muted); font-size: 14px; }
+    .empty .big { font-size: 40px; margin-bottom: 8px; }
+
+    details.debug { margin-top: 48px; padding: 12px 16px; background: var(--surface); border-radius: var(--radius); font-size: 13px; }
+    details.debug summary { cursor: pointer; font-weight: 600; color: var(--muted); }
+    details.debug ul { margin: 10px 0 0; padding-left: 20px; }
+    details.debug code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+
+    /* ───── Footer ───── */
+    footer { margin-top: 80px; padding: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <a href="#" class="logo">MSRS<span class="dot">.</span></a>
+  <nav class="nav">
+    <a href="#" class="active">HOME</a>
+    <a href="#rec">추천</a>
+    <a href="#search">검색</a>
+  </nav>
+  <div class="header-right">
+    <div class="user-pill" title="고객 ID (가상 데모 사용자)">
+      <span>USER</span>
+      <input type="number" id="user-id" value="1" min="1">
+    </div>
+    <button class="icon-btn" id="btn-recommend-top">추천 받기 →</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- Hero + Search -->
+  <section class="hero">
+    <h1>패션의 완성은 MSRS</h1>
+    <p>MSRS와 함께라면 당신도 Trendsetter</p>
+
+    <form id="form-search" class="search-panel" aria-label="텍스트·이미지 통합 검색">
+      <div class="search-bar">
+        <div class="text-input">
+          <input type="text" name="q" id="search-query" aria-label="검색어" placeholder="검은색 원피스, running shoes…" autocomplete="off">
+        </div>
+        <button class="btn ghost" type="button" id="img-btn">📷 이미지 선택</button>
+        <button type="submit" class="btn" id="search-submit">검색</button>
+      </div>
+      <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp" hidden>
+      <div class="image-selection" id="image-selection" hidden>
+        <span class="file-name" id="file-name"></span>
+        <button type="button" class="clear-image" id="clear-image">이미지 제거</button>
+      </div>
+      <div class="weight-control" id="weight-control" hidden>
+        <label for="text-weight">텍스트·이미지 우선순위</label>
+        <div class="weight-row">
+          <span>이미지</span>
+          <input type="range" id="text-weight" name="text_weight" min="0" max="1" step="0.05" value="0.5">
+          <span>텍스트</span>
+        </div>
+        <output id="weight-label" for="text-weight">텍스트 50% · 이미지 50%</output>
+      </div>
+    </form>
+  </section>
+
+  <div class="status-bar" id="status" role="status" aria-live="polite">
+    검색어나 이미지를 선택한 후 검색을 눌러 주세요. 둘을 함께 사용할 수도 있어요.
+  </div>
+  <div class="translation-note" id="translation-note" aria-live="polite" hidden></div>
+
+  <!-- Results Section (dynamic) -->
+  <section class="block" id="result-section" hidden>
+    <header>
+      <h2 id="result-title">결과</h2>
+      <span class="meta" id="result-meta"></span>
+    </header>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <!-- Empty state (initial) -->
+  <section class="block" id="empty-state">
+    <div class="empty">
+      <div class="big">🛍️</div>
+      <div><strong>검색어를 입력하거나 이미지를 올려보세요.</strong></div>
+      <div style="margin-top: 6px;">또는 상단에서 고객 ID를 선택하고 "추천 받기"를 눌러보세요.</div>
+    </div>
+  </section>
+
+  <details class="debug">
+    <summary>API 흐름 (디버깅용)</summary>
+    <ul>
+      <li><code>POST /search</code> (FormData: q, file 선택, text_weight, k) → <code>items</code>의 상품 상세를 바로 표시</li>
+      <li>텍스트·이미지 검색은 서버 기본 <code>per_source_rank</code> 결합 사용. 번역 결과는 <code>query_en</code>, 미번역 단어는 <code>untranslated</code>로 안내</li>
+      <li><code>GET /recommend/{user_id}?k=20</code> → <code>{items: [id, …]}</code> → <code>GET /items?ids=…</code>로 상세 조회</li>
+      <li><code>GET /images/{source}/{item_id}.jpg</code> → 상품 이미지</li>
+    </ul>
+  </details>
+
+</main>
+
+<footer>
+  MSRS Demo · Multimodal Shopping Recommender System · 3성하이닉스 캡스톤
+</footer>
+
+<script>
+  const $ = (sel) => document.querySelector(sel);
+  const statusEl = $('#status');
+  const emptyEl = $('#empty-state');
+  const resultSection = $('#result-section');
+  const cards = $('#cards');
+  const queryInput = $('#search-query');
+  const imageInput = $('#img-input');
+  const weightInput = $('#text-weight');
+  const translationNote = $('#translation-note');
+  let activeRequest = null;
+  let requestVersion = 0;
+
+  // 검색어·상품명 등 외부 값은 HTML로 해석하지 않는다.
+  function textElement(tag, className, text) {
+    const el = document.createElement(tag);
+    el.className = className;
+    el.textContent = text;
+    return el;
+  }
+
+  function setStatus(message, kind = '') {
+    statusEl.className = 'status-bar' + (kind ? ' ' + kind : '');
+    statusEl.textContent = message;
+  }
+
+  function clearTranslation() {
+    translationNote.replaceChildren();
+    translationNote.hidden = true;
+  }
+
+  function showTranslation(result, query) {
+    clearTranslation();
+    if (query && result.query_en) {
+      translationNote.append(textElement('div', '', `“${result.query_en}”(으)로 검색했습니다.`));
+    }
+    if (Array.isArray(result.untranslated) && result.untranslated.length) {
+      translationNote.append(textElement('div', 'warning', `번역 못한 단어: ${result.untranslated.join(', ')}`));
+    }
+    translationNote.hidden = !translationNote.childElementCount;
+  }
+
+  function updateSearchControls() {
+    const file = imageInput.files[0];
+    $('#image-selection').hidden = !file;
+    $('#file-name').textContent = file ? `선택: ${file.name} (${(file.size / 1024).toFixed(1)}KB)` : '';
+    $('#weight-control').hidden = !(queryInput.value.trim() && file);
+    const percent = Math.round(Number(weightInput.value) * 100);
+    $('#weight-label').textContent = `텍스트 ${percent}% · 이미지 ${100 - percent}%`;
+  }
+
+  function imageUrl(item) {
+    if (!item.image_path) return null;
+    const path = item.image_path.replace(/^dev_subset\/images\//, '/images/');
+    // 기존 로컬 이미지 경로만 허용한다. 외부 URL 계약은 후속 API 작업에서 정한다.
+    if (!path.startsWith('/images/')) return null;
+    const url = new URL(path, window.location.origin);
+    return url.origin === window.location.origin && url.pathname.startsWith('/images/') ? url.href : null;
+  }
+
+  function render(items, title, meta = '') {
+    emptyEl.hidden = true;
+    resultSection.hidden = false;
+    $('#result-title').textContent = title;
+    $('#result-meta').textContent = meta;
+    cards.replaceChildren();
+    if (!items.length) {
+      const empty = textElement('div', 'empty', '결과가 없어요. 검색어나 이미지를 바꿔 보세요.');
+      empty.style.gridColumn = '1 / -1';
+      cards.append(empty);
+      return;
+    }
+    items.forEach((item, index) => {
+      const card = textElement('article', 'card', '');
+      const thumb = textElement('div', 'thumb', '');
+      const placeholder = () => textElement('span', 'placeholder', '🛍️');
+      const src = imageUrl(item);
+      if (src) {
+        const img = document.createElement('img');
+        img.alt = item.title;
+        img.loading = 'lazy';
+        img.addEventListener('error', () => img.replaceWith(placeholder()), { once: true });
+        img.src = src;
+        thumb.append(img);
+      } else {
+        thumb.append(placeholder());
+      }
+      thumb.append(textElement('span', 'src-badge', item.source), textElement('span', 'rank', `#${index + 1}`));
+      const info = textElement('div', 'info', '');
+      // 가격 출처를 아직 API에서 받지 못하므로 고정 환산값을 판매가로 단정하지 않는다.
+      const price = item.price != null ? '예상가 ₩' + Math.round(item.price * 1300).toLocaleString() : '가격 정보 없음';
+      const priceEl = textElement('div', 'price', price);
+      if (item.price != null) priceEl.title = '데모 표시용 추정가입니다. 고정 환산 기준: 1 USD = 1,300 KRW.';
+      info.append(textElement('div', 'brand', item.brand_id ? `BRAND #${item.brand_id}` : ''),
+        textElement('div', 'title', item.title), priceEl);
+      card.append(thumb, info);
+      cards.append(card);
+    });
+  }
+
+  async function requestJson(url, options, signal) {
+    const response = await fetch(url, { ...options, signal });
+    if (!response.ok) {
+      const raw = await response.text();
+      let detail = raw.slice(0, 180);
+      try {
+        const body = JSON.parse(raw);
+        if (typeof body.detail === 'string') detail = body.detail;
+        else if (Array.isArray(body.detail)) detail = body.detail.map((entry) => entry.msg).join('; ');
+      } catch (_) { /* JSON이 아닌 오류도 일반 텍스트로만 보여준다. */ }
+      throw new Error(`HTTP ${response.status} · ${detail}`);
+    }
+    return response.json();
+  }
+
+  // 빠른 재검색 또는 추천 전환에서 늦게 도착한 이전 응답이 화면을 덮어쓰지 않는다.
+  async function runRequest(message, task) {
+    if (activeRequest) activeRequest.abort();
+    const controller = new AbortController();
+    activeRequest = controller;
+    const version = ++requestVersion;
+    const current = () => version === requestVersion;
+    clearTranslation();
+    cards.replaceChildren();
+    resultSection.hidden = true;
+    emptyEl.hidden = true;
+    resultSection.setAttribute('aria-busy', 'true');
+    setStatus(message);
+    try {
+      await task(controller.signal, current);
+    } catch (error) {
+      if (current() && error.name !== 'AbortError') {
+        const detail = error.message.startsWith('HTTP ') ? error.message : '서버에 연결하지 못했습니다. 연결 상태를 확인하고 다시 시도해 주세요.';
+        setStatus(detail, 'error');
+      }
+    } finally {
+      if (current()) {
+        activeRequest = null;
+        resultSection.setAttribute('aria-busy', 'false');
+      }
+    }
+  }
+
+  $('#form-search').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const query = queryInput.value.trim();
+    const file = imageInput.files[0];
+    if (!query && !file) {
+      setStatus('검색어 또는 이미지를 입력해 주세요.', 'error');
+      return;
+    }
+    const form = new FormData();
+    if (query) form.append('q', query);
+    if (file) form.append('file', file);
+    form.append('text_weight', query && file ? weightInput.value : '0.5');
+    form.append('k', '20');
+    await runRequest('통합 검색 중…', async (signal, current) => {
+      const result = await requestJson('/search', { method: 'POST', body: form }, signal);
+      if (!current()) return;
+      if (!Array.isArray(result.items)) throw new Error('Invalid search response');
+      showTranslation(result, query);
+      const title = query && file ? `“${query}” + 이미지 검색 결과` : query ? `“${query}” 검색 결과` : '이미지 유사 상품';
+      render(result.items, title, `${result.items.length}개`);
+      setStatus(`✓ 검색 완료 · ${result.items.length}개`, 'ok');
+    });
+  });
+
+  queryInput.addEventListener('input', updateSearchControls);
+  weightInput.addEventListener('input', updateSearchControls);
+  $('#img-btn').addEventListener('click', () => imageInput.click());
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files[0];
+    if (file && (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type) || file.size === 0 || file.size > 10 * 1024 * 1024)) {
+      imageInput.value = '';
+      setStatus('비어 있지 않은 JPEG·PNG·WebP 이미지(10MB 이하)를 선택해 주세요.', 'error');
+    }
+    updateSearchControls();
+  });
+  $('#clear-image').addEventListener('click', () => {
+    imageInput.value = '';
+    updateSearchControls();
+  });
+
+  async function fetchRecommend() {
+    const userId = Number($('#user-id').value);
+    if (!Number.isSafeInteger(userId) || userId < 1) {
+      setStatus('고객 ID는 1 이상의 정수로 입력해 주세요.', 'error');
+      return;
+    }
+    await runRequest(`고객 ${userId} 추천 생성 중…`, async (signal, current) => {
+      const rec = await requestJson(`/recommend/${userId}?k=20`, {}, signal);
+      if (!current()) return;
+      const items = rec.items.length ? await requestJson(`/items?ids=${rec.items.join(',')}`, {}, signal) : [];
+      if (!current()) return;
+      const variant = rec.variant ? ` · A/B: ${rec.variant}` : '';
+      render(items, `고객 #${userId} 추천`, `모델: ${rec.model}${variant} · ${items.length}개`);
+      setStatus(`✓ 추천 완료 · ${items.length}개`, 'ok');
+    });
+  }
+  $('#btn-recommend-top').addEventListener('click', fetchRecommend);
+  document.querySelector('a[href="#rec"]').addEventListener('click', (event) => { event.preventDefault(); fetchRecommend(); });
+  document.querySelector('a[href="#search"]').addEventListener('click', (event) => { event.preventDefault(); queryInput.focus(); });
+  updateSearchControls();
+</script>
+</body>
+</html>

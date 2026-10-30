@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     # /search/image 업로드 크기 상한 (bytes). 기본 10MB
     max_image_bytes: int = 10 * 1024 * 1024
 
+    # 데모용 상품 이미지 디렉토리 (/images/{source}/{item_id}.jpg 로 서빙).
+    # load_dev_subset이 images.zip을 압축 해제해 둔 경로를 그대로 노출한다.
+    images_root: str = "/data/dev_subset/images"
+    # 데모 프론트엔드 (/app 경로로 서빙). HTML/JS/CSS 한 페이지.
+    frontend_root: str = "/app/frontend"
+
     # 텍스트 검색 (POST /search). 상품 text_embedding과 같은 MiniLM → L2 → PCA 256 → L2.
     text_encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     pca_text_path: str = "/data/embeddings/v2/pca_text.npz"

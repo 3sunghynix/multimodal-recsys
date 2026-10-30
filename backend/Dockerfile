@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements-dev.txt
 COPY app ./app
 COPY scripts ./scripts
 COPY tests ./tests
+COPY frontend ./frontend
 COPY pytest.ini ./
 
 EXPOSE 8000
