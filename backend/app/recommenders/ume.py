@@ -36,6 +36,25 @@ def load_tower(path: str) -> dict:
     return dict(np.load(Path(path) / "weights.npz"))
 
 
+REQUIRED_KEYS = [f"{side}.{i}.{kind}" for side in ("user", "item") for i in (0, 3) for kind in ("weight", "bias")]
+
+
+def tower_problem(art: str, dim: int | None = None) -> str | None:
+    """가중치 폴더 검사. 텍스트 · 이미지 둘 다 weights.npz가 있고, 필수 키가 있고, 입력 차원이 dim과 맞으면 None.
+    아니면 이유 문자열 (서빙은 그 데이터셋을 빼고 인기로 대체, 등록 스크립트는 활성화를 거절)."""
+    for m in ("text", "image"):
+        f = Path(art) / m / "weights.npz"
+        if not f.exists():
+            return f"{f} 없음"
+        w = load_tower(f"{art}/{m}")
+        missing = [k for k in REQUIRED_KEYS if k not in w]
+        if missing:
+            return f"{f} 키 없음: {missing}"
+        if dim is not None and w["user.0.weight"].shape[1] != dim:
+            return f"{f} 입력 차원 {w['user.0.weight'].shape[1]} ≠ 상품 임베딩 {dim}"
+    return None
+
+
 def mlp(w: dict, side: str, x: np.ndarray) -> np.ndarray:
     """Linear → ReLU → (Dropout: 추론 때 없음) → Linear → L2. x: (d,) 또는 (n, d)."""
     h = np.maximum(x @ w[f"{side}.0.weight"].T + w[f"{side}.0.bias"], 0)
@@ -73,9 +92,11 @@ def _item_vectors(ix: CatalogIndex, sel: np.ndarray, art: str):
 
 
 def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | None) -> np.ndarray:
-    """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화."""
+    """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화.
+    캐시 키 = 이벤트 상태 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산."""
     n, last = db.execute(select(func.count(Event.id), func.max(Event.id))).one()
-    key = (str(db.bind.url), source, days, n, last)
+    catalog = (len(item_ids), int(item_ids[0]) if len(item_ids) else None, int(item_ids[-1]) if len(item_ids) else None)
+    key = (str(db.bind.url), source, days, n, last, catalog)
     if _pop_cache.get(source, (None,))[0] != key:
         q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
              .where(Event.type == "purchase", Item.source == source))
@@ -99,15 +120,17 @@ class UME(Recommender):
         dirs: dict = p.get("artifact_dirs", {})
         max_hist = int(p["max_hist"])
         ix = get_index(db)
-        recent = db.scalars(select(Event.item_id)
-                            .where(Event.user_id == user_id, Event.type.in_(HISTORY_TYPES), Event.item_id.is_not(None))
-                            .order_by(Event.created_at.desc(), Event.id.desc()).limit(max_hist * 4)).all()
-        rows = _rows_of(ix, np.asarray(recent, np.int64))          # 최근 순, 임베딩 없는 상품은 빠짐
+        dim = ix.text.shape[1] if len(ix) else None
 
         scores, groups, ids = [], [], []
         for source, art in dirs.items():
-            hist = rows[ix.sources[rows] == source][:max_hist]
-            if len(hist) == 0 or not Path(art).exists():
+            if tower_problem(art, dim):                             # 가중치가 없거나 불완전 → 이 데이터셋은 인기로 대체
+                continue
+            recent = db.scalars(select(Event.item_id).join(Item, Item.id == Event.item_id)   # 데이터셋별 최근 max_hist개
+                                .where(Event.user_id == user_id, Event.type.in_(HISTORY_TYPES), Item.source == source)
+                                .order_by(Event.created_at.desc(), Event.id.desc()).limit(max_hist)).all()
+            hist = _rows_of(ix, np.asarray(recent, np.int64))       # 임베딩 없는 상품은 빠짐
+            if len(hist) == 0:
                 continue
             sel = np.flatnonzero(ix.sources == source)
             v_text, v_image = _item_vectors(ix, sel, art)

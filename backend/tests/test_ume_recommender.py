@@ -132,3 +132,40 @@ def test_api_serves_ume(env):
         assert r.status_code == 200 and r.json()["model"] == "ume" and len(r.json()["items"]) == 5
     finally:
         app.dependency_overrides.clear()
+
+
+# ---- PR #24 리뷰 회귀 테스트 (광석 재현 시나리오)
+
+def test_new_item_after_popularity_cache(env):
+    Session, ids, params, _ = env
+    p = {**params, "gamma": 2.0}
+    with Session() as s:
+        recommenders.get("ume", p).recommend(s, ids["users"][0], 5)          # 인기 캐시 생성 (amazon 30개)
+        v = np.ones(D) / np.sqrt(D)
+        new = Item(source="amazon", source_item_id="new", title="new", text_embedding=v.tolist(), image_embedding=v.tolist())
+        s.add(new)
+        s.commit()
+        rec = recommenders.get("ume", p).recommend(s, ids["users"][0], 31)  # 이벤트 변화 없이 상품만 추가
+        assert len(rec) == 31 and new.id in rec
+
+
+def test_partial_weights_fall_back(env):
+    Session, ids, params, tmp = env
+    from app.recommenders.ume import tower_problem
+    (tmp / "art" / "amazon" / "image" / "weights.npz").unlink()
+    assert "없음" in tower_problem(params["artifact_dirs"]["amazon"])
+    with Session() as s:
+        assert recommenders.get("ume", params).recommend(s, ids["users"][0], 5) == _popular(s, 5)
+    from scripts.register_ume import params_for
+    assert set(params_for(tmp / "art_root_missing")["artifact_dirs"]) == set()
+
+
+def test_history_per_source_not_crowded_out(env):
+    Session, ids, params, _ = env
+    with Session() as s:
+        u = ids["users"][1]                                                   # amazon · hm 둘 다 이력
+        s.add_all([Event(user_id=u, item_id=ids["amazon"][j % 30], type="click", created_at=T0 + timedelta(hours=j))
+                   for j in range(1, 202)])
+        s.commit()
+        rec = recommenders.get("ume", params).recommend(s, u, 12)
+        assert any(i in ids["hm"] for i in rec)

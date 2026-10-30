@@ -14,13 +14,20 @@ from sqlalchemy import select
 
 from app.db import SessionLocal, init_db
 from app.models import ModelVersion
+from app.recommenders.ume import tower_problem
+from app.services.catalog_index import get_index
 
 
-def params_for(root: Path, gamma: float = 2.0, beta_amazon: float = 2.0) -> dict:
-    dirs = {src: str(root / f"{src}_test_pca") for src in ("hm", "amazon")}
-    missing = [d for d in dirs.values() if not (Path(d) / "text" / "weights.npz").exists()]
-    if missing:
-        print(f"[주의] 가중치 없음: {missing}. 해당 데이터셋 고객은 인기 모델로 대체된다")
+def params_for(root: Path, gamma: float = 2.0, beta_amazon: float = 2.0, dim: int | None = None) -> dict:
+    """준비된 데이터셋만 artifact_dirs에 넣는다 (텍스트 · 이미지 가중치 · 필수 키 · 입력 차원 검사)."""
+    dirs = {}
+    for src in ("hm", "amazon"):
+        d = str(root / f"{src}_test_pca")
+        problem = tower_problem(d, dim)
+        if problem:
+            print(f"[제외] {src}: {problem}. 이 데이터셋 고객은 인기 모델로 대체된다")
+        else:
+            dirs[src] = d
     return {"artifact_dirs": dirs, "gamma": gamma, "beta": {"amazon": beta_amazon}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
 
 
@@ -34,7 +41,11 @@ def main():
     a = ap.parse_args()
     init_db()
     with SessionLocal() as db:
-        mv = ModelVersion(name="ume", version=a.version, params=params_for(a.root, a.gamma, a.beta_amazon))
+        ix = get_index(db)
+        params = params_for(a.root, a.gamma, a.beta_amazon, ix.text.shape[1] if len(ix) else None)
+        if a.activate and not params["artifact_dirs"]:
+            raise SystemExit("준비된 가중치가 없어 운영 모델 교체를 거절한다 (기존 운영 모델 유지)")
+        mv = ModelVersion(name="ume", version=a.version, params=params)
         db.add(mv)
         db.flush()
         if a.activate:
