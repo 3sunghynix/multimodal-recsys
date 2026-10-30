@@ -58,3 +58,12 @@ AppTest는 실제 앱을 실행해 데이터셋 전환·빈 선택·메뉴·미�
 학교 문서에는 검색 MRR/NDCG, 추천 HitRate/Coverage, A/B 전환율·p-value·95% 구간이 요구된다. v0.1의 PR #23 보고값은 주로 MAP/NDCG/Recall@12·Recall@300이다. **Recall을 HitRate로 바꿔 표시하거나, 없는 K의 지표를 다른 K에서 추정하지 않는다.** 검색 평가 결과·과제 K의 지표·고객 의존성을 반영한 온라인 검정은 후속 연결이 필요하다.
 
 프레임워크 선택·그림 배치·원본 파일 형식은 [실행·발표 메모](../docs/project/대시보드_실행기.md)에 정리했다.
+
+
+## 리뷰 반영 — 원본 결과 우선 표시
+
+기본 선택은 source별 results/ume/hm_test_pca.json, results/ume/amazon_test_pca.json이다. 없을 때만 해당 source의 문서 보고값을 사용한다. 파일은 있지만 source·split·형식이 잘못되면 오류를 표시하며 조용히 문서값으로 바꾸지 않는다. 원본 수치와 vs_popularity의 95% 구간을 표시한다.
+
+두 파일은 Drive msrs_project/results/ume/에서 내려받아 저장소 results/ume/에 둔다. PR에는 포함하지 않는다. 여러 모델이 있으면 문서의 서비스 설정 모델을 기본 비교 후보로 먼저 배치한다.
+
+Amazon에는 브랜드 일치도@12 카드를 추가한다. 퍼센트와 인기 대비 차이(%p)로 표시하며, 고객별 최다 브랜드 비중과 구분한다.

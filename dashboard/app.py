@@ -35,23 +35,38 @@ def read_small(path):
 def choose_offline():
     default = HERE / "data/reported_offline.json"
     files = sorted(RESULTS.glob("*.json")) if RESULTS.is_dir() else []
-    labels = {"문서 보고값 · PR #23": default}
+    labels = {"원본 결과 자동 선택 · 없으면 문서 보고값": None}
     labels.update({f"로컬 결과 · {p.name}": p for p in files})
+    labels["문서 보고값 · PR #23"] = default
     label = st.selectbox("결과 파일", list(labels), key="offline_file")
     uploaded = st.file_uploader("평가 JSON 가져오기", type=["json"], key="offline_upload",
                                 help="recsys.ume 또는 recsys.run_eval의 결과. 서로 다른 파일의 고객 집합을 임의로 합치지 않습니다.")
     try:
-        report = offline_report(uploaded.getvalue() if uploaded else read_small(labels[label]), uploaded.name if uploaded else label)
+        if uploaded:
+            report = offline_report(uploaded.getvalue(), uploaded.name)
+        elif labels[label] is None:
+            source_name = st.selectbox("데이터셋", ["hm", "amazon"],
+                                      format_func=lambda s: "H&M" if s == "hm" else "Amazon", key="dataset")
+            path = RESULTS / f"{source_name}_test_pca.json"
+            if path.is_file():
+                report = offline_report(read_small(path), path.name)
+                if report["reported"] or len(report["sources"]) != 1 or report["sources"][0]["source"] != source_name or report["sources"][0]["split"] != "test":
+                    raise ValueError("자동 선택 파일의 source/test 조건이 일치하지 않습니다.")
+            else:
+                st.caption(f"{path.name} 미설치 → 문서 보고값 사용. 원본 JSON을 results/ume/에 넣으면 다음 화면 갱신부터 우선 표시합니다.")
+                report = offline_report(read_small(default), "문서 보고값 · PR #23")
+            return report, next(s for s in report["sources"] if s["source"] == source_name)
+        else:
+            report = offline_report(read_small(labels[label]), label)
+        sources = sorted({s["source"] for s in report["sources"]}, key=lambda s: (s != "hm", s))
+        source_name = st.selectbox("데이터셋", sources, format_func=lambda s: "H&M" if s == "hm" else "Amazon", key="dataset")
+        candidates = [s for s in report["sources"] if s["source"] == source_name]
+        if len(candidates) != 1:
+            raise ValueError("같은 source의 평가가 중복되었습니다. 한 평가 집합만 제공하세요.")
+        return report, candidates[0]
     except (OSError, ValueError, KeyError, TypeError) as error:
         st.error(f"평가 파일 확인 필요: {error}")
         st.stop()
-    sources = sorted({s["source"] for s in report["sources"]}, key=lambda s: (s != "hm", s))
-    source_name = st.selectbox("데이터셋", sources, format_func=lambda s: "H&M" if s == "hm" else "Amazon", key="dataset")
-    candidates = [s for s in report["sources"] if s["source"] == source_name]
-    if len(candidates) != 1:
-        st.error("같은 source의 평가가 중복되었습니다. 한 평가 집합만 제공하세요.")
-        st.stop()
-    return report, candidates[0]
 
 
 def sidebar():
@@ -81,6 +96,9 @@ def lab():
         report, source = choose_offline()
     report_banner(report, source)
     names = list(source["models"])
+    service_name = "ume+popscore2.0" if source["source"] == "hm" else "ume+popscore2.0+brand2.0"
+    if service_name in names:
+        names = [n for n in ("popularity", service_name) if n in names] + [n for n in names if n not in {"popularity", service_name}]
     selected = st.multiselect("비교 모델 · 최대 4개", names, default=names[:4], max_selections=4, key="models")
     if not selected:
         st.info("비교할 모델을 하나 이상 선택하세요.")
@@ -88,13 +106,20 @@ def lab():
     candidate = next((n for n in selected if n != "popularity"), selected[0])
     st.subheader("주요 지표")
     st.caption(f"카드 표시: {candidate} / 차이는 같은 파일의 popularity 대비 절대 차이입니다.")
-    columns = st.columns(3)
-    for column, metric in zip(columns, ("map@12", "recall@300", "coverage@12")):
+    card_metrics = ["map@12", "recall@300", "coverage@12"]
+    if source["source"] == "amazon":
+        card_metrics.append("brand_alignment@12")
+    columns = st.columns(len(card_metrics))
+    for column, metric in zip(columns, card_metrics):
         value = source["models"][candidate].get(metric)
         change = delta(source, candidate, metric)
         with column:
-            st.metric(LABELS[metric], "미제공" if value is None else f"{value:.4f}",
-                      delta=f"{change['difference']:+.4f}" if change and candidate != "popularity" else None,
+            display = "미제공" if value is None else (f"{value:.1%}" if metric == "brand_alignment@12" else f"{value:.4f}")
+            difference = None
+            if change and candidate != "popularity":
+                difference = f"{change['difference'] * 100:+.2f}%p" if metric == "brand_alignment@12" else f"{change['difference']:+.4f}"
+            st.metric(LABELS[metric], display,
+                      delta=difference,
                       delta_color="off", border=True)
     st.caption("Coverage 증가는 노출 범위 확대이며 항상 성능 개선을 뜻하지 않습니다. 브랜드 일치도는 고객별 최다 브랜드 비중과 다릅니다.")
     left, right = st.columns([1.4, 1])

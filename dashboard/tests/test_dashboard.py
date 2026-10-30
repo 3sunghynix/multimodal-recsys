@@ -144,3 +144,41 @@ def test_simulator_page_uses_real_file(monkeypatch, tmp_path, sim):
     assert at.metric[0].value == "1"
     assert any("한 모델" in i.value for i in at.info)
     assert any("로컬 합성" in w.value for w in at.warning)
+
+
+def test_original_test_result_is_default_and_ci_displayed(monkeypatch, tmp_path, native):
+    folder = tmp_path / "empty_results"
+    folder.mkdir()
+    (folder / "hm_test_pca.json").write_bytes(encode(native))
+    at = app(monkeypatch, tmp_path)
+    assert not at.exception
+    assert not at.warning
+    assert at.metric[0].value == "0.1000"
+    assert any("+0.05000, +0.15000" in text.value for text in at.markdown)
+    # Missing Amazon file falls back for Amazon only, not to the H&M result.
+    at.selectbox(key="dataset").set_value("amazon").run()
+    assert not at.exception and at.warning
+    assert at.metric[3].label == "브랜드 일치도@12"
+    assert at.metric[3].value == "10.7%"
+
+
+def test_invalid_original_is_not_silently_replaced(monkeypatch, tmp_path, native):
+    folder = tmp_path / "empty_results"
+    folder.mkdir()
+    native["source"] = "amazon"
+    (folder / "hm_test_pca.json").write_bytes(encode(native))
+    at = app(monkeypatch, tmp_path)
+    assert not at.exception
+    assert at.error and "조건" in at.error[0].value
+    assert not at.metric
+
+
+def test_original_result_appearing_after_first_render_is_preferred(monkeypatch, tmp_path, native):
+    at = app(monkeypatch, tmp_path)
+    assert at.warning
+    folder = tmp_path / "empty_results"
+    folder.mkdir()
+    (folder / "hm_test_pca.json").write_bytes(encode(native))
+    at.run()
+    assert not at.exception and not at.warning
+    assert at.metric[0].value == "0.1000"
