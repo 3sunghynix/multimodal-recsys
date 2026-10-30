@@ -33,6 +33,8 @@ class ClipImageEncoder:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(model_name)
         self.model = self.model.to(self.device).eval()
+        # 텍스트 → 이미지 검색용 토크나이저도 시작할 때 받는다. 첫 검색 때 받으면 오프라인(HF_HUB_OFFLINE=1)에서 실패한다
+        self._tokenizer = open_clip.get_tokenizer(model_name)
 
         self.pca_mean: np.ndarray | None = None
         self.pca_components: np.ndarray | None = None
@@ -68,9 +70,6 @@ class ClipImageEncoder:
 
         if not self.pca_ready:
             raise RuntimeError("PCA 변환 행렬이 로드되지 않았다 (pca_image_path 확인)")
-        if not hasattr(self, "_tokenizer"):
-            import open_clip
-            self._tokenizer = open_clip.get_tokenizer(self.model_name)
         with torch.no_grad():
             v = self.model.encode_text(self._tokenizer(texts).to(self.device)).float().cpu().numpy()
         return project(v, self.pca_mean, self.pca_components, center=False)
