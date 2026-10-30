@@ -10,6 +10,22 @@ from recsys.eval.online import dominant_brand_share
 from .data import derived_seed
 
 
+def customer_category_plan(data, minimum):
+    """Eligible categories only; weight by positive train purchase rows, not catalog size."""
+    setup = data.items.loc[data.items.item_key.isin(data.positive.item_key)]
+    categories = []
+    for category, pool in setup.groupby("category", sort=True):
+        sizes = pool.groupby("brand_norm").item_key.nunique()
+        brands = sorted(sizes[sizes >= minimum].index)
+        if brands:
+            count = int(data.positive.item_key.isin(pool.item_key).sum())
+            categories.append({"category": str(category), "brands": brands, "positive_train_purchases": count})
+    total = sum(row["positive_train_purchases"] for row in categories)
+    for row in categories:
+        row["probability"] = row["positive_train_purchases"] / total
+    return setup, categories
+
+
 def make_customers(data, config, count=None, history_size=10):
     if type(history_size) is not int or not 3 <= history_size <= 50:
         raise ValueError("history_size must be 3..50 (local pilot proposal)")
@@ -19,21 +35,27 @@ def make_customers(data, config, count=None, history_size=10):
     seed = config["pilot"]["seed"]
     features = config["features"]
     minimum = features["brand_affinity"]["min_train_items_per_brand_in_category"]
-    setup = data.items.loc[data.items.item_key.isin(data.positive.item_key)]
-    categories = sorted(set(setup.category))
+    setup, plan = customer_category_plan(data, minimum)
+    data.stats["customer_category_sampling"] = {
+        "rule": "eligible_categories_weighted_by_positive_train_purchase_count",
+        "eligibility": "at_least_one_brand_with_minimum_distinct_positive_train_items",
+        "min_train_items_per_brand_in_category": minimum,
+        "scope": "provided usable catalog; positive train purchases only; source-specific IDs retained",
+        "categories": plan,
+        "excluded_categories": sorted(set(setup.category) - {p["category"] for p in plan}),
+    }
     customers, skipped = [], []
     for persona in config["pilot"]["active_personas"]:
         for index in range(count):
             cid = f"sim-{persona}-{index:04d}"
             rng = np.random.default_rng(derived_seed(seed, "customer", cid))
-            category = str(rng.choice(categories))
-            pool = setup.loc[setup.category == category]
-            sizes = pool.groupby("brand_norm").item_key.nunique()
-            brands = sorted(sizes[sizes >= minimum].index)
-            if not brands:
-                skipped.append({"customer_id": cid, "persona": persona, "category": category,
-                                "reason": "no_brand_with_minimum_train_items; category_not_switched"})
+            if not plan:
+                skipped.append({"customer_id": cid, "persona": persona, "category": None,
+                                "reason": "no_eligible_category_with_minimum_train_items"})
                 continue
+            selection = plan[int(rng.choice(len(plan), p=[row["probability"] for row in plan]))]
+            category, brands = selection["category"], selection["brands"]
+            pool = setup.loc[setup.category == category]
             n = min(int(rng.choice(features["brand_affinity"]["preferred_brand_count_candidates"])), len(brands))
             chosen = sorted(rng.choice(brands, size=n, replace=False).tolist())
             eligible = pool.loc[pool.brand_norm.isin(chosen)]
@@ -47,7 +69,8 @@ def make_customers(data, config, count=None, history_size=10):
             q = float(rng.choice(quantiles, p=weights))
             budget = float(pool.price.quantile(q))
             customers.append({"customer_id": cid, "source": "sim", "persona": persona,
-                              "preferred_category": category, "preferred_brands": chosen,
+                              "preferred_category": category, "category_sampling_probability": selection["probability"],
+                              "preferred_brands": chosen,
                               "budget": budget, "budget_quantile": q, "initial_purchase_keys": history,
                               "setup_seed": derived_seed(seed, "customer", cid), "setup_kind": "synthetic_train_only"})
     return customers, skipped

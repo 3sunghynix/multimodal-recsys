@@ -9,7 +9,7 @@ import yaml
 
 from simulator.config import load_config
 from simulator.data import prepare
-from simulator.engine import click_probability, item_features, local_popularity_responses, make_customers, simulate, summarize
+from simulator.engine import customer_category_plan, click_probability, item_features, local_popularity_responses, make_customers, simulate, summarize
 from simulator.__main__ import run
 
 CONFIG = Path(__file__).parents[1] / "personas.yaml"
@@ -87,7 +87,7 @@ def test_missing_brand_pool_reports_skip_instead_of_switching(tables, config):
     items.loc[:, "brand_norm"] = [f"b{i}" for i in range(len(items))]
     customers, skipped = make_customers(prepare(items, events), config, count=2)
     assert customers == [] and len(skipped) == 8
-    assert all("category_not_switched" in s["reason"] for s in skipped)
+    assert all("no_eligible_category" in s["reason"] for s in skipped)
 
 
 def test_feature_definitions(prepared):
@@ -189,7 +189,7 @@ def test_config_rejects_unsupported_settings(tmp_path, config, change):
     else:
         config["pilot"]["active_personas"].append("new_item_seeking")
     f = tmp_path / "config.yaml"
-    f.write_text(yaml.safe_dump(config))
+    f.write_text(yaml.safe_dump(config), encoding="utf-8")
     with pytest.raises(ValueError):
         load_config(f)
 
@@ -205,7 +205,41 @@ def test_end_to_end_repeatability_and_no_overwrite(tmp_path, tables):
     run(folder, two, CONFIG, count=2)
     for name in ("customers.json", "recommendations.jsonl", "decisions.jsonl", "events.jsonl", "summary.json"):
         assert (one / name).read_bytes() == (two / name).read_bytes()
-    manifest = json.loads((one / "manifest.json").read_text())
+    manifest = json.loads((one / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["server_writes"] is False
     with pytest.raises(FileExistsError):
         run(folder, one, CONFIG, count=2)
+
+
+def test_category_plan_excludes_sparse_and_weights_train_rows(tables, config):
+    items, events = tables
+    # A second eligible category with twice the purchase count, plus an ineligible category.
+    extra_items = items.loc[items.source == "amazon"].copy()
+    extra_items["item_id"] += 20
+    extra_items["cat_type"] = "Shoes"
+    extra_events = events.loc[(events.source == "amazon") & (events.split == "train")].copy()
+    extra_events["item_id"] += 20
+    sparse = extra_items.iloc[[0]].copy()
+    sparse["item_id"] = 99
+    sparse["cat_type"] = "Sparse"
+    sparse_event = extra_events.iloc[[0]].copy()
+    sparse_event["item_id"] = 99
+    data = prepare(pd.concat([items, extra_items, sparse], ignore_index=True),
+                   pd.concat([events, extra_events, extra_events, extra_events, extra_events, sparse_event], ignore_index=True))
+    _, plan = customer_category_plan(data, 3)
+    by_name = {row["category"]: row for row in plan}
+    assert set(by_name) == {"Women > Clothing", "Women > Shoes"}
+    assert by_name["Women > Clothing"]["probability"] == pytest.approx(1 / 3)
+    assert by_name["Women > Shoes"]["probability"] == pytest.approx(2 / 3)
+    customers, skipped = make_customers(data, config, count=4)
+    assert len(customers) == 16 and not skipped
+    assert all(c["preferred_category"] != "Women > Sparse" for c in customers)
+    assert "Women > Sparse" in data.stats["customer_category_sampling"]["excluded_categories"]
+    assert sum(p["probability"] for p in plan) == pytest.approx(1)
+
+
+def test_setup_ignores_input_row_order(tables, config):
+    items, events = tables
+    one, _ = make_customers(prepare(items, events), config, count=3)
+    two, _ = make_customers(prepare(items.sample(frac=1, random_state=2), events.sample(frac=1, random_state=3)), config, count=3)
+    assert one == two
