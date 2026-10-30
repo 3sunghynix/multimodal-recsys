@@ -185,6 +185,17 @@ def popularity_score(history: pd.DataFrame, catalog: np.ndarray, recent_days: in
     return (cnt - cnt.mean()) / (cnt.std() + 1e-6)
 
 
+def preferred_brand(history: pd.DataFrame, brand_of: np.ndarray, users: np.ndarray) -> np.ndarray:
+    """고객별 선호 브랜드 = 긍정 이력(feedback > 0)에서 가장 많은 브랜드 (없으면 −1). 부정 리뷰는 세지 않는다.
+    같은 수면 브랜드 코드가 작은 쪽. 데이터 특성 지표 UserBrandLoyalty(전체 이력)와는 다른 정의."""
+    pos = history[history.feedback > 0]
+    b = pd.DataFrame({"user_id": pos.user_id.values, "brand": brand_of[pos.item_id.values]})
+    b = b[b.brand >= 0]
+    top = (b.groupby(["user_id", "brand"]).size().reset_index(name="c")
+           .sort_values(["user_id", "c", "brand"], ascending=[True, False, True]))
+    return top.drop_duplicates("user_id").set_index("user_id").brand.reindex(users).fillna(-1).astype(np.int64).values
+
+
 def recommend(U: dict, V: dict, catalog: np.ndarray, k: int, device: str, boost=None, item_bias=None, chunk=2048):
     """U · V: {"text": ..., "image": ...}. 모달리티 하나면 원래 점수, 둘이면 고객별 z 합.
     boost: (고객별 최다 브랜드 (n_users,), 상품 브랜드 (n_catalog,), β) 또는 None.
@@ -232,9 +243,17 @@ def save_tower(model, path: Path, p: dict, meta: dict):
 
 def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: Path | None = None,
         feedback_weight: bool = True, epochs: int | None = None, betas=(0.5, 1.0, 2.0), gammas=(0.5, 1.0, 2.0, 4.0),
-        device: str | None = None, ks=(12, 300), log=print):
-    """E0 · E1 · E2 · E3을 한 번에: 두 타워 학습 → 인기 · 텍스트 · 이미지 · UME · 인기 슬롯 · 브랜드 가산을 같은 지표로 채점."""
+        device: str | None = None, ks=(12, 300), only=None, overwrite: bool = False, log=print):
+    """E0 · E1 · E2 · E3을 한 번에: 두 타워 학습 → 인기 · 텍스트 · 이미지 · UME · 인기 슬롯 · 브랜드 가산을 같은 지표로 채점.
+
+    only: 채점할 설정 이름 목록 (인기는 항상 포함). **test는 필수** — 미리 정한 설정만 채점한다.
+    산출물: out/{tag}.json + out/{tag}/{text,image}/ (tag = 데이터셋_분할_입력[_nofb]). 이미 있으면 overwrite=True일 때만 덮어쓴다.
+    """
     import torch
+    assert split != "test" or only, "test는 only(--only)로 채점할 설정을 지정해야 한다 (오프라인결과.md 3장)"
+    tag = f"{source}_{split}_{kind}" + ("" if feedback_weight else "_nofb")
+    if out and not overwrite and ((out / tag).exists() or (out / f"{tag}.json").exists()):
+        raise FileExistsError(f"{out / tag} 산출물이 이미 있다. 덮어쓰려면 overwrite=True (--overwrite)")
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
     p = {**DEFAULT, **({"epochs": epochs} if epochs else {})}
     events, items, brand_of, n_items = load_dataset(root / "processed" / DATA_DIR[source])
@@ -251,7 +270,7 @@ def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: P
         timing[f"train_{m}_s"] = round(time.time() - t, 1)
         U[m], V[m] = tower_vectors(model, X[m], seq, es.users, catalog, p["max_hist"], device)
         if out:
-            save_tower(model, out / f"{source}_{split}_{kind}" / m, p,
+            save_tower(model, out / tag / m, p,
                        {"source": source, "split": split, "input": kind, "modality": m, "feedback_weight": feedback_weight,
                         "trained_until": str(es.history.ts.max())})
         log(f"  {m} 학습 {timing[f'train_{m}_s']}s")
@@ -278,17 +297,19 @@ def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: P
         recs[f"ume+popscore{g}"] = recommend(U, V, catalog, K, device, item_bias=g * pop_z)
     # E3: 브랜드 가산 (브랜드가 여럿인 데이터셋만), 인기 점수와 함께도
     if source == "amazon":
-        b = pd.DataFrame({"user_id": es.history.user_id.values, "brand": brand_of[es.history.item_id.values]})
-        b = b[b.brand >= 0]
-        top = b.groupby(["user_id", "brand"]).size().reset_index(name="c").sort_values(["user_id", "c"], ascending=[True, False])
-        top_brand = top.drop_duplicates("user_id").set_index("user_id").brand.reindex(es.users).fillna(-1).astype(np.int64).values
+        top_brand = preferred_brand(es.history, brand_of, es.users)
         boost = lambda beta: (top_brand, brand_of[catalog], beta)  # noqa: E731
         for beta in betas:
             recs[f"ume+brand{beta}"] = recommend(U, V, catalog, K, device, boost=boost(beta))
             for g in gammas:
                 recs[f"ume+popscore{g}+brand{beta}"] = recommend(U, V, catalog, K, device, boost=boost(beta), item_bias=g * pop_z)
 
-    result = {"source": source, "split": split, "input": kind, "feedback_weight": feedback_weight, "params": p,
+    if only:
+        keep = ["popularity", *[n for n in only if n != "popularity"]]
+        missing = [n for n in keep if n not in recs]
+        assert not missing, f"없는 설정: {missing} (가능: {sorted(recs)})"
+        recs = {n: recs[n] for n in keep}
+    result = {"source": source, "split": split, "input": kind, "feedback_weight": feedback_weight, "params": p, "only": only,
               "eval": es.summary(), "timing": timing, "models": {}}
     for name, rec in recs.items():
         srt = np.sort(rec, axis=1)
@@ -309,7 +330,6 @@ def run(root: Path, source: str, split: str = "valid", kind: str = "pca", out: P
         log(f"  {name:<18} MAP@{k0} − 인기 {c['diff']:+.4f} [{c['ci95'][0]:+.4f}, {c['ci95'][1]:+.4f}]")
     if out:
         out.mkdir(parents=True, exist_ok=True)
-        tag = f"{source}_{split}_{kind}" + ("" if feedback_weight else "_nofb")
         (out / f"{tag}.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     return result
 
@@ -324,9 +344,12 @@ def main():
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--gammas", type=float, nargs="*", default=[0.5, 1.0, 2.0, 4.0], help="인기 점수 가산 γ 후보")
     ap.add_argument("--betas", type=float, nargs="*", default=[0.5, 1.0, 2.0], help="브랜드 가산 β 후보 (Amazon)")
+    ap.add_argument("--only", nargs="*", default=None, help="채점할 설정 (test 필수), 예: ume+popscore2.0+brand2.0")
+    ap.add_argument("--overwrite", action="store_true", help="같은 이름의 결과 · 가중치를 덮어쓴다")
     ap.add_argument("--out", type=Path, default=None)
     a = ap.parse_args()
-    run(a.root, a.source, a.split, a.input, a.out, not a.no_feedback_weight, a.epochs, betas=tuple(a.betas), gammas=tuple(a.gammas))
+    run(a.root, a.source, a.split, a.input, a.out, not a.no_feedback_weight, a.epochs, betas=tuple(a.betas),
+        gammas=tuple(a.gammas), only=a.only, overwrite=a.overwrite)
 
 
 if __name__ == "__main__":

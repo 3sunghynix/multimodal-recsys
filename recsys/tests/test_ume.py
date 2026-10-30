@@ -120,3 +120,25 @@ def test_paired_bootstrap():
     assert abs(r["diff"] - 0.1) < 1e-9 and r["ci95"][0] > 0.09                  # 확실한 차이 → 0 밖
     r = paired_bootstrap(a, a + rng.normal(0, 0.5, 2000))
     assert r["ci95"][0] < 0 < r["ci95"][1]                                        # 잡음뿐 → 0 포함
+
+
+def test_preferred_brand_ignores_negative_reviews():
+    h = pd.DataFrame({"user_id": [1, 1, 1, 2], "item_id": [0, 1, 2, 2], "feedback": [-1.0, -1.0, 1.0, 0.5]})
+    brand_of = np.array([0, 0, 1])                  # 상품 0 · 1 = 브랜드 0 (부정 2건), 상품 2 = 브랜드 1 (긍정 1건)
+    assert ume.preferred_brand(h, brand_of, np.array([1, 2, 3])).tolist() == [1, 1, -1]
+
+
+def test_outputs_separated_and_test_needs_allowlist(tmp_path):
+    root = toy_root(tmp_path, n_users=60)
+    out = tmp_path / "out"
+    kw = dict(out=out, epochs=1, device="cpu", ks=(5, 20), log=lambda *a: None)
+    ume.run(root, "amazon", "valid", **kw)
+    ume.run(root, "amazon", "valid", feedback_weight=False, **kw)            # 다른 폴더 → 덮어쓰지 않음
+    cfg = lambda d: json.loads((out / d / "text" / "config.json").read_text(encoding="utf-8"))["feedback_weight"]  # noqa: E731
+    assert cfg("amazon_valid_pca") is True and cfg("amazon_valid_pca_nofb") is False
+    with pytest.raises(FileExistsError):
+        ume.run(root, "amazon", "valid", **kw)
+    with pytest.raises(AssertionError):
+        ume.run(root, "amazon", "test", **kw)                                 # test는 허용 목록 필수
+    r = ume.run(root, "amazon", "test", gammas=(2.0,), betas=(2.0,), only=["ume+popscore2.0+brand2.0"], **kw)
+    assert set(r["models"]) == {"popularity", "ume+popscore2.0+brand2.0"} and set(r["vs_popularity"]) == {"ume+popscore2.0+brand2.0"}
