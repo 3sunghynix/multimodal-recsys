@@ -31,6 +31,24 @@ def params_for(root: Path, gamma: float = 2.0, beta_amazon: float = 2.0, dim: in
     return {"artifact_dirs": dirs, "gamma": gamma, "beta": {"amazon": beta_amazon}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
 
 
+def register(db, root: Path, version: str = "v1", gamma: float = 2.0, beta_amazon: float = 2.0,
+             activate: bool = False) -> ModelVersion:
+    """UME 모델 버전 등록. activate인데 준비된 데이터셋이 없으면 ValueError (아무것도 바꾸지 않음, 기존 운영 모델 유지)."""
+    ix = get_index(db)
+    params = params_for(root, gamma, beta_amazon, ix.text.shape[1] if len(ix) else None)
+    if activate and not params["artifact_dirs"]:
+        raise ValueError("준비된 가중치가 없어 운영 모델 교체를 거절한다 (기존 운영 모델 유지)")
+    mv = ModelVersion(name="ume", version=version, params=params)
+    db.add(mv)
+    db.flush()
+    if activate:
+        for other in db.scalars(select(ModelVersion).where(ModelVersion.status == "active", ModelVersion.id != mv.id)):
+            other.status = "candidate"
+        mv.status = "active"
+    db.commit()
+    return mv
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=Path("/data/models/ume"))
@@ -41,18 +59,10 @@ def main():
     a = ap.parse_args()
     init_db()
     with SessionLocal() as db:
-        ix = get_index(db)
-        params = params_for(a.root, a.gamma, a.beta_amazon, ix.text.shape[1] if len(ix) else None)
-        if a.activate and not params["artifact_dirs"]:
-            raise SystemExit("준비된 가중치가 없어 운영 모델 교체를 거절한다 (기존 운영 모델 유지)")
-        mv = ModelVersion(name="ume", version=a.version, params=params)
-        db.add(mv)
-        db.flush()
-        if a.activate:
-            for other in db.scalars(select(ModelVersion).where(ModelVersion.status == "active")):
-                other.status = "candidate"
-            mv.status = "active"
-        db.commit()
+        try:
+            mv = register(db, a.root, a.version, a.gamma, a.beta_amazon, a.activate)
+        except ValueError as e:
+            raise SystemExit(str(e))
         print(f"등록: id={mv.id} ume {a.version} status={mv.status} params={mv.params}")
 
 

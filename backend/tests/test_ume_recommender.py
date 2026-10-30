@@ -169,3 +169,38 @@ def test_history_per_source_not_crowded_out(env):
         s.commit()
         rec = recommenders.get("ume", params).recommend(s, u, 12)
         assert any(i in ids["hm"] for i in rec)
+
+
+# ---- PR #24 2차 리뷰: 가중치 모양 · 손상 파일 · 활성화 거절
+
+def test_shape_mismatch_and_corrupt_weights_fall_back(env):
+    Session, ids, params, tmp = env
+    from app.recommenders.ume import load_tower, tower_problem
+    art = params["artifact_dirs"]["amazon"]
+    f = tmp / "art" / "amazon" / "image" / "weights.npz"
+    w = dict(np.load(f))
+    w["item.0.weight"] = w["item.0.weight"][:, :D - 1]                     # 상품 타워 입력만 7차원 (고객은 8)
+    np.savez(f, **w)
+    load_tower.cache_clear()
+    assert "불일치" in tower_problem(art, D)
+    with Session() as s:
+        assert recommenders.get("ume", params).recommend(s, ids["users"][0], 5) == _popular(s, 5)
+    f.write_bytes(b"not a zip")                                             # 손상된 파일
+    load_tower.cache_clear()
+    assert "읽기 실패" in tower_problem(art, D)
+    with Session() as s:
+        assert recommenders.get("ume", params).recommend(s, ids["users"][0], 5) == _popular(s, 5)
+    load_tower.cache_clear()
+
+
+def test_register_refuses_activation_without_ready_weights(env):
+    Session, ids, params, tmp = env
+    from scripts.register_ume import register
+    with Session() as s:
+        s.add(ModelVersion(name="popularity", status="active"))
+        s.commit()
+        with pytest.raises(ValueError):
+            register(s, tmp / "empty_root", activate=True)
+        s.rollback()
+        assert [m.name for m in s.query(ModelVersion).filter_by(status="active")] == ["popularity"]
+        assert s.query(ModelVersion).filter_by(name="ume").count() == 0

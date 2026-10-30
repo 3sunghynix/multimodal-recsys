@@ -40,18 +40,32 @@ REQUIRED_KEYS = [f"{side}.{i}.{kind}" for side in ("user", "item") for i in (0, 
 
 
 def tower_problem(art: str, dim: int | None = None) -> str | None:
-    """가중치 폴더 검사. 텍스트 · 이미지 둘 다 weights.npz가 있고, 필수 키가 있고, 입력 차원이 dim과 맞으면 None.
-    아니면 이유 문자열 (서빙은 그 데이터셋을 빼고 인기로 대체, 등록 스크립트는 활성화를 거절)."""
+    """가중치 폴더 검사. 문제가 없으면 None, 있으면 이유 문자열 (서빙은 그 데이터셋을 빼고 인기로 대체, 등록은 제외 · 활성화 거절).
+
+    텍스트 · 이미지 각각: weights.npz 존재 · 읽기 가능 · 필수 키, 고객 · 상품 타워마다 층 모양
+    (0층 (H, D) · bias (H,), 3층 (E, H) · bias (E,)), 두 타워의 입력 D가 같고 상품 임베딩 차원 dim과 같으며 출력 E가 같은지.
+    """
     for m in ("text", "image"):
         f = Path(art) / m / "weights.npz"
         if not f.exists():
             return f"{f} 없음"
-        w = load_tower(f"{art}/{m}")
+        try:
+            w = load_tower(f"{art}/{m}")
+        except Exception as e:                                    # 손상된 npz 등
+            return f"{f} 읽기 실패: {type(e).__name__}"
         missing = [k for k in REQUIRED_KEYS if k not in w]
         if missing:
             return f"{f} 키 없음: {missing}"
-        if dim is not None and w["user.0.weight"].shape[1] != dim:
-            return f"{f} 입력 차원 {w['user.0.weight'].shape[1]} ≠ 상품 임베딩 {dim}"
+        shapes = {}
+        for side in ("user", "item"):
+            w0, b0, w3, b3 = (np.shape(w[f"{side}.{i}.{k}"]) for i, k in ((0, "weight"), (0, "bias"), (3, "weight"), (3, "bias")))
+            if len(w0) != 2 or len(w3) != 2 or b0 != (w0[0],) or w3[1] != w0[0] or b3 != (w3[0],):
+                return f"{f} {side} 타워 층 모양 불일치: 0층 {w0} · {b0}, 3층 {w3} · {b3}"
+            shapes[side] = (w0[1], w3[0])                         # (입력 D, 출력 E)
+        if shapes["user"] != shapes["item"]:
+            return f"{f} 고객 · 상품 타워 차원 불일치: 고객 {shapes['user']} · 상품 {shapes['item']} (입력, 출력)"
+        if dim is not None and shapes["user"][0] != dim:
+            return f"{f} 입력 차원 {shapes['user'][0]} ≠ 상품 임베딩 {dim}"
     return None
 
 
