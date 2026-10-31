@@ -78,16 +78,20 @@ def stop_experiment(exp_id: int, db: Session = Depends(get_db)):
 
 @router.get("/experiments/{exp_id}/metrics", response_model=list[VariantMetrics])
 def experiment_metrics(exp_id: int, db: Session = Depends(get_db)):
-    """그룹별 노출(view) · 클릭 · 구매 · CTR. 통계 검정 · 지표 하락 알림은 평가 모듈(김광석)에서 추가."""
+    """그룹별 노출(view) · 클릭 · 구매 · CTR. 통계 검정 · 지표 하락 알림은 평가 모듈(김광석)에서 추가.
+
+    is_setup=True 이벤트(신규 고객 초기 이력 주입)는 집계에서 제외한다.
+    """
     if db.get(Experiment, exp_id) is None:
         raise HTTPException(404, f"실험 없음: {exp_id}")
+    base = (Event.experiment_id == exp_id) & (Event.is_setup == False)   # noqa: E712 (SQLAlchemy는 == False 가 올바른 비교)
     rows = db.execute(select(Event.variant, Event.type, func.count())
-                      .where(Event.experiment_id == exp_id).group_by(Event.variant, Event.type)).all()
+                      .where(base).group_by(Event.variant, Event.type)).all()
     agg = {}
     for variant, typ, n in rows:
         agg.setdefault(variant, {})[typ] = n
     users = dict(db.execute(select(Event.variant, func.count(func.distinct(Event.user_id)))
-                            .where(Event.experiment_id == exp_id).group_by(Event.variant)).all())
+                            .where(base).group_by(Event.variant)).all())
     out = []
     for variant, c in sorted(agg.items(), key=lambda x: str(x[0])):
         imp, clk = c.get("view", 0), c.get("click", 0)

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .config import settings
 from .db import init_db
-from .routers import admin, events, items, recommend, search
+from .routers import admin, events, items, recommend, search, users
 
 
 @asynccontextmanager
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Multimodal RecSys", version="0.1.0", lifespan=lifespan)
-for r in (search.router, recommend.router, events.router, admin.router, items.router):
+for r in (search.router, recommend.router, events.router, admin.router, items.router, users.router):
     app.include_router(r)
 
 # 상품 이미지 서빙 (/images/{source}/{item_id}.jpg). load_dev_subset이 images.zip을 압축 해제한 경로를 노출한다.
