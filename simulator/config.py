@@ -5,7 +5,7 @@ import math
 import yaml
 
 
-FEATURES = {"brand_affinity", "price_affinity", "novelty_affinity", "repurchase_affinity"}
+FEATURES = {"brand_affinity", "price_affinity", "novelty_affinity", "repurchase_affinity", "category_affinity", "familiarity_affinity", "popularity_affinity"}
 
 
 def probability(value, name):
@@ -24,6 +24,18 @@ def load_config(path):
     if len(set(ids)) != len(ids) or len(set(active)) != len(active) or not active:
         raise ValueError("Persona IDs must be unique; active list must not be empty")
     by_id = {p["id"]: p for p in config["personas"]}
+    for p in config["personas"]:
+        weight = p.get("sampling_weight", 1)
+        if isinstance(weight, bool) or not isinstance(weight, (int, float)) or not math.isfinite(weight) or weight < 0:
+            raise ValueError("sampling_weight must be finite and nonnegative")
+        overrides = p.get("behavior_overrides", {})
+        for field, value in overrides.items():
+            if field not in {"click_base_probability", "cart_probability", "purchase_probability"}:
+                raise ValueError("Unknown behavior override")
+            probability(value, field)
+        multiplier = p.get("category_sampling", {}).get("matching_multiplier", 1)
+        if not isinstance(multiplier, (int, float)) or not math.isfinite(multiplier) or multiplier <= 0:
+            raise ValueError("Category multiplier must be positive")
     for name in active:
         if name not in by_id or not by_id[name]["pilot_enabled"]:
             raise ValueError(f"Inactive or unknown persona: {name}")
@@ -53,7 +65,7 @@ def load_config(path):
         raise ValueError("Behavior must not depend on model score, name, or variant")
     if config["features"]["brand_affinity"]["use_popularity_weighted_brand_sampling"]:
         raise ValueError("Brand sampling must be uniform")
-    for key in ("brand_affinity", "price_affinity", "novelty_affinity", "repurchase_affinity"):
+    for key in ("brand_affinity", "price_affinity", "novelty_affinity"):
         if key not in config["features"]:
             raise ValueError(f"Missing feature definition: {key}")
     brands = config["features"]["brand_affinity"]

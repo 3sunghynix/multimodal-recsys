@@ -52,7 +52,7 @@ def test_setup_is_deterministic_train_only(tables, config):
     c2, s2 = make_customers(second, config, count=3)
     assert (c1, s1) == (c2, s2)
     pd.testing.assert_frame_equal(first.items, second.items)
-    assert len(c1) == 12
+    assert len(c1) == 21
 
 
 def test_nonpositive_train_events_not_initial_history(tables, config):
@@ -86,7 +86,7 @@ def test_missing_brand_pool_reports_skip_instead_of_switching(tables, config):
     items, events = tables
     items.loc[:, "brand_norm"] = [f"b{i}" for i in range(len(items))]
     customers, skipped = make_customers(prepare(items, events), config, count=2)
-    assert customers == [] and len(skipped) == 8
+    assert customers == [] and len(skipped) == 14
     assert all("no_eligible_category" in s["reason"] for s in skipped)
 
 
@@ -94,7 +94,9 @@ def test_feature_definitions(prepared):
     products = {i["item_key"]: i for i in prepared.items.to_dict("records")}
     c = dict(initial_purchase_keys=["amazon:0"], preferred_brands=["a"], budget=20)
     f = item_features(c, products["amazon:0"], products)
-    assert f == dict(brand_affinity=1, price_affinity=0.5, novelty_affinity=0, repurchase_affinity=1)
+    assert {k: f[k] for k in ("brand_affinity", "price_affinity", "novelty_affinity", "repurchase_affinity")} == dict(brand_affinity=1, price_affinity=0.5, novelty_affinity=0, repurchase_affinity=1)
+    assert f["familiarity_affinity"] == 1
+    assert f["popularity_affinity"] == 0.5
     assert item_features(c, products["amazon:1"], products)["novelty_affinity"] == 0  # new item, known brand
     assert item_features(c, products["amazon:3"], products)["novelty_affinity"] == 1
 
@@ -114,6 +116,8 @@ def test_events_preserve_attribution_and_funnel(prepared, config):
     certain["behavior"]["click"].update(base_probability=1, minimum_probability=1, maximum_probability=1)
     certain["behavior"]["add_to_cart"]["probability"] = 1
     certain["behavior"]["purchase"]["probability"] = 1
+    for p in certain["personas"]:
+        p["behavior_overrides"] = {}
     decisions, ev = simulate(customers, responses[:1], prepared, certain, "run")
     assert len(ev) == 40
     assert [e["type"] for e in ev[:4]] == ["view", "click", "add_to_cart", "purchase"]
@@ -232,7 +236,7 @@ def test_category_plan_excludes_sparse_and_weights_train_rows(tables, config):
     assert by_name["Women > Clothing"]["probability"] == pytest.approx(1 / 3)
     assert by_name["Women > Shoes"]["probability"] == pytest.approx(2 / 3)
     customers, skipped = make_customers(data, config, count=4)
-    assert len(customers) == 16 and not skipped
+    assert len(customers) == 28 and not skipped
     assert all(c["preferred_category"] != "Women > Sparse" for c in customers)
     assert "Women > Sparse" in data.stats["customer_category_sampling"]["excluded_categories"]
     assert sum(p["probability"] for p in plan) == pytest.approx(1)

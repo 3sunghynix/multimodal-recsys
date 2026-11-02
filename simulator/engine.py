@@ -45,7 +45,13 @@ def make_customers(data, config, count=None, history_size=10):
         "excluded_categories": sorted(set(setup.category) - {p["category"] for p in plan}),
     }
     customers, skipped = [], []
+    specs = {p["id"]: p for p in config["personas"]}
     for persona in config["pilot"]["active_personas"]:
+        category_rule = specs[persona].get("category_sampling", {})
+        adjusted = [row["positive_train_purchases"] * (category_rule.get("matching_multiplier", 1)
+                    if any(t.lower() in row["category"].lower() for t in category_rule.get("matching_terms", [])) else 1) for row in plan]
+        probabilities = np.array(adjusted, dtype=float)
+        if len(probabilities): probabilities /= probabilities.sum()
         for index in range(count):
             cid = f"sim-{persona}-{index:04d}"
             rng = np.random.default_rng(derived_seed(seed, "customer", cid))
@@ -53,7 +59,7 @@ def make_customers(data, config, count=None, history_size=10):
                 skipped.append({"customer_id": cid, "persona": persona, "category": None,
                                 "reason": "no_eligible_category_with_minimum_train_items"})
                 continue
-            selection = plan[int(rng.choice(len(plan), p=[row["probability"] for row in plan]))]
+            selection = plan[int(rng.choice(len(plan), p=probabilities))]
             category, brands = selection["category"], selection["brands"]
             pool = setup.loc[setup.category == category]
             n = min(int(rng.choice(features["brand_affinity"]["preferred_brand_count_candidates"])), len(brands))
@@ -69,7 +75,8 @@ def make_customers(data, config, count=None, history_size=10):
             q = float(rng.choice(quantiles, p=weights))
             budget = float(pool.price.quantile(q))
             customers.append({"customer_id": cid, "source": "sim", "persona": persona,
-                              "preferred_category": category, "category_sampling_probability": selection["probability"],
+                              "preferred_category": category, "category_sampling_probability": float(probabilities[plan.index(selection)]),
+                              "category_sampling_rule": category_rule,
                               "preferred_brands": chosen,
                               "budget": budget, "budget_quantile": q, "initial_purchase_keys": history,
                               "setup_seed": derived_seed(seed, "customer", cid), "setup_kind": "synthetic_train_only"})
@@ -84,11 +91,17 @@ def item_features(customer, item, item_by_key):
         "price_affinity": float(np.clip(1 - item["price"] / customer["budget"], 0, 1)),
         "novelty_affinity": float(item["item_key"] not in history and item["brand_norm"] not in seen_brands),
         "repurchase_affinity": float(item["item_key"] in history),
+        "popularity_affinity": float(item.get("popularity_affinity", 0.5)),
+        "category_affinity": float(item["category"] == customer.get("preferred_category")),
+        "familiarity_affinity": float(item["category"] in {item_by_key[k]["category"] for k in history}),
     }
 
 
-def click_probability(score, config):
-    c = config["behavior"]["click"]
+def click_probability(score, config, persona=None):
+    c = dict(config["behavior"]["click"])
+    override = (persona or {}).get("behavior_overrides", {})
+    if "click_base_probability" in override:
+        c["base_probability"] = override["click_base_probability"]
     if not math.isfinite(score) or not 0 <= score <= 1:
         raise ValueError("Preference score must be in [0, 1]")
     # Clamping in log space avoids overflow for a large (but finite) strength.
@@ -168,9 +181,10 @@ def simulate(customers, responses, data, config, run_id):
             item = products[key]
             f = item_features(customer, item, products)
             score = sum(w * f[name] for name, w in personas[customer["persona"]]["preference_weights"].items())
-            probs = {"click": click_probability(score, config),
-                     "add_to_cart": config["behavior"]["add_to_cart"]["probability"],
-                     "purchase": config["behavior"]["purchase"]["probability"]}
+            overrides = personas[customer["persona"]].get("behavior_overrides", {})
+            probs = {"click": click_probability(score, config, personas[customer["persona"]]),
+                     "add_to_cart": overrides.get("cart_probability", config["behavior"]["add_to_cart"]["probability"]),
+                     "purchase": overrides.get("purchase_probability", config["behavior"]["purchase"]["probability"])}
             draws = {a: float(np.random.default_rng(derived_seed(config["pilot"]["seed"], "behavior", cid, "s0000", rank, a)).random()) for a in probs}
             actions = ["view"]
             if draws["click"] < probs["click"]:
