@@ -107,16 +107,18 @@ def _item_vectors(ix: CatalogIndex, sel: np.ndarray, art: str):
 
 def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | None) -> np.ndarray:
     """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화.
-    캐시 키 = 이벤트 상태 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산."""
-    n, last = db.execute(select(func.count(Event.id), func.max(Event.id))).one()
+    is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 무효화 probe · 최근 구매 기준 시각 · 집계 모두.
+    캐시 키 = 비 setup 이벤트 상태 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산."""
+    non_setup = (Event.is_setup == False)                                               # noqa: E712
+    n, last = db.execute(select(func.count(Event.id), func.max(Event.id)).where(non_setup)).one()
     catalog = (len(item_ids), int(item_ids[0]) if len(item_ids) else None, int(item_ids[-1]) if len(item_ids) else None)
     key = (str(db.bind.url), source, days, n, last, catalog)
     if _pop_cache.get(source, (None,))[0] != key:
         q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
-             .where(Event.type == "purchase", Item.source == source))
+             .where(Event.type == "purchase", Item.source == source, non_setup))
         if days is not None:
             latest = db.scalar(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
-                               .where(Event.type == "purchase", Item.source == source))
+                               .where(Event.type == "purchase", Item.source == source, non_setup))
             if latest is not None:
                 q = q.where(Event.created_at >= latest - timedelta(days=days))
         counts = dict(db.execute(q.group_by(Event.item_id)).all())

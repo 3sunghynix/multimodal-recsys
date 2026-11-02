@@ -9,9 +9,10 @@ WEIGHTS = {"purchase": 3.0, "add_to_cart": 2.0, "click": 1.0, "view": 0.2}   # �
 
 
 def _popular(db: Session, k: int, brand_ids=None, exclude=()):
+    """공통 인기도. is_setup=True 는 초기 이력 적재 전용이므로 집계에서 제외 (개인화 경로는 포함)."""
     w = case(*[(Event.type == t, v) for t, v in WEIGHTS.items()], else_=0.0)
     q = (select(Event.item_id, func.sum(w).label("s"))
-         .where(Event.item_id.is_not(None))
+         .where(Event.item_id.is_not(None), Event.is_setup == False)                    # noqa: E712
          .group_by(Event.item_id).order_by(func.sum(w).desc(), Event.item_id))
     if brand_ids:
         q = q.join(Item, Item.id == Event.item_id).where(Item.brand_id.in_(brand_ids))
