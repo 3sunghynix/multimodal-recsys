@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..db import get_db
-from ..models import Item
+from ..models import Brand, Item
 from ..schemas import ItemOut, SearchHit, SearchOut
 from ..services import search_core
 from ..services.catalog_index import get_index
@@ -113,9 +113,20 @@ async def search(
         top, scores = search_core.search({m: queries[m] for m in weights}, {m: item_mats[m] for m in weights},
                                          weights, ix.sources[sel], k, merge, min_rel or None)
         ids = ix.ids[sel][top[0]].tolist()
-        by_id = {it.id: it for it in db.scalars(select(Item).where(Item.id.in_(ids)))}
-        hits = [SearchHit(**ItemOut.model_validate(by_id[i]).model_dump(), score=float(s))
-                for i, s in zip(ids, scores[0]) if i in by_id]
+        # Brand LEFT JOIN 으로 brand_name 을 함께 가져온다 (프론트가 "BRAND #10" 대신 실제 이름을 쓴다).
+        rows = db.execute(select(Item, Brand.name).outerjoin(Brand, Item.brand_id == Brand.id)
+                          .where(Item.id.in_(ids))).all()
+        by_id = {item.id: (item, brand_name) for item, brand_name in rows}
+        hits = []
+        for i, s in zip(ids, scores[0]):
+            if i not in by_id:
+                continue
+            item, brand_name = by_id[i]
+            hits.append(SearchHit(
+                id=item.id, source=item.source, brand_id=item.brand_id, brand_name=brand_name,
+                title=item.title, category=item.category, price=item.price,
+                image_path=item.image_path, score=float(s),
+            ))
     return SearchOut(query=q, query_en=query_en, untranslated=untranslated, weights=weights, merge=merge, items=hits)
 
 
