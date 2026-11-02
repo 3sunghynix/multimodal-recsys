@@ -149,6 +149,86 @@
     details.debug ul { margin: 10px 0 0; padding-left: 20px; }
     details.debug code { background: var(--bg); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
 
+    /* ───── Detail Modal ───── */
+    .modal-overlay {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px);
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .modal {
+      background: var(--bg); border-radius: 16px; max-width: 960px; width: 100%;
+      height: min(85vh, 720px);                                 /* 설명 길이와 무관하게 창 크기 고정 */
+      display: grid; grid-template-columns: 1fr 1fr;
+      position: relative; box-shadow: 0 24px 60px rgba(0,0,0,0.25);
+      overflow: hidden;                                         /* 모달 전체 스크롤 없음 — 본문만 스크롤 */
+    }
+    .modal-close {
+      position: absolute; top: 12px; right: 12px; z-index: 1;
+      width: 36px; height: 36px; border: none; border-radius: 999px;
+      background: rgba(255,255,255,0.9); color: var(--fg);
+      font-size: 22px; line-height: 1; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .modal-close:hover { background: #fff; }
+    .modal-image {
+      background: var(--bg);                                      /* 상품 이미지 주변 흰 여백 */
+      display: flex; align-items: center; justify-content: center; position: relative;
+      overflow: hidden; padding: 24px;
+    }
+    .modal-image .image-frame {
+      /* 상품 사진의 실제 비율과 무관하게 모달의 사진 영역이 항상 같은 크기(정사각 프레임) 로 보이게 한다. */
+      width: 100%; max-width: 440px; aspect-ratio: 1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .modal-image img {
+      max-width: 100%; max-height: 100%; width: auto; height: auto;
+      object-fit: contain;                                        /* 프레임 안에서 비율 유지, crop 없음 */
+    }
+    .modal-image .placeholder { font-size: 80px; color: #cbcbcb; }
+    .modal-image .src-badge {
+      position: absolute; top: 16px; left: 16px; background: rgba(0,0,0,0.75); color: #fff;
+      font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 4px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .modal-body {
+      padding: 40px 36px; display: flex; flex-direction: column; gap: 14px;
+      overflow-y: auto;                                           /* 설명이 길면 여기만 스크롤 */
+      scrollbar-gutter: stable;
+    }
+    .modal-brand {
+      font-size: 12px; color: var(--muted); font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .modal-title {
+      font-size: 20px; font-weight: 700; letter-spacing: -0.3px; line-height: 1.35; margin: 0;
+      overflow-wrap: anywhere;
+    }
+    .modal-price { font-size: 28px; font-weight: 900; letter-spacing: -0.5px; margin: 8px 0 0; }
+    .modal-category {
+      font-size: 12px; color: var(--fg); font-weight: 600;
+      padding: 5px 12px; background: var(--surface); border-radius: 999px;
+      align-self: flex-start;
+    }
+    .modal-section { border-top: 1px solid var(--line); padding-top: 20px; margin-top: 12px; }
+    .modal-section h3 {
+      font-size: 12px; color: var(--muted); font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px;
+    }
+    .modal-description {
+      font-size: 15px; line-height: 1.8; color: #2a2a2a;          /* 가독성: 큰 줄간격 + 완화된 다크 */
+      white-space: pre-wrap; overflow-wrap: anywhere;
+      font-weight: 400;
+    }
+    @media (max-width: 760px) {
+      .modal {
+        grid-template-columns: 1fr;
+        height: auto; max-height: calc(100vh - 48px); overflow-y: auto;
+      }
+      .modal-image { aspect-ratio: 1; padding: 20px; }
+      .modal-body { padding: 28px 24px; overflow: visible; }
+      .modal-price { font-size: 24px; }
+    }
+
     /* ───── Footer ───── */
     footer { margin-top: 80px; padding: 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; text-align: center; }
   </style>
@@ -156,18 +236,12 @@
 <body>
 
 <header class="header">
-  <a href="#" class="logo">MSRS<span class="dot">.</span></a>
-  <nav class="nav">
-    <a href="#" class="active">HOME</a>
-    <a href="#rec">추천</a>
-    <a href="#search">검색</a>
-  </nav>
+  <a href="#" class="logo" id="logo-home" title="홈으로">MSRS<span class="dot">.</span></a>
   <div class="header-right">
     <div class="user-pill" title="고객 ID (가상 데모 사용자)">
       <span>USER</span>
       <input type="number" id="user-id" value="1" min="1">
     </div>
-    <button class="icon-btn" id="btn-recommend-top">추천 받기 →</button>
   </div>
 </header>
 
@@ -183,7 +257,7 @@
         <div class="text-input">
           <input type="text" name="q" id="search-query" aria-label="검색어" placeholder="검은색 원피스, running shoes…" autocomplete="off">
         </div>
-        <button class="btn ghost" type="button" id="img-btn">📷 이미지 선택</button>
+        <button class="btn ghost" type="button" id="img-btn">이미지 업로드</button>
         <button type="submit" class="btn" id="search-submit">검색</button>
       </div>
       <input type="file" id="img-input" accept="image/jpeg,image/png,image/webp" hidden>
@@ -217,26 +291,33 @@
     <div class="cards" id="cards"></div>
   </section>
 
-  <!-- Empty state (initial) -->
-  <section class="block" id="empty-state">
+  <!-- Empty state (초기 로드 시 추천이 자동으로 뜨므로 거의 노출되지 않지만, 추천이 실패했을 때를 위한 백업). -->
+  <section class="block" id="empty-state" hidden>
     <div class="empty">
       <div class="big">🛍️</div>
       <div><strong>검색어를 입력하거나 이미지를 올려보세요.</strong></div>
-      <div style="margin-top: 6px;">또는 상단에서 고객 ID를 선택하고 "추천 받기"를 눌러보세요.</div>
     </div>
   </section>
 
-  <details class="debug">
-    <summary>API 흐름 (디버깅용)</summary>
-    <ul>
-      <li><code>POST /search</code> (FormData: q, file 선택, text_weight, k) → <code>items</code>의 상품 상세를 바로 표시</li>
-      <li>텍스트·이미지 검색은 서버 기본 <code>per_source_rank</code> 결합 사용. 번역 결과는 <code>query_en</code>, 미번역 단어는 <code>untranslated</code>로 안내</li>
-      <li><code>GET /recommend/{user_id}?k=20</code> → <code>{items: [id, …]}</code> → <code>GET /items?ids=…</code>로 상세 조회</li>
-      <li><code>GET /images/{source}/{item_id}.jpg</code> → 상품 이미지</li>
-    </ul>
-  </details>
-
 </main>
+
+<!-- 상품 상세 모달. 카드 클릭 시 열고 overlay 클릭 · ESC · ×로 닫는다. -->
+<div class="modal-overlay" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="modal-close" id="modal-close" aria-label="닫기" title="닫기">×</button>
+    <div class="modal-image" id="modal-image"></div>
+    <div class="modal-body" id="modal-body">
+      <div class="modal-brand" id="modal-brand"></div>
+      <h2 class="modal-title" id="modal-title"></h2>
+      <div class="modal-price" id="modal-price"></div>
+      <span class="modal-category" id="modal-category"></span>
+      <section class="modal-section" id="modal-desc-section" hidden>
+        <h3>상품 설명</h3>
+        <div class="modal-description" id="modal-description"></div>
+      </section>
+    </div>
+  </div>
+</div>
 
 <footer>
   MSRS Demo · Multimodal Shopping Recommender System · 3성하이닉스 캡스톤
@@ -316,6 +397,7 @@
     }
     items.forEach((item, index) => {
       const card = textElement('article', 'card', '');
+      card.dataset.itemId = String(item.id);                      // 모달 열 때 참조
       const thumb = textElement('div', 'thumb', '');
       const placeholder = () => textElement('span', 'placeholder', '🛍️');
       const src = imageUrl(item);
@@ -331,11 +413,12 @@
       }
       thumb.append(textElement('span', 'src-badge', item.source), textElement('span', 'rank', `#${index + 1}`));
       const info = textElement('div', 'info', '');
-      // 가격 출처를 아직 API에서 받지 못하므로 고정 환산값을 판매가로 단정하지 않는다.
-      const price = item.price != null ? '예상가 ₩' + Math.round(item.price * 1300).toLocaleString() : '가격 정보 없음';
+      const price = item.price != null ? '₩' + Math.round(item.price * 1300).toLocaleString() : '가격 정보 없음';
       const priceEl = textElement('div', 'price', price);
-      if (item.price != null) priceEl.title = '데모 표시용 추정가입니다. 고정 환산 기준: 1 USD = 1,300 KRW.';
-      info.append(textElement('div', 'brand', item.brand_id ? `BRAND #${item.brand_id}` : ''),
+      if (item.price != null) priceEl.title = '1 USD = 1,300 KRW 고정 환산';
+      // 서버가 brand_name 을 돌려주면 그걸 쓰고, 없을 때만 ID 로 폴백.
+      const brandText = item.brand_name || (item.brand_id ? 'BRAND #' + item.brand_id : '');
+      info.append(textElement('div', 'brand', brandText),
         textElement('div', 'title', item.title), priceEl);
       card.append(thumb, info);
       cards.append(card);
@@ -441,10 +524,118 @@
       setStatus(`✓ 추천 완료 · ${items.length}개`, 'ok');
     });
   }
-  $('#btn-recommend-top').addEventListener('click', fetchRecommend);
-  document.querySelector('a[href="#rec"]').addEventListener('click', (event) => { event.preventDefault(); fetchRecommend(); });
-  document.querySelector('a[href="#search"]').addEventListener('click', (event) => { event.preventDefault(); queryInput.focus(); });
+  // 고객 ID 가 바뀌면 자동으로 그 고객 추천을 다시 가져온다.
+  $('#user-id').addEventListener('change', () => {
+    const uid = parseInt($('#user-id').value, 10);
+    if (uid > 0) fetchRecommend();
+  });
+  // 로고 클릭 = 홈으로 (검색어·이미지 비우고 현재 USER 추천 재조회).
+  $('#logo-home').addEventListener('click', (event) => {
+    event.preventDefault();
+    queryInput.value = '';
+    imageInput.value = '';
+    updateSearchControls();
+    const uid = parseInt($('#user-id').value, 10);
+    if (uid > 0) fetchRecommend();
+  });
+
+  // ─── 상품 상세 모달 ───
+  const modal = $('#modal');
+  let activeDetail = null;                                      // 중복 요청 방지용 AbortController
+
+  function makePlaceholder() {
+    return textElement('span', 'placeholder', '🛍️');
+  }
+
+  function renderDetail(item) {
+    const imageWrap = $('#modal-image');
+    imageWrap.replaceChildren();
+    // 상품 사진 비율과 무관하게 모달 이미지 영역이 늘 같은 크기 (정사각 프레임) 로 보이도록 wrap.
+    const frame = textElement('div', 'image-frame', '');
+    const url = imageUrl(item);
+    if (url) {
+      const img = document.createElement('img');
+      img.alt = item.title;
+      img.loading = 'lazy';
+      img.addEventListener('error', () => img.replaceWith(makePlaceholder()), { once: true });
+      img.src = url;
+      frame.append(img);
+    } else {
+      frame.append(makePlaceholder());
+    }
+    imageWrap.append(frame, textElement('span', 'src-badge', item.source || ''));
+
+    $('#modal-brand').textContent = item.brand_name
+      ? item.brand_name
+      : (item.brand_id ? 'BRAND #' + item.brand_id : '브랜드 미지정');
+    $('#modal-title').textContent = item.title || '';
+    const priceEl = $('#modal-price');
+    if (item.price != null) {
+      priceEl.textContent = '₩' + Math.round(item.price * 1300).toLocaleString();
+    } else {
+      priceEl.textContent = '가격 정보 없음';
+    }
+    $('#modal-category').textContent = item.category || '-';
+    const desc = (item.description || '').trim();
+    $('#modal-description').textContent = desc;
+    $('#modal-desc-section').hidden = !desc;
+  }
+
+  function closeDetail() {
+    modal.hidden = true;
+    document.body.style.overflow = '';
+    if (activeDetail) {
+      activeDetail.abort();
+      activeDetail = null;
+    }
+  }
+
+  async function openDetail(itemId) {
+    if (activeDetail) activeDetail.abort();
+    const controller = new AbortController();
+    activeDetail = controller;
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';                    // 배경 스크롤 잠금
+    // 로딩 중에는 제목만 비우고 나머지는 이전 값 유지해도 되지만, 혼동 방지로 간단히 자리만 잡는다.
+    $('#modal-title').textContent = '불러오는 중…';
+    $('#modal-brand').textContent = '';
+    $('#modal-price').textContent = '';
+    $('#modal-category').textContent = '';
+    $('#modal-desc-section').hidden = true;
+    try {
+      const r = await fetch('/items/' + encodeURIComponent(itemId), { signal: controller.signal });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const item = await r.json();
+      if (controller === activeDetail) renderDetail(item);
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+      $('#modal-title').textContent = '상품 상세를 불러오지 못했습니다.';
+    } finally {
+      if (controller === activeDetail) activeDetail = null;
+    }
+  }
+
+  // 카드 클릭 (이벤트 위임: 새로 그려지는 카드에도 자동으로 붙는다)
+  cards.addEventListener('click', (event) => {
+    const card = event.target.closest('.card');
+    if (!card || !card.dataset.itemId) return;
+    openDetail(parseInt(card.dataset.itemId, 10));
+  });
+  $('#modal-close').addEventListener('click', closeDetail);
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeDetail();                  // overlay 클릭 (내부 모달 클릭은 무시)
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !modal.hidden) closeDetail();
+  });
+
   updateSearchControls();
+
+  // 페이지 로드 시 USER 값으로 바로 추천을 보여준다 — 별도 "추천 받기" 클릭 없이도 홈이 비어 보이지 않게.
+  (function autoLoadRecommendations() {
+    const uid = parseInt($('#user-id').value, 10);
+    if (uid > 0) fetchRecommend();
+  })();
 </script>
 </body>
 </html>
