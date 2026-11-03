@@ -78,6 +78,7 @@ def test_recommend_response_matches_spec_schema(client):
     for rec in body["recommendations"]:
         assert isinstance(rec["product_id"], str) and rec["product_id"].isdigit()
         assert isinstance(rec["score"], (int, float))
+        assert rec["score_kind"] in ("model", "rank")      # 점수 출처 명시 (리뷰 지적 반영)
         assert isinstance(rec["reason"], str) and rec["reason"]
         assert isinstance(rec["is_exploration"], bool)
 
@@ -113,11 +114,20 @@ def test_recommend_session_context_includes_recent_clicks(client):
     assert body["session_context"]["session_interest"] is None
 
 
-def test_recommend_scores_monotonic_decreasing_placeholder(client):
+def test_popularity_emits_real_model_scores_not_rank_placeholder(client):
+    """리뷰 반영: Popularity 는 이벤트 가중치 합계를 실제 점수로 돌려줘야 하고,
+    응답의 score_kind 가 "model" 로 노출돼야 한다 (랭킹 placeholder 와 구분)."""
     body = client.get("/recommend/1?k=5").json()
-    scores = [r["score"] for r in body["recommendations"]]
-    # 랭킹 모델 들어오기 전까지는 순위 기반 placeholder (1.0 → 0.0 감소)
-    assert all(scores[i] > scores[i + 1] for i in range(len(scores) - 1))
+    recs = body["recommendations"]
+    # 전부 model 점수 (Popularity.scored_native=True)
+    assert {r["score_kind"] for r in recs} == {"model"}
+    # 순위 기반 placeholder 는 정확히 1.0 → 0.0 등간격이지만, 실제 이벤트 합계는 정수/소수 배수가 아님.
+    # 최상위가 1.0 이고 간격이 균등하면 placeholder 를 의심 — 그런 패턴이 아닌지 확인.
+    scores = [r["score"] for r in recs]
+    assert scores[0] > 0.0                                 # seed 이벤트가 있으니 top 은 0 보다 큼
+    # placeholder 는 [1.0, 0.8, 0.6, 0.4, 0.2] 같은 형식. 실제 가중치 합이면 이 등간격 패턴을 벗어남.
+    expected_placeholder = [round(1 - (i / 5), 4) for i in range(5)]
+    assert scores != expected_placeholder
 
 
 # ─── /search 응답 규격 ──────────────────────────────────────────────────────
