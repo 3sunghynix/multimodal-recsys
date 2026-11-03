@@ -108,7 +108,7 @@ def app(monkeypatch, tmp_path):
 def test_lab_default_and_dataset_change(monkeypatch, tmp_path):
     at = app(monkeypatch, tmp_path)
     assert not at.exception
-    assert at.title[0].value == "모델 실험실"
+    assert at.title[0].value == "A/B 테스트"
     assert at.warning and "문서 보고값" in at.warning[0].value
     assert at.metric[0].value == "0.0246"
     at.selectbox(key="dataset").set_value("amazon").run()
@@ -124,14 +124,14 @@ def test_lab_empty_model_selection(monkeypatch, tmp_path):
     assert any("하나 이상" in i.value for i in at.info)
 
 
-@pytest.mark.parametrize("page", ["개요", "A/B 테스트", "알림·재학습", "시뮬레이터", "데이터 현황"])
+@pytest.mark.parametrize("page", ["시뮬레이터", "모니터링 페이지"])
 def test_unconnected_pages_have_no_fake_numbers(monkeypatch, tmp_path, page):
     at = app(monkeypatch, tmp_path)
+    assert at.radio(key="page").options == ["A/B 테스트", "시뮬레이터", "모니터링 페이지"]
     at.radio(key="page").set_value(page).run()
     assert not at.exception
-    assert at.title[0].value == ("운영 개요" if page == "개요" else "시뮬레이터 결과" if page == "시뮬레이터" else page)
-    if page in ("A/B 테스트", "알림·재학습", "시뮬레이터", "데이터 현황"):
-        assert not at.metric
+    assert at.title[0].value == ("시뮬레이터 결과" if page == "시뮬레이터" else page)
+    assert not at.metric
 
 
 def test_simulator_page_uses_real_file(monkeypatch, tmp_path, sim):
@@ -182,3 +182,26 @@ def test_original_result_appearing_after_first_render_is_preferred(monkeypatch, 
     at.run()
     assert not at.exception and not at.warning
     assert at.metric[0].value == "0.1000"
+
+
+def test_new_scale_ab_and_monitoring_pages(monkeypatch, tmp_path):
+    folder=tmp_path/'runs/scale_001';folder.mkdir(parents=True)
+    result={'metric':'first_session_customer_click_rate','A':{'rate':.1},'B':{'rate':.2},'p_value':.01,'ci95':[.01,.2]}
+    report={'kind':'synthetic_scale_fixture','ab_by_persona':{'window_shopper':result},
+            'products':50000,'customers':10000,'category_levels':3,'events':1000000,'event_counts':{'view':900000},
+            'groups':[{'persona':'window_shopper','variant':'A','views':100,'clicks':10},
+                      {'persona':'window_shopper','variant':'B','views':100,'clicks':20}], 'requirements_met':{}}
+    (folder/'scale_summary.json').write_bytes(encode(report))
+    at=app(monkeypatch,tmp_path)
+    assert not at.exception
+    assert any('눈팅형' in select.options for select in at.selectbox)
+    at.radio(key='page').set_value('시뮬레이터').run()
+    assert not at.exception
+    assert any('별도 합성' in c.value for c in at.caption)
+    state={'latest':{'values':{'ctr':.01,'hitrate':None}},'last_window_end':'2026-10-31T01:00:00Z',
+           'identity':['ume-v1','amazon','fixed-users','v1'],'alerts':[],'jobs':[{'version':'candidate-000001','status':'requested'}]}
+    (folder/'monitor_state.json').write_bytes(encode(state))
+    at.radio(key='page').set_value('모니터링 페이지').run()
+    assert not at.exception
+    assert at.metric[0].value=='1.00%'
+    assert at.metric[1].value=='계산 불가'

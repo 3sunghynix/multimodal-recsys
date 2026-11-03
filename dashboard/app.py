@@ -19,12 +19,13 @@ API = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 RESULTS = Path(os.getenv("OFFLINE_RESULTS_DIR", str(ROOT / "results/ume")))
 RUNS = Path(os.getenv("SIM_RUNS_DIR", str(ROOT / "simulator/runs")))
 DATA = Path(os.getenv("DEV_DATA_DIR", str(ROOT / "data/dev_subset")))
-PAGES = ["개요", "모델 실험실", "A/B 테스트", "알림·재학습", "시뮬레이터", "데이터 현황"]
+PAGES = ["A/B 테스트", "시뮬레이터", "모니터링 페이지"]
 LABELS = {"map@12": "MAP@12", "ndcg@12": "NDCG@12", "recall@12": "Recall@12", "recall@300": "Recall@300",
           "coverage@12": "Coverage@12", "brand_alignment@12": "브랜드 일치도@12", "intra_list_diversity@12": "목록 내 다양성@12",
           "hitrate@50": "HitRate@50", "ndcg@50": "NDCG@50", "mrr@10": "MRR@10"}
-PERSONAS = {"brand_loyal": "브랜드 충성형 · 스트레스 테스트", "price_sensitive": "가격 민감형",
-            "explorer": "탐색형", "repeat_purchaser": "재구매형"}
+PERSONAS = {"trendsetter":"트렌드세터", "practical":"실용주의자", "value_seeker":"가성비추구",
+            "brand_loyal":"브랜드충성", "impulse_buyer":"충동구매", "careful_explorer":"신중탐색", "window_shopper":"눈팅형",
+            "price_sensitive":"이전 버전 · 가격 민감형", "explorer":"이전 버전 · 탐색형", "repeat_purchaser":"이전 버전 · 재구매형"}
 
 
 def read_small(path):
@@ -73,10 +74,10 @@ def sidebar():
     with st.sidebar:
         st.markdown("### MSRS<span style='color:#e34b48'>.</span>", unsafe_allow_html=True)
         st.caption("ADMIN CONSOLE / LOCAL")
-        page = st.radio("관리 메뉴", PAGES, index=1, label_visibility="collapsed", key="page")
+        page = st.radio("관리 메뉴", PAGES, index=0, label_visibility="collapsed", key="page")
         st.divider()
         st.caption("읽기 전용 v0.1 · 서버 변경 없음")
-        st.caption("온라인 검정·모델 교체·재학습은 후속 단계입니다.")
+        st.caption("합성 실험·저장 결과를 구분합니다. 서버 변경은 수행하지 않습니다.")
     return page
 
 
@@ -90,7 +91,7 @@ def report_banner(report, source):
 
 
 def lab():
-    st.title("모델 실험실")
+    st.subheader("검색·추천 오프라인 평가")
     st.caption("같은 평가 집합에서 모델을 비교하고, 정확도와 노출 범위의 차이를 확인합니다.")
     with st.expander("결과 파일과 데이터셋 선택", expanded=True):
         report, source = choose_offline()
@@ -159,38 +160,18 @@ def lab():
         st.write("학교 과제용 HitRate@50·NDCG@50·검색 MRR@10 등은 해당 결과 파일이 준비된 뒤 표시합니다. Recall을 HitRate로 대체하지 않습니다.")
 
 
-def overview():
-    st.title("운영 개요")
-    st.caption("현재 연결한 정보와 아직 준비되지 않은 기능을 구분합니다.")
-    st.info("오프라인 평가 파일·로컬 시뮬레이터 요약은 표시 가능 / 실시간 운영 지표는 아직 연결하지 않았습니다.")
-    a, b, c = st.columns(3)
-    a.metric("오프라인 비교", "파일 기반", border=True)
-    b.metric("온라인 A/B 판정", "미연결", border=True)
-    c.metric("자동 재학습", "미구현", border=True)
-    st.subheader("API 연결 확인 · 읽기 전용")
-    if st.button("서버 상태와 모델 목록 조회"):
-        st.session_state.pop("api_snapshot", None)
-        try:
-            health, models = get_api(API, "/health"), get_api(API, "/models")
-            if not isinstance(health, dict) or not isinstance(models, list) or any(not isinstance(m, dict) for m in models):
-                raise ValueError("API 응답 형식을 확인하세요.")
-            st.session_state.api_snapshot = {"at": datetime.now(timezone.utc).isoformat(), "health": health, "models": models}
-        except ValueError as error:
-            st.error(str(error))
-    snap = st.session_state.get("api_snapshot")
-    if snap:
-        st.caption(f"조회 시각(UTC): {snap['at']} · 이후 변경은 다시 조회해야 합니다.")
-        st.json(snap["health"])
-        if snap["models"]:
-            columns = [k for k in ("id", "name", "version", "status") if k in snap["models"][0]]
-            st.dataframe(pd.DataFrame(snap["models"])[columns], hide_index=True)
-        else:
-            st.info("등록된 모델이 없습니다.")
-
-
 def simulator():
     st.title("시뮬레이터 결과")
     st.warning("로컬 합성 행동 결과입니다. 서버 A/B 실험·실제 고객 CTR이 아닙니다.")
+    scale_files=sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
+    if scale_files:
+        from dashboard.data import load_json
+        scale_path=st.selectbox("규모 검증 결과",scale_files,format_func=lambda p:p.parent.name)
+        try:
+            scale=load_json(read_small(scale_path))
+            st.write({k:scale[k] for k in ('products','customers','category_levels','events','event_counts','requirements_met')})
+            st.caption("별도 합성 데이터입니다. 실제 서비스 상품 수와 합산하지 않습니다.")
+        except (ValueError,KeyError,OSError) as error:st.error(str(error))
     files = sorted(RUNS.glob("*/summary.json")) if RUNS.is_dir() else []
     chosen = st.selectbox("로컬 실행 결과", files, format_func=lambda p: p.parent.name) if files else None
     upload = st.file_uploader("summary.json 가져오기", type=["json"], key="sim_upload")
@@ -228,35 +209,81 @@ def simulator():
     st.button("시뮬레이터 실행 · 후속 단계", disabled=True, help="현재 화면은 결과를 읽으며 작업 실행 API를 호출하지 않습니다.")
 
 
-def pending(page):
-    st.title(page)
-    if page == "A/B 테스트":
-        st.info("실험 목록·그룹별 건수 API는 존재하지만 이 화면의 온라인 집계 연결과 통계 검정은 아직 구현하지 않았습니다.")
-        st.dataframe(pd.DataFrame({"항목": ["CTR / 구매 전환율", "p-value", "95% 신뢰구간", "최소 기간·표본"],
-                                  "상태": ["온라인 API 연결 예정", "검정 미실행", "온라인 구간 미계산", "팀 정책 확정 필요"]}), hide_index=True)
-        st.caption("로컬 시뮬레이터의 클릭 건수를 실제 서버 A/B 검정 표본으로 간주하지 않습니다. 고객 단위 반복 행동과 실험 배정을 고려해야 합니다.")
-    else:
-        st.info("지표 하락 모니터링·재학습 작업·롤백은 요구사항 단계입니다. 실행 중인 것처럼 표시하지 않습니다.")
-        st.button("재학습 시작 · 후속 단계", disabled=True)
-        st.button("모델 롤백 · 후속 단계", disabled=True)
+def ab_page():
+    st.title("A/B 테스트")
+    offline_tab, simulated_tab, search_tab = st.tabs(["추천 평가", "A/B 시뮬레이션", "검색 품질"])
+    with offline_tab:
+        lab()
+    with simulated_tab:
+        st.caption("첫 세션에서 한 번 이상 클릭한 고객 비율의 Z-test입니다. 전체 세션 CTR은 별도로 표시하며 검정에 사용하지 않습니다.")
+        files = sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
+        chosen = st.selectbox("규모·A/B 실행 결과", files, format_func=lambda p:p.parent.name, key="ab_file") if files else None
+        upload = st.file_uploader("scale_summary.json", type=["json"], key="ab_upload")
+        if upload or chosen:
+            try:
+                from dashboard.data import load_json
+                obj=load_json(upload.getvalue() if upload else read_small(chosen))
+                if obj.get("kind")!="synthetic_scale_fixture": raise ValueError("규모 실험 결과 파일이 필요합니다.")
+                st.warning("합성 카탈로그·인기 vs 카테고리 인기 실험입니다. UME 또는 실제 고객 효과가 아닙니다.")
+                persona=st.selectbox("검정 페르소나", list(obj['ab_by_persona']),format_func=lambda p:PERSONAS.get(p,p))
+                result=obj['ab_by_persona'][persona]
+                if result.get('metric')!='first_session_customer_click_rate':
+                    raise ValueError('첫 세션 클릭률로 생성한 A/B 결과가 필요합니다. 이전 scale_summary.json을 다시 생성하세요.')
+                st.json(result)
+                st.bar_chart(pd.DataFrame({"그룹":["A","B"],"첫 세션 고객 클릭률":[result['A']['rate'],result['B']['rate']]}).set_index('그룹'))
+                groups={r['variant']:r for r in obj.get('groups',[]) if r.get('persona')==persona}
+                if all(v in groups for v in ('A','B')):
+                    st.dataframe(pd.DataFrame([{'그룹':v,'전체 세션 클릭':groups[v]['clicks'],
+                                                '전체 세션 노출':groups[v]['views'],
+                                                '전체 세션 CTR':groups[v]['clicks']/groups[v]['views'] if groups[v]['views'] else None}
+                                               for v in ('A','B')]),hide_index=True)
+                st.caption("CTR = 전체 세션 클릭 / 전체 세션 노출. 페르소나별 검정은 다중 비교 미보정입니다. 자동 승자는 선택하지 않습니다.")
+            except (ValueError, KeyError, TypeError, OSError) as error:st.error(str(error))
+        else: st.info("아직 A/B 시뮬레이션 결과가 없습니다. python -m simulator.scale 실행 후 연결하세요.")
+    with search_tab:
+        upload=st.file_uploader("검색 품질 평가 JSON",type=['json'],key='search_quality')
+        st.caption("형식: source, split, evaluation_id, metrics 객체. 값은 0~1. 평가 코드는 별도이며 이 화면은 저장값을 표시합니다.")
+        if upload:
+            try:
+                from dashboard.data import load_json, number
+                obj=load_json(upload.getvalue())
+                if not all(obj.get(k) for k in ('source','split','evaluation_id')):raise ValueError('평가 조건·출처 필요')
+                metrics=obj['metrics']
+                allowed={'hitrate@50','ndcg@50','mrr@10'}
+                if not isinstance(metrics,dict) or not metrics or not set(metrics)<=allowed:raise ValueError('지원 지표: HitRate@50, NDCG@50, MRR@10')
+                st.caption(f"{obj['source']} / {obj['split']} / {obj['evaluation_id']}")
+                values={k:number(v,k,1) for k,v in metrics.items()}
+                st.bar_chart(pd.DataFrame({'지표':list(values),'값':list(values.values())}).set_index('지표'))
+            except (ValueError,KeyError,TypeError) as error:st.error(str(error))
+        else:st.info("검색 평가 파일 미연결 · 수치를 임의로 채우지 않습니다.")
 
 
-def inventory():
-    st.title("데이터 현황")
-    st.caption("로컬 개발용 파일의 메타데이터입니다. 전체 서비스 카탈로그나 DB 행 수와 다를 수 있습니다.")
-    try:
-        rows = parquet_inventory(DATA)
-        if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-        else:
-            st.info("개발용 parquet가 연결되지 않았습니다. DEV_DATA_DIR을 확인하세요.")
-    except (OSError, ValueError) as error:
-        st.error(f"메타데이터를 읽을 수 없습니다: {error}")
-    st.caption("행 수는 파일 메타데이터에서 읽으며, 원본 고객·상품·행동 행을 화면에 펼치지 않습니다.")
+def monitoring_page():
+    st.title("모니터링 페이지")
+    st.caption("닫힌 집계 구간의 CTR·HitRate, 임계값 알림, 재학습 요청과 후보 버전을 확인합니다.")
+    st.info("현재 파일 기반 모니터입니다. 서버 집계 생산자·실제 학습 작업 실행·모델 활성화 연동은 후속 작업입니다.")
+    files=sorted(RUNS.glob('*/monitor_state.json')) if RUNS.is_dir() else []
+    chosen=st.selectbox('모니터링 기록',files,format_func=lambda p:p.parent.name) if files else None
+    upload=st.file_uploader('monitor_state.json',type=['json'],key='monitor_upload')
+    if upload or chosen:
+        try:
+            from dashboard.data import load_json, number
+            obj=load_json(upload.getvalue() if upload else read_small(chosen))
+            latest=obj['latest']; values=latest['values']
+            a,b=st.columns(2)
+            for col,key in [(a,'ctr'),(b,'hitrate')]:
+                value=values[key]
+                col.metric(key.upper(), '계산 불가' if value is None else f"{number(value,key,1):.2%}")
+            st.caption(f"집계 종료: {obj['last_window_end']} · 모델/source/고객집합/정의: {obj['identity']}")
+            st.subheader('임계값 알림');st.dataframe(pd.DataFrame(obj.get('alerts',[])))
+            st.subheader('재학습 요청·후보 버전');st.dataframe(pd.DataFrame(obj.get('jobs',[])))
+            st.caption('requested는 재학습 요청 기록입니다. 학습 완료나 운영 교체를 뜻하지 않습니다.')
+        except (ValueError,KeyError,TypeError,OSError) as error:st.error(str(error))
+    else:st.info('아직 모니터링 집계 파일이 없습니다.')
 
 
 def main():
-    st.set_page_config(page_title="MSRS · 모델 실험실", page_icon="📊", layout="wide")
+    st.set_page_config(page_title="MSRS · 관리자", page_icon="📊", layout="wide")
     st.markdown("""<style>
       .block-container{padding-top:4.5rem;max-width:1440px}
       [data-testid="stSidebar"]{background:#f5f6f8}
@@ -265,11 +292,9 @@ def main():
     </style>""", unsafe_allow_html=True)
     page = sidebar()
     st.caption("MSRS / 관리자 · 로컬 평가 워크스페이스")
-    if page == "모델 실험실": lab()
-    elif page == "개요": overview()
+    if page == "A/B 테스트": ab_page()
     elif page == "시뮬레이터": simulator()
-    elif page == "데이터 현황": inventory()
-    else: pending(page)
+    else: monitoring_page()
 
 
 if __name__ == "__main__":
