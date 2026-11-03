@@ -52,3 +52,9 @@ def test_title_not_used_when_path_has_item():
     assert classify(A + "Men > Clothing > Shirts > Dress Shirts", "Men", "Clothing", "Slim Fit Dress Shirt")[2] == "셔츠·블라우스"
     assert classify(A + "Men > Clothing > Active > Active Base Layers", "Men", "Clothing") == ("남성", "이너웨어", "속옷")
     assert classify(A + "Sport Specific Clothing > Gymnastics > Girls > Leotards", "Sport Specific Clothing", "Gymnastics") == ("아동", "상의", "기타 상의")
+
+
+def test_sweatshirt_and_cases():
+    assert classify(A + "Women > Clothing > Fashion Hoodies & Sweatshirts", "Women", "Clothing")[2] == "후드·맨투맨"
+    assert classify(A + "Women > Accessories > Sunglasses & Eyewear Accessories > Eyeglass Cases", "Women", "Accessories")[2] == "기타 액세서리"
+    assert classify(A + "Women > Accessories > Sunglasses & Eyewear Accessories > Sunglasses", "Women", "Accessories")[2] == "선글라스"

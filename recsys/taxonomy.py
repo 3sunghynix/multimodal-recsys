@@ -48,6 +48,7 @@ RULES = [
     (r"\brings?\b", "액세서리", "반지"),
     (r"watch", "액세서리", "시계"),
     (r"\bhats?\b|\bcaps?\b|beanie|beret|visor|fedora", "액세서리", "모자"),
+    (r"\bcases?\b|cleaning cloth", "액세서리", "기타 액세서리"),
     (r"sunglass|eyewear|eyeglass", "액세서리", "선글라스"),
     (r"\bbelts?\b|suspender", "액세서리", "벨트"),
     (r"scarf|scarves|\bwraps?\b|shawl|pashmina", "액세서리", "스카프"),
@@ -73,7 +74,7 @@ RULES = [
     (r"\bshorts\b|bermuda", "하의", "반바지"),
     (r"pant|trouser|chino|jogger|sweatpant|capri|culotte|lower body", "하의", "바지"),
     # 상의
-    (r"t-?shirt|\btees?\b|henley", "상의", "티셔츠"),
+    (r"\bt-?shirts?\b|\btees?\b|henley", "상의", "티셔츠"),   # \b: sweatshirt 안의 'tshirt' 제외
     (r"hood|sweatshirt|fleece", "상의", "후드·맨투맨"),
     (r"cardigan", "상의", "카디건"),
     (r"sweater|pullover|knit|jumper|turtleneck", "상의", "니트·스웨터"),
