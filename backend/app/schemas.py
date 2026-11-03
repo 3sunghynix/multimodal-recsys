@@ -12,10 +12,18 @@ class ItemOut(BaseModel):
     id: int
     source: str
     brand_id: int | None
+    brand_name: str | None = None          # brands.name JOIN 결과 — 카드에 "BRAND #10" 대신 실제 브랜드명 노출
     title: str
     category: str
     price: float | None
     image_path: str | None
+
+
+class ItemDetailOut(ItemOut):
+    """상품 상세 페이지용. 카드용 ItemOut 에 설명 · 외부 상품 id 를 더한다.
+    배치 조회(GET /items)는 응답 가벼운 ItemOut 유지, 단건 조회(GET /items/{id})만 이 스키마로 바꾼다."""
+    description: str = ""
+    source_item_id: str
 
 
 class SearchHit(ItemOut):
