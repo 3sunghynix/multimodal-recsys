@@ -242,6 +242,22 @@ def test_category_plan_excludes_sparse_and_weights_train_rows(tables, config):
     assert sum(p["probability"] for p in plan) == pytest.approx(1)
 
 
+def test_meeting_persona_mix_and_window_shopper_history(prepared, config):
+    customers, skipped = make_customers(prepared, config)
+    assert not skipped
+    assert len(customers) == 700
+    from collections import Counter
+    counts = Counter(c["persona"] for c in customers)
+    assert counts == dict(trendsetter=84, practical=126, value_seeker=126,
+                          brand_loyal=84, impulse_buyer=56, careful_explorer=119,
+                          window_shopper=105)
+    window = [c for c in customers if c["persona"] == "window_shopper"]
+    assert 40 <= sum(not c["initial_purchase_keys"] for c in window) <= 65
+    assert all(len(c["initial_purchase_keys"]) <= 2 for c in window)
+    practical = [c for c in customers if c["persona"] == "practical"]
+    assert all(c["budget_quantile"] == 0.5 for c in practical)
+
+
 def test_setup_ignores_input_row_order(tables, config):
     items, events = tables
     one, _ = make_customers(prepare(items, events), config, count=3)

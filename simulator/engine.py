@@ -29,9 +29,17 @@ def customer_category_plan(data, minimum):
 def make_customers(data, config, count=None, history_size=10):
     if type(history_size) is not int or not 3 <= history_size <= 50:
         raise ValueError("history_size must be 3..50 (local pilot proposal)")
-    count = config["pilot"]["customers_per_persona"] if count is None else count
-    if type(count) is not int or count <= 0:
+    if count is not None and (type(count) is not int or count <= 0):
         raise ValueError("count must be a positive integer per persona")
+    total = config["pilot"].get("planned_customers", 700)
+    mix = {p["id"]: p["sampling_weight"] for p in config["personas"]}
+    weights_total = sum(mix[p] for p in config["pilot"]["active_personas"])
+    counts = {p: (count if count is not None else int(total * mix[p] / weights_total))
+              for p in config["pilot"]["active_personas"]}
+    if count is None:
+        remainder = total - sum(counts.values())
+        for p in sorted(counts, key=lambda p: (-(total * mix[p] / weights_total - counts[p]), p))[:remainder]:
+            counts[p] += 1
     seed = config["pilot"]["seed"]
     features = config["features"]
     minimum = features["brand_affinity"]["min_train_items_per_brand_in_category"]
@@ -52,7 +60,7 @@ def make_customers(data, config, count=None, history_size=10):
                     if any(t.lower() in row["category"].lower() for t in category_rule.get("matching_terms", [])) else 1) for row in plan]
         probabilities = np.array(adjusted, dtype=float)
         if len(probabilities): probabilities /= probabilities.sum()
-        for index in range(count):
+        for index in range(counts[persona]):
             cid = f"sim-{persona}-{index:04d}"
             rng = np.random.default_rng(derived_seed(seed, "customer", cid))
             if not plan:
@@ -67,12 +75,19 @@ def make_customers(data, config, count=None, history_size=10):
             eligible = pool.loc[pool.brand_norm.isin(chosen)]
             # At least one item per selected brand; no fabricated product or cross-source identity.
             history = [str(rng.choice(sorted(eligible.loc[eligible.brand_norm == b, "item_key"]))) for b in chosen]
+            history_rule = specs[persona].get("initial_history", {})
+            choices = history_rule.get("size_choices")
+            target_history = int(rng.choice(choices, p=history_rule["weights"])) if choices else history_size
+            if target_history == 0:
+                history = []
+            elif target_history < len(history):
+                history = history[:target_history]
             rest = sorted(set(eligible.item_key) - set(history))
-            remaining = min(max(history_size - len(history), 0), len(rest))
+            remaining = min(max(target_history - len(history), 0), len(rest))
             history += rng.choice(rest, size=remaining, replace=False).tolist()
             quantiles = features["price_affinity"]["budget_quantiles"]
             weights = features["price_affinity"]["budget_sampling_weights"]
-            q = float(rng.choice(quantiles, p=weights))
+            q = float(specs[persona].get("budget_quantile", rng.choice(quantiles, p=weights)))
             budget = float(pool.price.quantile(q))
             customers.append({"customer_id": cid, "source": "sim", "persona": persona,
                               "preferred_category": category, "category_sampling_probability": float(probabilities[plan.index(selection)]),

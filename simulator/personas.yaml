@@ -1,6 +1,6 @@
 # 시험용 확률이며 실제 고객 분포/전환율을 추정한 값이 아닙니다.
-version: 0.3-draft
-status: seven_persona_local_implementation_pending_team_calibration
+version: 0.3
+status: seven_persona_local_pilot_aligned_with_team_decision
 owner: 김광석
 created: '2026-10-29'
 provenance:
@@ -44,9 +44,9 @@ pilot:
   - careful_explorer
   - window_shopper
   deferred_personas: []
-  planned_customers: 700
+  planned_customers: 700 # local pilot; 12,000 customers and multi-session generation are the next PR
   seed: 42
-  customers_per_persona: 100
+  # Default counts follow sampling_weight; CLI --customers-per-persona is a test override.
   sessions_per_customer: 1
   recommendations_per_session: 10
   max_requests_per_second: 2
@@ -162,82 +162,93 @@ personas:
 - id: trendsetter
   name_ko: 트렌드세터
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 12
+  budget_quantile: 0.75
   required_features:
   - popularity_affinity
   - novelty_affinity
-  - category_affinity
+  - price_affinity
+  - brand_affinity
   preference_weights:
-    popularity_affinity: 0.7
-    novelty_affinity: 0.2
-    category_affinity: 0.1
+    popularity_affinity: 0.5
+    novelty_affinity: 0.3
+    price_affinity: 0.1
+    brand_affinity: 0.1
   behavior_overrides:
-    click_base_probability: 0.07
+    click_base_probability: 0.06
     cart_probability: 0.15
-    purchase_probability: 0.25
+    purchase_probability: 0.35
   category_sampling:
     matching_terms:
-    - Clothing
+    - 원피스·세트 > 원피스
+    - 아우터
+    - 상의
     matching_multiplier: 2
   purpose: recent source-specific popularity proxy; not actual fashion trend
 - id: practical
   name_ko: 실용주의자
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 18
+  budget_quantile: 0.5
   required_features:
-  - familiarity_affinity
-  - category_affinity
+  - repurchase_affinity
+  - brand_affinity
   - price_affinity
   preference_weights:
-    familiarity_affinity: 0.5
-    category_affinity: 0.4
-    price_affinity: 0.1
+    repurchase_affinity: 0.5
+    price_affinity: 0.3
+    brand_affinity: 0.2
   behavior_overrides:
     click_base_probability: 0.04
-    cart_probability: 0.2
-    purchase_probability: 0.35
+    cart_probability: 0.12
+    purchase_probability: 0.45
   category_sampling:
     matching_terms:
-    - Shoes
+    - 상의 > 티셔츠
+    - 하의 > 청바지
+    - 이너웨어 > 속옷
+    - 이너웨어 > 양말·스타킹
     matching_multiplier: 3
   purpose: familiar category proxy; no measured durability or quality
 - id: value_seeker
   name_ko: 가성비추구
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 18
+  budget_quantile: 0.25
   required_features:
   - price_affinity
-  - category_affinity
+  - popularity_affinity
   - brand_affinity
   preference_weights:
-    price_affinity: 0.75
-    category_affinity: 0.2
-    brand_affinity: 0.05
+    price_affinity: 0.7
+    popularity_affinity: 0.2
+    brand_affinity: 0.1
   behavior_overrides:
-    click_base_probability: 0.045
-    cart_probability: 0.18
+    click_base_probability: 0.04
+    cart_probability: 0.08
     purchase_probability: 0.3
   category_sampling:
     matching_terms:
     - Clothing
-    matching_multiplier: 2
+    matching_multiplier: 1
   purpose: price/budget proxy; no measured product quality
 - id: brand_loyal
   name_ko: 브랜드충성
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 12
+  budget_quantile: 0.75
   required_features:
   - brand_affinity
-  - category_affinity
+  - repurchase_affinity
   - price_affinity
   preference_weights:
     brand_affinity: 0.8
-    category_affinity: 0.15
-    price_affinity: 0.05
+    repurchase_affinity: 0.1
+    price_affinity: 0.1
   behavior_overrides:
-    click_base_probability: 0.04
-    cart_probability: 0.16
-    purchase_probability: 0.35
+    click_base_probability: 0.05
+    cart_probability: 0.15
+    purchase_probability: 0.45
   category_sampling:
     matching_terms:
     - Clothing
@@ -246,39 +257,43 @@ personas:
 - id: impulse_buyer
   name_ko: 충동구매
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 8
+  budget_quantile: 0.9
   required_features:
   - novelty_affinity
   - popularity_affinity
-  - category_affinity
+  - price_affinity
   preference_weights:
-    novelty_affinity: 0.6
-    popularity_affinity: 0.3
-    category_affinity: 0.1
+    popularity_affinity: 0.4
+    novelty_affinity: 0.4
+    price_affinity: 0.2
   behavior_overrides:
-    click_base_probability: 0.12
-    cart_probability: 0.3
+    click_base_probability: 0.08
+    cart_probability: 0.25
     purchase_probability: 0.5
   category_sampling:
     matching_terms:
-    - Jewelry
+    - 가방·지갑
+    - 액세서리
+    - 상의
     matching_multiplier: 3
   purpose: higher immediate synthetic conversion
 - id: careful_explorer
   name_ko: 신중탐색
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 17
+  budget_quantile: 0.5
   required_features:
-  - category_affinity
+  - brand_affinity
   - price_affinity
   - novelty_affinity
   preference_weights:
-    category_affinity: 0.4
-    price_affinity: 0.35
-    novelty_affinity: 0.25
+    novelty_affinity: 0.5
+    price_affinity: 0.3
+    brand_affinity: 0.2
   behavior_overrides:
-    click_base_probability: 0.06
-    cart_probability: 0.08
+    click_base_probability: 0.05
+    cart_probability: 0.06
     purchase_probability: 0.15
   category_sampling:
     matching_terms:
@@ -288,22 +303,28 @@ personas:
 - id: window_shopper
   name_ko: 눈팅형
   pilot_enabled: true
-  sampling_weight: 1
+  sampling_weight: 15
+  budget_quantile: 0.5
+  initial_history:
+    size_choices: [0, 1, 2]
+    weights: [0.5, 0.25, 0.25]
   required_features:
   - novelty_affinity
-  - category_affinity
+  - popularity_affinity
+  - price_affinity
   preference_weights:
-    novelty_affinity: 0.7
-    category_affinity: 0.3
+    popularity_affinity: 0.5
+    novelty_affinity: 0.3
+    price_affinity: 0.2
   behavior_overrides:
-    click_base_probability: 0.09
-    cart_probability: 0.0
-    purchase_probability: 0.0
+    click_base_probability: 0.02
+    cart_probability: 0.05
+    purchase_probability: 0.2
   category_sampling:
     matching_terms:
-    - Accessories
-    matching_multiplier: 2
-  purpose: browse/click only; zero cart and purchase
+    - 상의
+    matching_multiplier: 1
+  purpose: low engagement; purchases remain possible
 session_probability_sanity_check:
   status: hypothetical neutral score; not observed simulation output
   assumptions: 10 independent displayed items, score=0.5, fixed click/cart/purchase

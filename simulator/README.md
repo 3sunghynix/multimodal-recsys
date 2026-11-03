@@ -6,7 +6,7 @@
 
 ## 현재 구현 — 로컬 실행기 v0.1
 
-`python -m simulator`는 **서버에 요청하지 않고 로컬 파일로만 저장**한다. 위 API 흐름은 후속 단계다. 기존 `personas.yaml` v0.2-draft의 4종(브랜드·가격·탐색·재구매)을 실행하며, 6종 실행 완료나 실제 A/B 테스트 완료로 보고하지 않는다.
+`python -m simulator`는 **서버에 요청하지 않고 로컬 파일로만 저장**한다. 위 API 흐름은 후속 단계다. `personas.yaml` v0.3의 7종(트렌드세터·실용주의자·가성비추구·브랜드충성·충동구매·신중탐색·눈팅형)을 실행한다. 기본 로컬 파일럿은 700명을 12:18:18:12:8:17:15 비율로 생성한다. 실제 A/B 테스트 완료로 보고하지 않는다.
 
 - 입력: items.parquet + events.parquet (`split`, `feedback`, source-qualified item_id 필수).
 - 초기 선호·구매 이력: **train의 긍정 구매(feedback > 0)** 상품만 사용한 합성 상태. 서로 다른 source의 원본 고객을 연결하지 않는다.

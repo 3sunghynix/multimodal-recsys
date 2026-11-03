@@ -36,6 +36,15 @@ def load_config(path):
         multiplier = p.get("category_sampling", {}).get("matching_multiplier", 1)
         if not isinstance(multiplier, (int, float)) or not math.isfinite(multiplier) or multiplier <= 0:
             raise ValueError("Category multiplier must be positive")
+        if "budget_quantile" in p:
+            probability(p["budget_quantile"], "budget_quantile")
+        history = p.get("initial_history", {})
+        if history:
+            sizes, shares = history["size_choices"], history["weights"]
+            if not sizes or len(sizes) != len(shares) or any(type(n) is not int or n < 0 for n in sizes):
+                raise ValueError("Invalid initial history sizes")
+            if not math.isclose(sum(probability(w, "history_weight") for w in shares), 1, abs_tol=1e-9):
+                raise ValueError("Initial history weights must sum to 1")
     for name in active:
         if name not in by_id or not by_id[name]["pilot_enabled"]:
             raise ValueError(f"Inactive or unknown persona: {name}")
@@ -45,7 +54,11 @@ def load_config(path):
             raise ValueError(f"Unsupported or missing features for {name}; deferred personas cannot run yet")
         if not math.isclose(sum(probability(w, name) for w in weights.values()), 1.0, abs_tol=1e-9):
             raise ValueError(f"Preference weights must sum to 1: {name}")
-    for key in ("customers_per_persona", "sessions_per_customer", "recommendations_per_session"):
+    if sum(by_id[name]["sampling_weight"] for name in active) <= 0:
+        raise ValueError("Active persona sampling weights must have a positive sum")
+    if type(pilot.get("planned_customers")) is not int or pilot["planned_customers"] <= 0:
+        raise ValueError("pilot.planned_customers must be positive")
+    for key in ("sessions_per_customer", "recommendations_per_session"):
         if type(pilot[key]) is not int or pilot[key] <= 0:
             raise ValueError(f"pilot.{key}: positive integer required")
     if pilot["sessions_per_customer"] != 1:
