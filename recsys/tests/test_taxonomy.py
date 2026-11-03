@@ -34,3 +34,21 @@ def test_levels_are_closed_sets():
     for p in paths:
         l1, l2, _ = classify(p, "Men", "Clothing")
         assert l1 in LEVEL1 and l2 in LEVEL2
+
+
+@pytest.mark.parametrize("title, leaf", [
+    ("Women's Casual Maxi Dress", "원피스"),
+    ("Women's Running Shorts Quick Dry", "반바지"),          # running ≠ 운동화
+    ("High Waisted Bootcut Jeans", "청바지"),                # bootcut ≠ 부츠
+    ("Short Sleeve Button Down Blouse", "셔츠·블라우스"),    # short sleeve ≠ 반바지
+    ("Tie Dye Oversized T-Shirt", "티셔츠"),                 # tie dye ≠ 넥타이
+])
+def test_title_fallback_when_path_has_no_item(title, leaf):
+    assert classify(A + "Women > Clothing", "Women", "Clothing", title)[2] == leaf
+
+
+def test_title_not_used_when_path_has_item():
+    # 경로에 품목이 있으면 상품명의 'dress'가 셔츠를 원피스로 바꾸지 않는다
+    assert classify(A + "Men > Clothing > Shirts > Dress Shirts", "Men", "Clothing", "Slim Fit Dress Shirt")[2] == "셔츠·블라우스"
+    assert classify(A + "Men > Clothing > Active > Active Base Layers", "Men", "Clothing") == ("남성", "이너웨어", "속옷")
+    assert classify(A + "Sport Specific Clothing > Gymnastics > Girls > Leotards", "Sport Specific Clothing", "Gymnastics") == ("아동", "상의", "기타 상의")

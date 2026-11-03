@@ -9,7 +9,9 @@ H&M 상품 분류(cat_target "Women" + categories "Garment Upper body > T-shirt"
   규칙 순서가 우선순위다 — 예: 'vest top'(민소매)을 'vest'(조끼)보다, 't-shirt'를 'shirt'보다 먼저.
 - 일반적인 규칙(세트 · 플랫 · 기타 신발 · 기타 상의 · 기타 액세서리)에 걸리면 윗단계에서 구체적인 규칙을 다시 찾는다.
   예: 'Sleep & Lounge > Sets' → 잠옷, 'Sandals > Flats' → 샌들, 'Shorts > Flat Front' → 반바지.
-- 어느 규칙에도 안 맞으면 상위 종류(cat_type)로 중분류만 정하고 소분류는 '기타'.
+- 경로에 품목 정보가 없으면(예: 'Women > Clothing'에서 끝남) 상품명으로 한 번 더 찾는다.
+  상품명에서는 먼저 수식어(소매 길이 · 운동 종류 · 핏 · 무늬)를 지운다 — 'Running Shorts'가 운동화, 'Bootcut Jeans'가 부츠가 되지 않게.
+- 그래도 안 맞으면 상위 종류(cat_type)로 중분류만 정하고 소분류는 '기타'.
 """
 import re
 
@@ -24,13 +26,14 @@ RULES = [
     # 수영복 (bra · top · bottom보다 먼저)
     (r"swim|bikini|cover-?ups?\b|rash guard|board ?shorts", "수영복", "수영복"),
     # 이너웨어
-    (r"pajama|pyjama|sleep|lounge|nightwear|night ?gown|robe", "이너웨어", "잠옷·라운지웨어"),
+    (r"pajama|pyjama|sleep|lounge|nightwear|night ?gown|\brobes?\b", "이너웨어", "잠옷·라운지웨어"),
+    (r"base layer|thermal|long johns", "이너웨어", "속옷"),
     (r"sock|hosiery|underwear tights", "이너웨어", "양말·스타킹"),
     (r"\bbras?\b|bralette|lingerie|underwear|brief|boxer|panties|panty|shapewear|undershirt", "이너웨어", "속옷"),
     # 신발
     (r"sneaker|athletic|running|trainer|walking|training|tennis|basketball|golf shoe|cleat", "신발", "운동화"),
     (r"sandal|flip-?flop|slide", "신발", "샌들"),
-    (r"boot", "신발", "부츠"),
+    (r"\bboots?\b|bootie", "신발", "부츠"),
     (r"slipper", "신발", "슬리퍼"),
     (r"pump|heel|dress shoe", "신발", "구두·힐"),
     (r"loafer|flat|oxford|slip-?on|mule|clog|moccasin|ballet|espadrille", "신발", "플랫·로퍼"),
@@ -51,8 +54,9 @@ RULES = [
     (r"\bhair\b|alice band|hair clip|hair string|headband|scrunchie", "액세서리", "헤어 액세서리"),
     (r"glove|mitten", "액세서리", "장갑"),
     (r"jewelry|jewellery|brooch|charm|body jewelry", "액세서리", "기타 주얼리"),
-    (r"tie|cufflink|keychain|umbrella|accessor", "액세서리", "기타 액세서리"),
+    (r"\bneck ?ties?\b|\bbow ?ties?\b|\bties\b|cufflink|keychain|umbrella|accessor", "액세서리", "기타 액세서리"),
     # 원피스 · 세트 (dress shirt · dress shoe는 위에서 처리)
+    (r"dress shirt", "상의", "셔츠·블라우스"),
     (r"jumpsuit|romper|overall|playsuit|dungaree", "원피스·세트", "점프수트"),
     (r"\bdress(es)?\b", "원피스·세트", "원피스"),
     (r"garment set|\bsets?\b|outfit|costume", "원피스·세트", "세트"),
@@ -66,7 +70,7 @@ RULES = [
     (r"jean|denim", "하의", "청바지"),
     (r"legging|tights|jegging", "하의", "레깅스"),
     (r"skirt|skort", "하의", "스커트"),
-    (r"short", "하의", "반바지"),
+    (r"\bshorts\b|bermuda", "하의", "반바지"),
     (r"pant|trouser|chino|jogger|sweatpant|capri|culotte|lower body", "하의", "바지"),
     # 상의
     (r"t-?shirt|\btees?\b|henley", "상의", "티셔츠"),
@@ -76,7 +80,8 @@ RULES = [
     (r"tank|cami|sleeveless|tube top", "상의", "민소매·탱크톱"),
     (r"polo", "상의", "폴로"),
     (r"blouse|button-?down|\bshirts?\b|tunic", "상의", "셔츠·블라우스"),
-    (r"\btops?\b|bodysuit|crop|upper body", "상의", "기타 상의"),
+    (r"jersey", "상의", "티셔츠"),
+    (r"\btops?\b|bodysuit|leotard|unitard|crop|upper body", "상의", "기타 상의"),
 ]
 
 TYPE_FALLBACK = {  # 규칙에 안 맞을 때 상위 종류로 중분류
@@ -91,6 +96,10 @@ LEVEL2 = ["상의", "하의", "원피스·세트", "아우터", "이너웨어", 
 
 
 GENERIC = {"세트", "플랫·로퍼", "기타 신발", "기타 상의", "기타 액세서리"}
+# 상품명에서 지울 수식어 (품목이 아니라 품목을 꾸미는 말)
+_TITLE_NOISE = re.compile(r"(short|long|3/4|cap|puff|flutter|bell)[ -]?sleeves?|sleeveless|running|athletic|training|walking|"
+                          r"tennis|golf|yoga|workout|gym|boot ?cut|flat[ -]front|tie[ -]?dye|high[ -]waist(ed)?|"
+                          r"slim[ -]fit|loose[ -]fit|button[ -]front", re.I)
 
 
 def _match(seg):
@@ -104,8 +113,8 @@ def _segments(path) -> list[str]:
     return [s.strip() for s in str(path or "").split(">") if s.strip() and s.strip().lower() not in ROOTS]
 
 
-def classify(path, target=None, cat_type=None) -> tuple[str, str, str]:
-    """(대분류, 중분류, 소분류). path: 카테고리 경로, target: 대상 열(cat_target), cat_type: 상위 종류."""
+def classify(path, target=None, cat_type=None, title=None) -> tuple[str, str, str]:
+    """(대분류, 중분류, 소분류). path: 카테고리 경로, target: 대상 열(cat_target), cat_type: 상위 종류, title: 상품명(보조)."""
     segs = _segments(path)
     level1 = "공용"
     for text in [str(target or ""), *segs]:
@@ -118,6 +127,10 @@ def classify(path, target=None, cat_type=None) -> tuple[str, str, str]:
         specific = next((h for h in hits if h[1] not in GENERIC), None)
         mid, leaf = hits[0] if hits[0][1] not in GENERIC or specific is None else specific
         return level1, mid, leaf
+    if title:                                                    # 경로에 품목 정보가 없을 때만 상품명으로
+        hit = _match(_TITLE_NOISE.sub(" ", str(title)))
+        if hit:
+            return level1, *hit
     mid = TYPE_FALLBACK.get(str(cat_type or ""), "기타")
     return level1, mid, "기타"
 
@@ -125,5 +138,6 @@ def classify(path, target=None, cat_type=None) -> tuple[str, str, str]:
 def classify_frame(items):
     """items(source · categories · cat_target · cat_type) → 같은 순서의 (대, 중, 소) 열 3개 DataFrame."""
     import pandas as pd
-    rows = [classify(c, t, ty) for c, t, ty in zip(items["categories"], items["cat_target"], items["cat_type"])]
+    titles = items["title"] if "title" in items else [None] * len(items)
+    rows = [classify(c, t, ty, ti) for c, t, ty, ti in zip(items["categories"], items["cat_target"], items["cat_type"], titles)]
     return pd.DataFrame(rows, columns=["category_l1", "category_l2", "category_l3"], index=items.index)
