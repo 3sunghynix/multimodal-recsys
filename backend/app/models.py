@@ -2,9 +2,10 @@
 
 데이터셋(Amazon · H&M 등)은 하나의 상품 · 이벤트 테이블에 합치고 brand와 source 열로 구분한다.
 """
+import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .config import settings
@@ -47,6 +48,9 @@ class Item(Base):
 
 class User(Base):
     __tablename__ = "users"
+    # (source, source_user_id) 는 "같은 외부 고객 재등록 시 같은 user를 돌려준다"는 계약을 위해 UNIQUE.
+    # source_user_id가 NULL이면 익명 생성 — SQLite · PostgreSQL 모두 UNIQUE에서 NULL을 서로 다른 값으로 취급해서 충돌 없음.
+    __table_args__ = (UniqueConstraint("source", "source_user_id", name="uq_users_source_source_user_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     source: Mapped[str] = mapped_column(String(32), default="sim")   # 실제 데이터셋 고객 또는 sim(시뮬레이터)
     source_user_id: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -56,6 +60,9 @@ class User(Base):
 class Event(Base):
     __tablename__ = "events"
     id: Mapped[int] = mapped_column(primary_key=True)
+    # 재전송 멱등을 위해 클라이언트가 제공하는 UUID. 없으면 서버가 즉시 생성한다 (기존 호출 하위호환).
+    # UNIQUE: 같은 event_id로 같은 내용이면 200 멱등, 다른 내용이면 409.
+    event_id: Mapped[uuid.UUID] = mapped_column(Uuid, default=uuid.uuid4, unique=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     item_id: Mapped[int | None] = mapped_column(ForeignKey("items.id"), index=True)  # search는 상품 없음
     type: Mapped[str] = mapped_column(String(16))                    # EVENT_TYPES
@@ -63,6 +70,9 @@ class Event(Base):
     model_version_id: Mapped[int | None] = mapped_column(ForeignKey("model_versions.id"))  # 어떤 모델의 추천에서 왔는가
     experiment_id: Mapped[int | None] = mapped_column(ForeignKey("experiments.id"))
     variant: Mapped[str | None] = mapped_column(String(32))
+    # 초기 이력 적재(시뮬레이터 신규 고객의 train 이력 주입)는 is_setup=True로 저장하고,
+    # A/B 집계(CTR 등)에서 제외한다. 실험 전환 · 재학습 트리거는 is_setup=False만 센다.
+    is_setup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 
