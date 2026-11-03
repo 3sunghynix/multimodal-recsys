@@ -58,3 +58,8 @@ def test_sweatshirt_and_cases():
     assert classify(A + "Women > Clothing > Fashion Hoodies & Sweatshirts", "Women", "Clothing")[2] == "후드·맨투맨"
     assert classify(A + "Women > Accessories > Sunglasses & Eyewear Accessories > Eyeglass Cases", "Women", "Accessories")[2] == "케이스·소품"
     assert classify(A + "Women > Accessories > Sunglasses & Eyewear Accessories > Sunglasses", "Women", "Accessories")[2] == "선글라스"
+
+
+def test_ear_cuffs_are_earrings():
+    assert classify(A + "Women > Jewelry > Earrings > Cuffs & Wraps", "Women", "Jewelry")[2] == "귀걸이"
+    assert classify(A + "Women > Accessories > Scarves & Wraps > Fashion Scarves", "Women", "Accessories")[2] == "스카프"

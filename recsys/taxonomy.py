@@ -42,7 +42,7 @@ RULES = [
     (r"wallet|card case|money organizer|coin purse", "가방·지갑", "지갑"),
     (r"handbag|\bbags?\b|backpack|tote|clutch|crossbody|shoulder bag|satchel|hobo|purse", "가방·지갑", "가방"),
     # 액세서리 · 주얼리
-    (r"earring", "액세서리", "귀걸이"),
+    (r"earring|ear cuff|cuffs & wraps", "액세서리", "귀걸이"),   # 'Earrings > Cuffs & Wraps'가 스카프(wrap)로 가지 않게
     (r"necklace|pendant|choker|chain", "액세서리", "목걸이"),
     (r"bracelet|bangle|anklet", "액세서리", "팔찌"),
     (r"\brings?\b", "액세서리", "반지"),
