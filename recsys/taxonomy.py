@@ -48,7 +48,7 @@ RULES = [
     (r"\brings?\b", "액세서리", "반지"),
     (r"watch", "액세서리", "시계"),
     (r"\bhats?\b|\bcaps?\b|beanie|beret|visor|fedora", "액세서리", "모자"),
-    (r"\bcases?\b|cleaning cloth", "액세서리", "기타 액세서리"),
+    (r"\bcases?\b|cleaning cloth", "액세서리", "케이스·소품"),
     (r"sunglass|eyewear|eyeglass", "액세서리", "선글라스"),
     (r"\bbelts?\b|suspender", "액세서리", "벨트"),
     (r"scarf|scarves|\bwraps?\b|shawl|pashmina", "액세서리", "스카프"),
