@@ -14,6 +14,8 @@ POST /search/image  이미지 → pgvector 코사인 상위 k (데이터셋 결�
       단 최고 상품의 원래 코사인이 그 질의 최고값의 min_rel(기본 0.7) 미만인 데이터셋은 후순위 — 비율 칸을 받지 못하고
       다른 데이터셋 상품을 다 쓴 뒤에만 채워진다 (제외가 아님, 결과는 항상 k개)
 """
+import time
+
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from sqlalchemy import or_, select
@@ -22,7 +24,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..db import get_db
 from ..models import Brand, Item
-from ..schemas import ItemOut, SearchHit, SearchOut
+from ..schemas import ItemOut, SearchHit, SearchOut, SearchResultOut
 from ..services import search_core
 from ..services.catalog_index import get_index
 from ..services.translate_ko import HANGUL, translate_ko
@@ -67,12 +69,14 @@ async def search(
     brand_id: int | None = Form(None),
     db: Session = Depends(get_db),
 ):
+    t_start = time.perf_counter()
     q = (q or "").strip() or None
     if q is None and file is None:
         raise HTTPException(422, "검색어 q 또는 이미지 file 중 하나는 필요합니다")
     if merge not in search_core.MERGES:
         raise HTTPException(422, f"merge는 {search_core.MERGES} 중 하나")
     data = await _read_image(file) if file is not None else None
+    search_type = "hybrid" if (q is not None and data is not None) else ("image" if data is not None else "text")
 
     # 질의 인코딩
     query_en, untranslated, queries = q, [], {}
@@ -127,7 +131,14 @@ async def search(
                 title=item.title, category=item.category, price=item.price,
                 image_path=item.image_path, score=float(s),
             ))
-    return SearchOut(query=q, query_en=query_en, untranslated=untranslated, weights=weights, merge=merge, items=hits)
+
+    # 명세 2-5 필수 필드: results[] (product_id · name · score · price), latency_ms, total_count, search_type.
+    results = [SearchResultOut(product_id=str(h.id), name=h.title, score=h.score, price=h.price) for h in hits]
+    latency_ms = round((time.perf_counter() - t_start) * 1000, 3)
+    return SearchOut(
+        search_type=search_type, results=results, latency_ms=latency_ms, total_count=len(results),
+        query=q, query_en=query_en, untranslated=untranslated, weights=weights, merge=merge, items=hits,
+    )
 
 
 @router.get("", response_model=list[ItemOut])
