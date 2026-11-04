@@ -228,8 +228,7 @@ personas:
     cart_probability: 0.08
     purchase_probability: 0.3
   category_sampling:
-    matching_terms:
-    - Clothing
+    matching_terms: [] # 전 카테고리 균등
     matching_multiplier: 1
   purpose: price/budget proxy; no measured product quality
 - id: brand_loyal
@@ -250,8 +249,7 @@ personas:
     cart_probability: 0.15
     purchase_probability: 0.45
   category_sampling:
-    matching_terms:
-    - Clothing
+    matching_terms: [] # 선호 브랜드가 있는 카테고리에서 선택
     matching_multiplier: 1
   purpose: strong-brand stress test
 - id: impulse_buyer
@@ -296,9 +294,8 @@ personas:
     cart_probability: 0.06
     purchase_probability: 0.15
   category_sampling:
-    matching_terms:
-    - Clothing
-    matching_multiplier: 2
+    matching_terms: [] # 전 카테고리 탐색
+    matching_multiplier: 1
   purpose: lower immediate conversion; no cross-session deliberation claim
 - id: window_shopper
   name_ko: 눈팅형

@@ -26,7 +26,8 @@ def tables():
     for source, year in (("amazon", 2023), ("hm", 2020)):
         for i in range(6):
             rows.append(dict(source=source, item_id=i, brand_norm="a" if i < 3 else "b",
-                             cat_target="Women", cat_type="Clothing", price=10.0 + i, price_source="real"))
+                             cat_target="Women", cat_type="Clothing", category_l1="여성", category_l2="상의",
+                             category_l3="티셔츠", price=10.0 + i, price_source="real"))
             events.append(dict(source=source, item_id=i, split="train", feedback=1.0,
                                ts=f"{year}-08-{i + 1:02d}", type="purchase"))
         events.append(dict(source=source, item_id=0, split="test", feedback=1.0, ts=f"{year}-09-01", type="purchase"))
@@ -221,24 +222,28 @@ def test_category_plan_excludes_sparse_and_weights_train_rows(tables, config):
     extra_items = items.loc[items.source == "amazon"].copy()
     extra_items["item_id"] += 20
     extra_items["cat_type"] = "Shoes"
+    extra_items["category_l2"] = "신발"
+    extra_items["category_l3"] = "운동화"
     extra_events = events.loc[(events.source == "amazon") & (events.split == "train")].copy()
     extra_events["item_id"] += 20
     sparse = extra_items.iloc[[0]].copy()
     sparse["item_id"] = 99
     sparse["cat_type"] = "Sparse"
+    sparse["category_l2"] = "기타"
+    sparse["category_l3"] = "기타"
     sparse_event = extra_events.iloc[[0]].copy()
     sparse_event["item_id"] = 99
     data = prepare(pd.concat([items, extra_items, sparse], ignore_index=True),
                    pd.concat([events, extra_events, extra_events, extra_events, extra_events, sparse_event], ignore_index=True))
     _, plan = customer_category_plan(data, 3)
     by_name = {row["category"]: row for row in plan}
-    assert set(by_name) == {"Women > Clothing", "Women > Shoes"}
-    assert by_name["Women > Clothing"]["probability"] == pytest.approx(1 / 3)
-    assert by_name["Women > Shoes"]["probability"] == pytest.approx(2 / 3)
+    assert set(by_name) == {"여성 > 상의 > 티셔츠", "여성 > 신발 > 운동화"}
+    assert by_name["여성 > 상의 > 티셔츠"]["probability"] == pytest.approx(1 / 3)
+    assert by_name["여성 > 신발 > 운동화"]["probability"] == pytest.approx(2 / 3)
     customers, skipped = make_customers(data, config, count=4)
     assert len(customers) == 28 and not skipped
-    assert all(c["preferred_category"] != "Women > Sparse" for c in customers)
-    assert "Women > Sparse" in data.stats["customer_category_sampling"]["excluded_categories"]
+    assert all(c["preferred_category"] != "여성 > 기타 > 기타" for c in customers)
+    assert "여성 > 기타 > 기타" in data.stats["customer_category_sampling"]["excluded_categories"]
     assert sum(p["probability"] for p in plan) == pytest.approx(1)
 
 
@@ -256,6 +261,42 @@ def test_meeting_persona_mix_and_window_shopper_history(prepared, config):
     assert all(len(c["initial_purchase_keys"]) <= 2 for c in window)
     practical = [c for c in customers if c["persona"] == "practical"]
     assert all(c["budget_quantile"] == 0.5 for c in practical)
+
+
+def test_three_level_category_is_used_for_persona_preferences(tables, config):
+    items, events = tables
+    other_items = items.copy()
+    other_items["item_id"] += 20
+    other_items["category_l2"] = "신발"
+    other_items["category_l3"] = "운동화"
+    other_events = events.copy()
+    other_events["item_id"] += 20
+    data = prepare(pd.concat([items, other_items], ignore_index=True),
+                   pd.concat([events, other_events], ignore_index=True))
+    taxonomy_only = prepare(pd.concat([items, other_items], ignore_index=True).drop(columns=["cat_target", "cat_type"]),
+                            pd.concat([events, other_events], ignore_index=True))
+    assert taxonomy_only.items.category.tolist() == data.items.category.tolist()
+    assert data.stats["category_columns"] == ["category_l1", "category_l2", "category_l3"]
+    assert set(data.items.category) == {"여성 > 상의 > 티셔츠", "여성 > 신발 > 운동화"}
+    customers, _ = make_customers(data, config, count=100)
+    practical = [c for c in customers if c["persona"] == "practical"]
+    assert {c["preferred_category"] for c in practical} == {"여성 > 상의 > 티셔츠", "여성 > 신발 > 운동화"}
+    assert {c["category_sampling_probability"] for c in practical if c["preferred_category"] == "여성 > 상의 > 티셔츠"} == {0.75}
+
+
+def test_legacy_categories_fail_when_preference_terms_cannot_match(tables, config):
+    items, events = tables
+    items = items.drop(columns=["category_l1", "category_l2", "category_l3"])
+    data = prepare(items, events)
+    assert set(data.items.category) == {"Women > Clothing"}
+    with pytest.raises(ValueError, match="trendsetter.*match no eligible catalog category"):
+        make_customers(data, config, count=1)
+
+
+def test_partial_three_level_category_columns_fail(tables):
+    items, events = tables
+    with pytest.raises(ValueError, match="incomplete three-level category columns"):
+        prepare(items.drop(columns="category_l3"), events)
 
 
 def test_setup_ignores_input_row_order(tables, config):

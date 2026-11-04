@@ -56,8 +56,12 @@ def make_customers(data, config, count=None, history_size=10):
     specs = {p["id"]: p for p in config["personas"]}
     for persona in config["pilot"]["active_personas"]:
         category_rule = specs[persona].get("category_sampling", {})
+        terms = category_rule.get("matching_terms", [])
+        matching = [any(term.lower() in row["category"].lower() for term in terms) for row in plan]
+        if plan and terms and not any(matching):
+            raise ValueError(f"{persona}: category_sampling.matching_terms {terms} match no eligible catalog category; check category_l1/l2/l3 in items.parquet")
         adjusted = [row["positive_train_purchases"] * (category_rule.get("matching_multiplier", 1)
-                    if any(t.lower() in row["category"].lower() for t in category_rule.get("matching_terms", [])) else 1) for row in plan]
+                    if matched else 1) for row, matched in zip(plan, matching)]
         probabilities = np.array(adjusted, dtype=float)
         if len(probabilities): probabilities /= probabilities.sum()
         for index in range(counts[persona]):
