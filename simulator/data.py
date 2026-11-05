@@ -36,8 +36,13 @@ class Prepared:
 
 def prepare(items, events):
     items, events = items.copy(), events.copy()
+    taxonomy = ("category_l1", "category_l2", "category_l3")
+    present = set(taxonomy) & set(items.columns)
+    if present and present != set(taxonomy):
+        raise ValueError(f"items: incomplete three-level category columns; missing {sorted(set(taxonomy) - present)}")
+    category_columns = taxonomy if present else ("cat_target", "cat_type")
     for label, df, columns in (
-        ("items", items, {"source", "item_id", "brand_norm", "cat_target", "cat_type", "price", "price_source"}),
+        ("items", items, {"source", "item_id", "brand_norm", "price", "price_source"} | set(category_columns)),
         ("events", events, {"source", "item_id", "split", "feedback", "ts", "type"}),
     ):
         if columns - set(df.columns):
@@ -64,15 +69,18 @@ def prepare(items, events):
     if not set(train.item_key) <= set(items.item_key):
         raise ValueError("Train events refer to products missing from the provided catalog")
     items["brand_norm"] = items.brand_norm.fillna("").astype(str).str.strip()
-    items["category"] = items.cat_target.fillna("").astype(str).str.strip() + " > " + items.cat_type.fillna("").astype(str).str.strip()
+    category_parts = [items[column].fillna("").astype(str).str.strip() for column in category_columns]
+    items["category"] = category_parts[0]
+    for part in category_parts[1:]:
+        items["category"] = items["category"] + " > " + part
     items["price"] = pd.to_numeric(items.price, errors="coerce")
     ready = (np.isfinite(items.price) & (items.price > 0) & items.brand_norm.ne("")
-             & items.cat_target.fillna("").astype(str).str.strip().ne("")
-             & items.cat_type.fillna("").astype(str).str.strip().ne(""))
+             & np.logical_and.reduce([part.ne("") for part in category_parts]))
     stats = {"catalog_rows": len(items), "blocked_catalog_items_missing_price_brand_or_category": int((~ready).sum()),
              "train_rows": len(train), "ignored_nontrain_rows": len(events) - len(train),
              "timestamp_interpretation": "UTC; naive timestamps interpreted as UTC (proposal)",
-             "catalog_scope": "only supplied items; local dev subset is not full service catalog"}
+             "catalog_scope": "only supplied items; local dev subset is not full service catalog",
+             "category_columns": list(category_columns)}
     items = items.loc[ready].sort_values(["source", "item_id"]).reset_index(drop=True)
     positive = train.loc[(train.feedback > 0) & (train.type == "purchase") & train.item_key.isin(items.item_key)].copy()
     if positive.empty:

@@ -15,7 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from app import db as app_db
 from app.main import app
 from app.models import Brand, Event, Item, User
-from scripts.load_dev_subset import _embeddings, load
+from scripts.load_dev_subset import _Embeddings, load
 
 
 def make_subset(d):
@@ -89,10 +89,10 @@ def test_embeddings_v2_lookup(tmp_path):
     np.save(tmp_path / "text_pca256.npy", text)
     np.save(tmp_path / "image_pca256.npy", text + 100)
     np.save(tmp_path / "has_image.npy", np.array([True, False, True]))
-    vec = _embeddings(tmp_path, [("amazon", 10), ("amazon", 12), ("hm", 10), ("amazon", 99)])
+    vec = _Embeddings(tmp_path, [("amazon", 10), ("amazon", 12), ("hm", 10), ("amazon", 99)])
     assert vec[("hm", 10)] == ([4.0, 5.0], [104.0, 105.0])
     assert vec[("amazon", 12)] == ([2.0, 3.0], None)          # 이미지 없는 상품
-    assert ("amazon", 99) not in vec                           # 카탈로그에 없는 상품은 건너뜀
+    assert ("amazon", 99) not in vec and len(vec) == 3        # 카탈로그에 없는 상품은 건너뜀
 
 
 @pytest.mark.skipif(not hasattr(Item, "text_embedding"), reason="임베딩 열은 PR #14 병합 후")
@@ -113,3 +113,28 @@ def test_load_with_embeddings(tmp_path, session):
         assert hm_item.text_embedding[3] == 1.0 and len(hm_item.text_embedding) == 256
         crocs = db.scalars(select(Item).where(Item.source_item_id == "B03")).one()
         assert crocs.image_embedding is None                    # 이미지 없는 상품
+
+
+def test_three_level_category_used_when_present(tmp_path):
+    """items에 category_l1 ~ l3 열이 있으면 DB category는 '대 > 중 > 소'."""
+    import pandas as pd
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db as app_db
+    from app.models import Item
+    from scripts.load_dev_subset import load
+
+    d = tmp_path / "subset"
+    d.mkdir()
+    pd.DataFrame({"source": ["hm"], "item_id": [1], "source_item_id": ["0001"], "brand": ["H&M"], "brand_norm": ["h&m"],
+                  "title": ["Tee"], "cat_target": ["Women"], "cat_type": ["Clothing"], "price": [10.0],
+                  "category_l1": ["여성"], "category_l2": ["상의"], "category_l3": ["티셔츠"]}).to_parquet(d / "items.parquet")
+    pd.DataFrame({"source": ["hm"], "user_id": [1], "source_user_id": ["u1"]}).to_parquet(d / "users.parquet")
+    pd.DataFrame({"source": ["hm"], "user_id": [1], "item_id": [1], "type": ["purchase"],
+                  "ts": [pd.Timestamp("2020-09-01")]}).to_parquet(d / "events.parquet")
+    engine = app_db.make_engine(f"sqlite:///{tmp_path / 't.db'}")
+    app_db.init_db(engine)
+    with sessionmaker(bind=engine)() as s:
+        load(s, d, extract_images=False)
+        assert s.scalar(select(Item.category)) == "여성 > 상의 > 티셔츠"

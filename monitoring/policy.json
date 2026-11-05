@@ -1,0 +1,12 @@
+{
+  "version": "0.1-proposal",
+  "interval_seconds": 60,
+  "minimum_views": 1000,
+  "minimum_users": 100,
+  "consecutive_windows": 3,
+  "ctr_minimum": 0.02,
+  "hitrate_minimum": 0.05,
+  "training_log_threshold": 10000,
+  "training_acceptance_metric": "map@12",
+  "automatic_activation": false
+}
