@@ -176,6 +176,7 @@ class UME(Recommender):
             groups.append(np.full(len(sel), source, object))
             ids.append(ix.ids[sel])
         if not scores:
+            self.fallback_reason = "popular"                        # 응답 reason: 개인화가 아니라 인기
             return _popular_scored(db, k)                           # 신규 고객 · 모델 없는 데이터셋
         s, g, all_ids = np.concatenate(scores), np.concatenate(groups), np.concatenate(ids)
         if len(scores) > 1:                                         # 여러 데이터셋: 카탈로그 비율대로 섞기

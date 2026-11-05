@@ -241,3 +241,30 @@ def test_scored_values_match_numpy_and_api_labels_model(env):
         assert [r["product_id"] for r in body["recommendations"]] == [str(i) for i in body["items"]]
     finally:
         app.dependency_overrides.clear()
+
+
+def test_reason_says_popular_when_ume_falls_back(env):
+    Session, ids, params, _ = env
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="reason", status="active", params=params))
+        cold = User(source="sim")
+        s.add(cold)
+        s.commit()
+        cold_id = cold.id
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        client = TestClient(app)
+        warm = client.get(f"/recommend/{ids['users'][0]}", params={"k": 3}).json()["recommendations"]
+        new = client.get(f"/recommend/{cold_id}", params={"k": 3}).json()["recommendations"]
+        assert {r["reason"] for r in warm} == {"personalized"}
+        assert {r["reason"] for r in new} == {"popular"}          # 신규 고객은 인기로 대체됐다고 표시
+    finally:
+        app.dependency_overrides.clear()
