@@ -163,15 +163,6 @@ def lab():
 def simulator():
     st.title("시뮬레이터 결과")
     st.warning("로컬 합성 행동 결과입니다. 서버 A/B 실험·실제 고객 CTR이 아닙니다.")
-    scale_files=sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
-    if scale_files:
-        from dashboard.data import load_json
-        scale_path=st.selectbox("규모 검증 결과",scale_files,format_func=lambda p:p.parent.name)
-        try:
-            scale=load_json(read_small(scale_path))
-            st.write({k:scale[k] for k in ('products','customers','category_levels','events','event_counts','requirements_met')})
-            st.caption("별도 합성 데이터입니다. 실제 서비스 상품 수와 합산하지 않습니다.")
-        except (ValueError,KeyError,OSError) as error:st.error(str(error))
     files = sorted(RUNS.glob("*/summary.json")) if RUNS.is_dir() else []
     chosen = st.selectbox("로컬 실행 결과", files, format_func=lambda p: p.parent.name) if files else None
     upload = st.file_uploader("summary.json 가져오기", type=["json"], key="sim_upload")
@@ -215,6 +206,7 @@ def ab_page():
     with offline_tab:
         lab()
     with simulated_tab:
+        st.caption("합성 · 임시 결과 (실제 카탈로그 A/B로 교체 예정). 현재 가상 상품으로 만든 인기 vs 카테고리 인기 비교이며, 최종 목표는 실제 카탈로그와 추천 API를 사용한 UME vs 인기 비교입니다.")
         st.caption("첫 세션에서 한 번 이상 클릭한 고객 비율의 Z-test입니다. 전체 세션 CTR은 별도로 표시하며 검정에 사용하지 않습니다.")
         files = sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
         chosen = st.selectbox("규모·A/B 실행 결과", files, format_func=lambda p:p.parent.name, key="ab_file") if files else None
@@ -224,7 +216,6 @@ def ab_page():
                 from dashboard.data import load_json
                 obj=load_json(upload.getvalue() if upload else read_small(chosen))
                 if obj.get("kind")!="synthetic_scale_fixture": raise ValueError("규모 실험 결과 파일이 필요합니다.")
-                st.warning("합성 카탈로그·인기 vs 카테고리 인기 실험입니다. UME 또는 실제 고객 효과가 아닙니다.")
                 persona=st.selectbox("검정 페르소나", list(obj['ab_by_persona']),format_func=lambda p:PERSONAS.get(p,p))
                 result=obj['ab_by_persona'][persona]
                 if result.get('metric')!='first_session_customer_click_rate':

@@ -197,7 +197,9 @@ def test_new_scale_ab_and_monitoring_pages(monkeypatch, tmp_path):
     assert any('눈팅형' in select.options for select in at.selectbox)
     at.radio(key='page').set_value('시뮬레이터').run()
     assert not at.exception
-    assert any('별도 합성' in c.value for c in at.caption)
+    assert not any('규모 검증 결과' in select.label for select in at.selectbox)
+    at.radio(key='page').set_value('A/B 테스트').run()
+    assert any('합성 · 임시 결과 (실제 카탈로그 A/B로 교체 예정)' in c.value for c in at.caption)
     state={'latest':{'values':{'ctr':.01,'hitrate':None}},'last_window_end':'2026-10-31T01:00:00Z',
            'identity':['ume-v1','amazon','fixed-users','v1'],'alerts':[],'jobs':[{'version':'candidate-000001','status':'requested'}]}
     (folder/'monitor_state.json').write_bytes(encode(state))
