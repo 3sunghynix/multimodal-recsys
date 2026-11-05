@@ -34,17 +34,31 @@ def _with_source(df, default="amazon"):
     return df if "source" in df.columns else df.assign(source=default)
 
 
-def _embeddings(path: Path, keys):
-    """(source, item_id) → (text 벡터, image 벡터 또는 None)."""
-    if (path / "catalog.parquet").exists():                    # v2: Amazon + H&M 통합
-        cat = pd.read_parquet(path / "catalog.parquet")
-        row = {(s, int(i)): int(r) for r, s, i in zip(cat.row, cat.source, cat.item_id)}
-    else:                                                      # v1: Amazon 단독 (행 = item_ids.npy 순서)
-        row = {("amazon", int(i)): k for k, i in enumerate(np.load(path / "item_ids.npy"))}
-    text, image = np.load(path / "text_pca256.npy"), np.load(path / "image_pca256.npy")
-    has = np.load(path / "has_image.npy")
-    return {key: (text[row[key]].tolist(), image[row[key]].tolist() if has[row[key]] else None)
-            for key in keys if key in row}
+class _Embeddings:
+    """(source, item_id) → (text 벡터, image 벡터 또는 None). 벡터는 꺼낼 때만 리스트로 바꾼다
+    (전체 카탈로그 10만 개를 한꺼번에 파이썬 리스트로 만들면 메모리가 1GB 넘게 든다)."""
+
+    def __init__(self, path: Path, keys):
+        if (path / "catalog.parquet").exists():                # v2: Amazon + H&M 통합
+            cat = pd.read_parquet(path / "catalog.parquet")
+            row = {(s, int(i)): int(r) for r, s, i in zip(cat.row, cat.source, cat.item_id)}
+        else:                                                  # v1: Amazon 단독 (행 = item_ids.npy 순서)
+            row = {("amazon", int(i)): k for k, i in enumerate(np.load(path / "item_ids.npy"))}
+        wanted = set(keys)
+        self.row = {k: r for k, r in row.items() if k in wanted}
+        self.text = np.load(path / "text_pca256.npy", mmap_mode="r")
+        self.image = np.load(path / "image_pca256.npy", mmap_mode="r")
+        self.has = np.load(path / "has_image.npy")
+
+    def __len__(self):
+        return len(self.row)
+
+    def __contains__(self, key):
+        return key in self.row
+
+    def __getitem__(self, key):
+        r = self.row[key]
+        return np.asarray(self.text[r]).tolist(), (np.asarray(self.image[r]).tolist() if self.has[r] else None)
 
 
 def load(db, data: Path, embeddings: Path | None = None, extract_images: bool = True):
@@ -79,7 +93,7 @@ def load(db, data: Path, embeddings: Path | None = None, extract_images: bool = 
     keys = list(zip(items.source, items.item_id.astype(int)))
     vec = {}
     if embeddings is not None and hasattr(Item, "text_embedding"):
-        vec = _embeddings(embeddings, keys)
+        vec = _Embeddings(embeddings, keys)
         missing = len(keys) - len(vec)
         if missing:
             print(f"주의: 임베딩이 없는 상품 {missing}개 (빈 값으로 적재)")
@@ -93,7 +107,10 @@ def load(db, data: Path, embeddings: Path | None = None, extract_images: bool = 
         for r in items.iloc[start:start + CHUNK].itertuples():
             key = (r.source, int(r.item_id))
             desc = " ".join(x for x in (_none(getattr(r, "features", None)), _none(getattr(r, "description", None))) if x)
-            cat = " > ".join(x for x in (_none(getattr(r, "cat_target", None)), _none(getattr(r, "cat_type", None))) if x)
+            if getattr(r, "category_l1", None):                  # 3단계 공통 분류 (recsys/taxonomy.py로 미리 계산된 열)
+                cat = " > ".join((r.category_l1, r.category_l2, r.category_l3))
+            else:
+                cat = " > ".join(x for x in (_none(getattr(r, "cat_target", None)), _none(getattr(r, "cat_type", None))) if x)
             kw = dict(source=r.source, source_item_id=str(r.source_item_id), brand_id=brand_db.get(r.brand_norm),
                       title=str(r.title)[:500], description=desc,
                       category=(cat or str(_none(getattr(r, "categories", None)) or ""))[:200],

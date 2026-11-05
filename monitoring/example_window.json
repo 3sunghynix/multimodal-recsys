@@ -1,0 +1,15 @@
+{
+  "window_id": "example-001",
+  "window_start": "2026-10-31T00:00:00+00:00",
+  "window_end": "2026-10-31T01:00:00+00:00",
+  "model_version": "example-only-v1",
+  "source": "synthetic",
+  "cohort": "example",
+  "metric_definition_version": "heldout-hitrate@12-example-v1",
+  "setup_excluded": true,
+  "views": 2000,
+  "clicks": 20,
+  "evaluated_users": 200,
+  "hit_users": 5,
+  "cumulative_new_logs": 10000
+}

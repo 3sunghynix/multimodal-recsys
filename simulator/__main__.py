@@ -43,7 +43,7 @@ def run(data_dir, out, config_path=None, count=None, history_size=10, recommenda
     hashes = {name: file_hash(data_dir / name) for name in ("items.parquet", "events.parquet")}
     code_hashes = {p.name: file_hash(p) for p in sorted(Path(__file__).parent.glob("*.py"))}
     identity = {"config_sha256": file_hash(config_path), "data_sha256": hashes, "code_sha256": code_hashes,
-                "count_per_persona": count or config["pilot"]["customers_per_persona"],
+                "count_per_persona_override": count, "planned_customers": config["pilot"]["planned_customers"],
                 "history_size": history_size, "recommendations_sha256": file_hash(recommendations) if recommendations else "local_popularity",
                 "simulator_version": __version__}
     run_id = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:20]
