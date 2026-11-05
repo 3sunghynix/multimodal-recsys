@@ -204,3 +204,67 @@ def test_register_refuses_activation_without_ready_weights(env):
         s.rollback()
         assert [m.name for m in s.query(ModelVersion).filter_by(status="active")] == ["popularity"]
         assert s.query(ModelVersion).filter_by(name="ume").count() == 0
+
+
+# ---- 실제 점수 반환 (#32 recommend_scored)
+
+def test_scored_values_match_numpy_and_api_labels_model(env):
+    Session, ids, params, tmp = env
+    with Session() as s:
+        scored = recommenders.get("ume", params).recommend_scored(s, ids["users"][0], 5)
+        items = {it.id: it for it in s.query(Item).all()}
+        hist = [ids["amazon"][j] for j in (0, 3, 6, 4)]
+        total = 0
+        for m, col in (("text", "text_embedding"), ("image", "image_embedding")):
+            w = dict(np.load(tmp / "art" / "amazon" / m / "weights.npz"))
+            u = mlp(w, "user", np.mean([getattr(items[i], col) for i in hist], axis=0))
+            V = mlp(w, "item", np.array([getattr(items[i], col) for i in ids["amazon"]], np.float32))
+            total = total + _z(V @ u)
+        expect = {ids["amazon"][i]: round(float(total[i]), 4) for i in range(30)}
+        assert [sc for _, sc in scored] == sorted((sc for _, sc in scored), reverse=True)      # 내림차순
+        assert all(abs(sc - expect[i]) < 1e-3 for i, sc in scored)                             # 정의대로 계산한 점수
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="scored", status="active", params=params))
+        s.commit()
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        body = TestClient(app).get(f"/recommend/{ids['users'][0]}", params={"k": 5}).json()
+        assert body["model"] == "ume" and {r["score_kind"] for r in body["recommendations"]} == {"model"}
+        assert [r["product_id"] for r in body["recommendations"]] == [str(i) for i in body["items"]]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_reason_says_popular_when_ume_falls_back(env):
+    Session, ids, params, _ = env
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="reason", status="active", params=params))
+        cold = User(source="sim")
+        s.add(cold)
+        s.commit()
+        cold_id = cold.id
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        client = TestClient(app)
+        warm = client.get(f"/recommend/{ids['users'][0]}", params={"k": 3}).json()["recommendations"]
+        new = client.get(f"/recommend/{cold_id}", params={"k": 3}).json()["recommendations"]
+        assert {r["reason"] for r in warm} == {"personalized"}
+        assert {r["reason"] for r in new} == {"popular"}          # 신규 고객은 인기로 대체됐다고 표시
+    finally:
+        app.dependency_overrides.clear()

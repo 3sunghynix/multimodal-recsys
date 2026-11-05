@@ -24,7 +24,7 @@ from ..models import Event, Item
 from ..services.catalog_index import CatalogIndex, get_index
 from ..services.search_core import rank_percentile
 from .base import Recommender, register
-from .popularity import _popular
+from .popularity import _popular_scored
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
 DEFAULTS = {"gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
@@ -110,7 +110,8 @@ def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | No
     is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 무효화 probe · 최근 구매 기준 시각 · 집계 모두.
     캐시 키 = 비 setup 이벤트 상태 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산."""
     non_setup = (Event.is_setup == False)                                               # noqa: E712
-    n, last = db.execute(select(func.count(Event.id), func.max(Event.id)).where(non_setup)).one()
+    last = db.scalar(select(func.max(Event.id)))    # 이벤트는 추가만 됨 → 가장 큰 id로 변화 감지 (107만 건 count 약 40ms → 1ms 이하)
+    n = None
     catalog = (len(item_ids), int(item_ids[0]) if len(item_ids) else None, int(item_ids[-1]) if len(item_ids) else None)
     key = (str(db.bind.url), source, days, n, last, catalog)
     if _pop_cache.get(source, (None,))[0] != key:
@@ -129,9 +130,18 @@ def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | No
 
 @register
 class UME(Recommender):
+    """점수 (`recommend_scored`, 응답 score_kind="model"):
+    - 데이터셋 하나: z(텍스트) + z(이미지) + γ · 인기 점수 + β · [선호 브랜드] — 고객별 표준화 점수 단위
+    - 데이터셋 여럿: 데이터셋 안 순위 백분위 (0 ~ 1, 1 = 그 데이터셋 1위)
+    - 신규 고객 · 모델 없는 데이터셋뿐: 인기 모델 점수(이벤트 가중치 합)
+    """
     name = "ume"
+    scored_native = True
 
     def recommend(self, db: Session, user_id: int, k: int) -> list[int]:
+        return [i for i, _ in self.recommend_scored(db, user_id, k)]
+
+    def recommend_scored(self, db: Session, user_id: int, k: int) -> list[tuple[int, float]]:
         p = {**DEFAULTS, **self.params}
         dirs: dict = p.get("artifact_dirs", {})
         max_hist = int(p["max_hist"])
@@ -167,11 +177,12 @@ class UME(Recommender):
             groups.append(np.full(len(sel), source, object))
             ids.append(ix.ids[sel])
         if not scores:
-            return _popular(db, k)                                  # 신규 고객 · 모델 없는 데이터셋
+            self.fallback_reason = "popular"                        # 응답 reason: 개인화가 아니라 인기
+            return _popular_scored(db, k)                           # 신규 고객 · 모델 없는 데이터셋
         s, g, all_ids = np.concatenate(scores), np.concatenate(groups), np.concatenate(ids)
         if len(scores) > 1:                                         # 여러 데이터셋: 카탈로그 비율대로 섞기
             s = rank_percentile(s[None, :], g)[0]
         k = min(k, len(s))
         top = np.argpartition(-s, k - 1)[:k]                        # 상위 k만 정렬 (상품 8.7만 기준 p95 약 4ms)
         top = top[np.argsort(-s[top], kind="stable")]
-        return all_ids[top].tolist()
+        return [(int(i), round(float(v), 4)) for i, v in zip(all_ids[top], s[top])]

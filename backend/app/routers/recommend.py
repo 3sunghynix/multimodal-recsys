@@ -50,7 +50,7 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
     #   score_kind="rank"  → 모델이 점수를 돌려주지 않아 base 가 순위 기반 placeholder (1.0 → 0.0)
     # 자동 채점·리뷰에서 "모델 점수"로 오해되지 않도록 두 종류를 분리해 노출한다.
     score_kind = "model" if recommender.scored_native else "rank"
-    reason = _REASON.get(mv.name, mv.name)
+    reason = recommender.fallback_reason or _REASON.get(mv.name, mv.name)   # 대체 경로면 그 이유 (예: UME 신규 고객 → popular)
     recommendations = [RecommendationOut(
         product_id=str(item_id),
         score=round(float(score), 4),

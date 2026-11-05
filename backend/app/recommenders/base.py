@@ -16,6 +16,9 @@ class Recommender:
 
     name: str = ""
     scored_native: bool = False       # True = 모델이 실제 점수를 돌려줌, False = base 가 순위 기반 폴백
+    # 이번 요청에서 다른 방식으로 대체됐으면 그 이유 라벨 (예: UME 신규 고객 → "popular"). 응답 reason에 쓰인다.
+    # 추천 모델 객체는 요청마다 새로 만들어지므로(get) 요청끼리 섞이지 않는다.
+    fallback_reason: str | None = None
 
     def __init__(self, params: dict | None = None):
         self.params = params or {}
