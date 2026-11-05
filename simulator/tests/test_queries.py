@@ -58,3 +58,11 @@ def test_modifiers_fit_the_item():
             for ko, en, ok in MATERIALS + TRENDY:
                 if ko in words or en in " ".join(words):
                     assert leaf in ok, (leaf, words)
+
+
+def test_persona_ids_match_personas_yaml():
+    """personas.yaml의 페르소나 id가 바뀌면 검색어 수식어 표(STYLE)도 같이 바꿔야 한다."""
+    from pathlib import Path
+    import yaml
+    cfg = yaml.safe_load((Path(__file__).resolve().parents[1] / "personas.yaml").read_text(encoding="utf-8"))
+    assert set(STYLE) == {p["id"] for p in cfg["personas"]}
