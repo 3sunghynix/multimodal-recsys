@@ -30,6 +30,18 @@ async def lifespan(app: FastAPI):
     if settings.load_text_encoder:
         from .encoders.text import load_text_encoder
         app.state.text_encoder = load_text_encoder(settings.text_encoder_model, settings.pca_text_path)
+    # 검색 · 추천 상품 색인을 백그라운드로 미리 만든다 (전체 카탈로그 10만 개면 약 17초 — 첫 사용자가 기다리지 않게)
+    import threading
+
+    def _warm():
+        try:
+            from .db import SessionLocal
+            from .services.catalog_index import get_index
+            with SessionLocal() as db:
+                get_index(db)
+        except Exception as e:                                   # DB가 비었거나 아직 준비 전이어도 서버는 뜬다
+            print(f"[색인 미리 만들기 건너뜀] {e}")
+    threading.Thread(target=_warm, daemon=True).start()
     yield
 
 
