@@ -18,10 +18,25 @@ services:
       interval: 5s
       retries: 10
 
+  # Feature Store (명세 4.4). 사용자별 실시간 피처 — 최근 조회/클릭 상품, 세션 클릭 수.
+  # 메모리는 작게(128MB 상한, allkeys-lru) — 세션 TTL 로 자연 소멸. appendonly 로 재시작 시 복원.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
   api:
     build: ./backend
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@db:5432/${POSTGRES_DB:-recsys}
+      REDIS_URL: redis://redis:6379/0
       # 검색 모델(MiniLM · Marqo, 약 1GB)은 처음 한 번만 받아 hf_cache 볼륨에 저장된다.
       # 받은 뒤 .env에 HF_HUB_OFFLINE=1 → 시작할 때 인터넷 확인 없이 저장된 모델 사용 (백신 HTTPS 검사가 켜져 있어도 됨)
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
@@ -33,6 +48,8 @@ services:
       - hf_cache:/root/.cache/huggingface   # 검색 모델 캐시 (컨테이너를 다시 만들어도 유지, down -v 하면 삭제)
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   dashboard:
@@ -52,3 +69,4 @@ services:
 volumes:
   pgdata:
   hf_cache:
+  redis_data:

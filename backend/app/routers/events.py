@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Event, Item, User
 from ..schemas import EventIn, EventOut
+from ..services import feature_store
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -61,6 +62,10 @@ def log_event(e: EventIn, response: Response, db: Session = Depends(get_db)):
         response.status_code = 200
         return _idempotent_or_409(existing, incoming)
     db.refresh(ev)
+    # Feature Store 반영 (명세 4.4). is_setup=True 는 집계 제외 규칙에 따라 Redis 에도 쓰지 않는다
+    # — 초기 이력 적재가 "최근 활동" 으로 오해되지 않게. record_event 는 Redis 통신 실패 시 swallow.
+    if not e.is_setup:
+        feature_store.record_event(user_id=e.user_id, event_type=e.type, item_id=e.item_id)
     return ev
 
 
