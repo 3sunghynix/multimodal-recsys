@@ -13,6 +13,14 @@ from app.config import settings
 from app.db import Base
 from app import models  # noqa: F401 — Base.metadata 에 테이블 등록
 
+# pgvector Vector 타입을 SQLAlchemy 레지스트리에 등록. 안 하면 alembic autogenerate 가 PG 쪽
+# "vector" 타입을 못 알아보고 "Did not recognize type 'vector'" 경고 + 임베딩 열이 타입 비교에서
+#빠진다 (PR #45 리뷰 by 유환). pgvector 는 requirements.txt 에 있어 Docker 환경은 항상 설치돼 있음.
+try:
+    import pgvector.sqlalchemy  # noqa: F401
+except ImportError:
+    pass
+
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)
 
