@@ -4,12 +4,13 @@
 pgvector 상위 k 질의로는 계산할 수 없다. 상품 임베딩을 메모리(numpy)에 올려 전체 점수를 한 번에 계산한다.
 규모: 상품 10만 × 256차원 × 2(텍스트 · 이미지) × 4바이트 ≈ 200MB, 질의 1건 수 ms.
 
-상품이 추가 · 삭제되면 (DB 주소, 상품 수, 최대 id)가 바뀌므로 다음 요청에서 다시 읽는다.
+상품이 추가되거나 재적재되면 카탈로그 지문(catalog_signature)이 바뀌므로 다음 요청에서 다시 읽는다.
 """
+import hashlib
 from dataclasses import dataclass
 
 import numpy as np
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Item
@@ -30,11 +31,24 @@ class CatalogIndex:
 _cache: dict = {"key": None, "index": None}
 
 
+def catalog_signature(db: Session):
+    """가장 큰 id 상품 한 행으로 만든 카탈로그 지문: (id, 데이터셋, 원본 상품 id, 텍스트 임베딩 해시).
+    상품은 추가만 되므로 보통은 id만으로 충분하지만, --reset 재적재는 id를 1부터 다시 매겨 최대 id가 예전과 같을 수 있다.
+    원본 id · 임베딩까지 보면 다른 데이터 · 다른 임베딩 버전으로 재적재한 경우도 잡힌다.
+    기본 키 역순 한 행이라 전체 카탈로그(10만 개)에서도 1ms 안팎 (count는 약 35ms) — 검색 · 추천 요청마다 실행된다."""
+    row = db.execute(select(Item.id, Item.source, Item.source_item_id, Item.text_embedding)
+                     .order_by(Item.id.desc()).limit(1)).first()
+    if row is None:
+        return None
+    emb = None if row.text_embedding is None else hashlib.blake2b(
+        np.asarray(row.text_embedding, np.float32).tobytes(), digest_size=8).hexdigest()
+    return (row.id, row.source, row.source_item_id, emb)
+
+
 def get_index(db: Session) -> CatalogIndex:
-    """바뀌었는지는 가장 큰 상품 id만 본다 (상품은 추가만 됨). 전체 카탈로그 10만 개에서 count 조건 쿼리는 약 35ms,
-    max(id)는 1ms 이하 — 검색 · 추천 요청마다 실행되므로 가벼워야 한다. 기존 상품의 임베딩만 바뀐 경우는 서버 재시작 때 반영."""
+    """카탈로그 지문이 바뀌면 다시 만든다. 기존 상품의 임베딩만 일부 바뀐 경우는 서버 재시작 때 반영."""
     has_text = Item.text_embedding.is_not(None)
-    key = (str(db.bind.url), db.scalar(select(func.max(Item.id))))
+    key = (str(db.bind.url), catalog_signature(db))
     if _cache["key"] != key:
         _cache["index"] = _build(db, has_text)
         _cache["key"] = key

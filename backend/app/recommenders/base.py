@@ -19,6 +19,12 @@ class Recommender:
     # 이번 요청에서 다른 방식으로 대체됐으면 그 이유 라벨 (예: UME 신규 고객 → "popular"). 응답 reason에 쓰인다.
     # 추천 모델 객체는 요청마다 새로 만들어지므로(get) 요청끼리 섞이지 않는다.
     fallback_reason: str | None = None
+    # 점수의 단위 (응답 score_basis). 모델마다 · 경로마다 다르므로 점수끼리 비교할 때 이 값이 같은지 먼저 본다.
+    #   event_weight_sum : 이벤트 가중치 합계 (인기 · 브랜드 인기, UME 신규 고객 대체)
+    #   ume_zscore       : UME 고객별 표준화 점수 합 (데이터셋 하나)
+    #   rank_percentile  : 데이터셋 안 순위 백분위 0 ~ 1 (UME 데이터셋 여럿)
+    #   rank_placeholder : 모델이 점수를 주지 않아 순위로 만든 값 (score_kind="rank")
+    score_basis: str = "rank_placeholder"
 
     def __init__(self, params: dict | None = None):
         self.params = params or {}
