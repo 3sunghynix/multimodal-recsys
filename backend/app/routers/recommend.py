@@ -16,6 +16,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import Event, Experiment, ModelVersion, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
+from ..services import feature_store
 from ..services.ab import assign_variant
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
@@ -59,10 +60,14 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
         is_exploration=False,                                  # MAB 미구현 — 전부 exploit
     ) for item_id, score in scored]
 
-    # 세션 컨텍스트: 해당 고객의 최근 클릭 상품 5개. 세션 인코더가 없으니 session_interest 는 None.
-    recent = db.scalars(select(Event.item_id).where(
-        Event.user_id == user_id, Event.type == "click", Event.item_id.is_not(None)
-    ).order_by(Event.created_at.desc(), Event.id.desc()).limit(_RECENT_CLICK_LIMIT)).all()
+    # 세션 컨텍스트: 해당 고객의 최근 클릭 상품 5개 (Feature Store 우선, 비면 DB 폴백).
+    # 서비스가 처음 뜨거나 Redis 가 없거나 Redis 가 cold(앞 선 이벤트 없음) 일 때 DB 가 보완.
+    recent_clicks = feature_store.get_recent_clicks(user_id, _RECENT_CLICK_LIMIT)
+    if not recent_clicks:
+        recent = db.scalars(select(Event.item_id).where(
+            Event.user_id == user_id, Event.type == "click", Event.item_id.is_not(None)
+        ).order_by(Event.created_at.desc(), Event.id.desc()).limit(_RECENT_CLICK_LIMIT)).all()
+        recent_clicks = [str(i) for i in recent]
 
     return RecommendOut(
         user_id=user_id, model=mv.name, model_version_id=mv.id,
@@ -74,6 +79,6 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
             candidate_ms=total_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms,
         ),
         session_context=SessionContext(
-            recent_clicks=[str(i) for i in recent], session_interest=None,
+            recent_clicks=recent_clicks, session_interest=None,
         ),
     )

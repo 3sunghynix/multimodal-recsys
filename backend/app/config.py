@@ -34,5 +34,9 @@ class Settings(BaseSettings):
     pca_text_path: str = "/data/embeddings/v2/pca_text.npz"
     load_text_encoder: bool = True
 
+    # Feature Store (명세 4.4). docker-compose 에서 "redis://redis:6379/0" 로 덮어쓴다.
+    # 비어 있으면 feature_store 가 전체 no-op 로 돌아 서버는 계속 뜸 (로컬 pytest 등).
+    redis_url: str | None = None
+
 
 settings = Settings()
