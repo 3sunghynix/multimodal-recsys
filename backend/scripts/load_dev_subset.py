@@ -42,10 +42,14 @@ def _with_source(df, default="amazon"):
 
 def _bulk_insert_returning_ids(db, model, rows):
     """Core INSERT ... RETURNING id — ORM overhead(상태 추적 · identity map · flush) 없이 삽입하고
-    생성된 id 를 입력 순서대로 돌려준다. PostgreSQL/SQLite 둘 다 지원 (SQLAlchemy 2.0+)."""
+    생성된 id 를 입력 순서 그대로 돌려준다. PostgreSQL/SQLite 둘 다 지원 (SQLAlchemy 2.0+).
+
+    중요: sort_by_parameter_order=True 는 insertmanyvalues 가 내부 배치(1000개 단위)로 나눠 보낼 때도
+    반환 순서가 입력 파라미터 순서와 일치하도록 보장한다. 없으면 PG 에서 조용히 순서가 섞여 상품 id ↔
+    (source, item_id) 매핑이 어긋나고 그 결과 임베딩/이벤트가 엉뚱한 상품에 붙는 버그가 생긴다 (PR #43 리뷰)."""
     if not rows:
         return []
-    result = db.execute(insert(model).returning(model.id), rows)
+    result = db.execute(insert(model).returning(model.id, sort_by_parameter_order=True), rows)
     return [r[0] for r in result]
 
 
