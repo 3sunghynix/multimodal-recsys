@@ -268,3 +268,39 @@ def test_reason_says_popular_when_ume_falls_back(env):
         assert {r["reason"] for r in new} == {"popular"}          # 신규 고객은 인기로 대체됐다고 표시
     finally:
         app.dependency_overrides.clear()
+
+
+def test_score_basis_per_path(env):
+    """세 경로의 점수 단위가 달라서 응답 score_basis 로 구분한다 (#38 리뷰).
+    데이터셋 하나 → ume_zscore, 데이터셋 여럿 → rank_percentile (0 ~ 1), 신규 고객 → event_weight_sum (인기 대체)."""
+    Session, ids, params, _ = env
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="basis", status="active", params=params))
+        cold = User(source="sim")
+        s.add(cold)
+        s.commit()
+        cold_id = cold.id
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        client = TestClient(app)
+
+        def recs(uid):
+            return client.get(f"/recommend/{uid}", params={"k": 8}).json()["recommendations"]
+
+        single, multi, new = recs(ids["users"][0]), recs(ids["users"][1]), recs(cold_id)
+        assert {r["score_basis"] for r in single} == {"ume_zscore"}
+        assert {r["score_basis"] for r in multi} == {"rank_percentile"}
+        assert all(0.0 <= r["score"] <= 1.0 for r in multi)
+        assert {r["score_basis"] for r in new} == {"event_weight_sum"}
+        assert {r["score_kind"] for r in single + multi + new} == {"model"}
+        assert {r["reason"] for r in new} == {"popular"}
+    finally:
+        app.dependency_overrides.clear()

@@ -121,6 +121,7 @@ def test_popularity_emits_real_model_scores_not_rank_placeholder(client):
     recs = body["recommendations"]
     # 전부 model 점수 (Popularity.scored_native=True)
     assert {r["score_kind"] for r in recs} == {"model"}
+    assert {r["score_basis"] for r in recs} == {"event_weight_sum"}
     # 순위 기반 placeholder 는 정확히 1.0 → 0.0 등간격이지만, 실제 이벤트 합계는 정수/소수 배수가 아님.
     # 최상위가 1.0 이고 간격이 균등하면 placeholder 를 의심 — 그런 패턴이 아닌지 확인.
     scores = [r["score"] for r in recs]

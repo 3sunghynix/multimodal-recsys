@@ -35,12 +35,46 @@ def test_persona_style_and_language_mix():
 
 def test_image_query_prefers_other_dataset():
     items = pd.DataFrame({"source": ["hm", "hm", "amazon", "amazon"], "item_id": [1, 2, 3, 4],
-                          "category_l3": ["원피스", "원피스", "원피스", "티셔츠"]})
+                          "category_l3": ["원피스", "원피스", "원피스", "티셔츠"], "has_image": True})
     rng = np.random.default_rng(2)
     picks = {image_query_item(rng, items, "원피스", "hm") for _ in range(20)}
     assert picks == {("amazon", 3)}                                         # H&M 고객 → Amazon 원피스 사진
     assert image_query_item(rng, items, "티셔츠", "amazon") == ("amazon", 4)  # 다른 데이터셋에 없으면 같은 데이터셋
     assert image_query_item(rng, items, "수영복", "hm") is None
+
+
+def test_image_query_only_picks_items_with_images(tmp_path):
+    """#39 리뷰: 사진 없는 상품은 고르지 않는다. 세 경우 — 다른 데이터셋 사진 있음 / 다른 데이터셋엔 없고 같은 데이터셋엔 있음 / 둘 다 없음."""
+    from zipfile import ZipFile
+
+    from simulator.queries import image_keys, mark_has_image
+
+    items = pd.DataFrame({"source": ["hm", "hm", "amazon", "amazon", "amazon", "hm"],
+                          "item_id": [1, 2, 3, 4, 5, 6],
+                          "category_l3": ["원피스", "원피스", "원피스", "원피스", "티셔츠", "티셔츠"]})
+    with ZipFile(tmp_path / "images.zip", "w") as z:                  # 사진: hm 1 · amazon 4 · hm 6
+        for name in ("hm/1.jpg", "amazon/4.jpg", "hm/6.jpg"):
+            z.writestr(name, b"x")
+    keys = image_keys(tmp_path)
+    assert keys == {("hm", 1), ("amazon", 4), ("hm", 6)}
+    items = mark_has_image(items, keys)
+    rng = np.random.default_rng(0)
+    # 1) H&M 고객 → Amazon 원피스 중 사진 있는 4만 (3은 사진 없음)
+    assert {image_query_item(rng, items, "원피스", "hm") for _ in range(20)} == {("amazon", 4)}
+    # 2) Amazon 고객 → H&M 티셔츠(6)는 사진 있음 / Amazon 고객의 원피스: H&M 사진 1
+    assert image_query_item(rng, items, "티셔츠", "amazon") == ("hm", 6)
+    #    H&M 고객의 티셔츠: Amazon 티셔츠(5)는 사진 없음 → 같은 데이터셋 H&M 6
+    assert image_query_item(rng, items, "티셔츠", "hm") == ("hm", 6)
+    # 3) 사진 있는 후보가 양쪽 모두 없으면 None
+    no_photo = items.assign(has_image=False)
+    assert image_query_item(rng, no_photo, "원피스", "hm") is None
+    # has_image 열이 없으면 조용히 넘어가지 않고 알려 준다
+    with pytest.raises(ValueError):
+        image_query_item(rng, items.drop(columns="has_image"), "원피스", "hm")
+    # 압축 해제된 폴더도 읽는다
+    (tmp_path / "unz" / "images" / "amazon").mkdir(parents=True)
+    (tmp_path / "unz" / "images" / "amazon" / "7.jpg").write_bytes(b"x")
+    assert image_keys(tmp_path / "unz") == {("amazon", 7)}
 
 
 def test_leaves_match_taxonomy_when_available():

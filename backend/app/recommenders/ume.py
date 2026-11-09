@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..models import Event, Item
-from ..services.catalog_index import CatalogIndex, get_index
+from ..services.catalog_index import CatalogIndex, catalog_signature, get_index
 from ..services.search_core import rank_percentile
 from .base import Recommender, register
 from .popularity import _popular_scored
@@ -108,12 +108,14 @@ def _item_vectors(ix: CatalogIndex, sel: np.ndarray, art: str):
 def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | None) -> np.ndarray:
     """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화.
     is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 무효화 probe · 최근 구매 기준 시각 · 집계 모두.
-    캐시 키 = 비 setup 이벤트 상태 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산."""
+    캐시 키 = 가장 큰 id 이벤트 한 행 + 카탈로그 지문 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산.
+    이벤트는 추가만 되므로 보통은 최대 id로 충분하지만, --reset 재적재는 id를 1부터 다시 매기므로 그 행의 고객 · 상품 · 시각까지 본다."""
     non_setup = (Event.is_setup == False)                                               # noqa: E712
-    last = db.scalar(select(func.max(Event.id)))    # 이벤트는 추가만 됨 → 가장 큰 id로 변화 감지 (107만 건 count 약 40ms → 1ms 이하)
-    n = None
+    last = db.execute(select(Event.id, Event.user_id, Event.item_id, Event.created_at)   # 기본 키 역순 한 행 (1ms 안팎)
+                      .order_by(Event.id.desc()).limit(1)).first()
+    last = tuple(last) if last is not None else None
     catalog = (len(item_ids), int(item_ids[0]) if len(item_ids) else None, int(item_ids[-1]) if len(item_ids) else None)
-    key = (str(db.bind.url), source, days, n, last, catalog)
+    key = (str(db.bind.url), source, days, last, catalog_signature(db), catalog)
     if _pop_cache.get(source, (None,))[0] != key:
         q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
              .where(Event.type == "purchase", Item.source == source, non_setup))
@@ -178,10 +180,13 @@ class UME(Recommender):
             ids.append(ix.ids[sel])
         if not scores:
             self.fallback_reason = "popular"                        # 응답 reason: 개인화가 아니라 인기
+            self.score_basis = "event_weight_sum"
             return _popular_scored(db, k)                           # 신규 고객 · 모델 없는 데이터셋
         s, g, all_ids = np.concatenate(scores), np.concatenate(groups), np.concatenate(ids)
+        self.score_basis = "ume_zscore"
         if len(scores) > 1:                                         # 여러 데이터셋: 카탈로그 비율대로 섞기
             s = rank_percentile(s[None, :], g)[0]
+            self.score_basis = "rank_percentile"
         k = min(k, len(s))
         top = np.argpartition(-s, k - 1)[:k]                        # 상위 k만 정렬 (상품 8.7만 기준 p95 약 4ms)
         top = top[np.argsort(-s[top], kind="stable")]

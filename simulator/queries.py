@@ -7,6 +7,7 @@
 - 사전에 한국어가 없는 품목(헤어 액세서리 · 케이스 등)은 영어로만 검색한다.
 이미지 검색
 - 고객과 **다른 데이터셋**의 같은 소분류 상품 사진을 쿼리로 쓴다 ("본 옷과 비슷한 것" 상황). 쿼리로 쓴 상품은 호출자가 결과에서 뺀다.
+- 사진이 실제로 있는 상품만 고른다 (업로드 실패 방지). 사진 목록은 image_keys(데이터 폴더) → mark_has_image.
 
 페르소나 id는 simulator/personas.yaml(v0.3)과 같다.
 """
@@ -120,10 +121,41 @@ def text_query(rng: np.random.Generator, persona: str, leaf: str, brand: str | N
     return {"query": " ".join(words), "lang": lang, "leaf": leaf}
 
 
+def image_keys(data_dir) -> set[tuple[str, int]]:
+    """데이터 폴더에서 사진이 있는 상품 (source, item_id). 압축 해제된 images/{source}/{item_id}.jpg를 먼저 보고, 없으면 images.zip 목록."""
+    from pathlib import Path
+    from zipfile import ZipFile
+
+    root = Path(data_dir)
+    if (root / "images").is_dir():
+        names = [f"{p.parent.name}/{p.name}" for p in (root / "images").glob("*/*.jpg")]
+    elif (root / "images.zip").exists():
+        with ZipFile(root / "images.zip") as z:
+            names = z.namelist()
+    else:
+        return set()
+    keys = set()
+    for n in names:
+        parts = n.replace("\\", "/").split("/")
+        if len(parts) >= 2 and parts[-1].endswith(".jpg") and parts[-1][:-4].isdigit():
+            keys.add((parts[-2], int(parts[-1][:-4])))
+    return keys
+
+
+def mark_has_image(items, keys: set[tuple[str, int]]):
+    """items에 has_image 열을 붙인다 (image_query_item이 이 열로 후보를 거른다)."""
+    items = items.copy()
+    items["has_image"] = [(str(s), int(i)) in keys for s, i in zip(items.source, items.item_id)]
+    return items
+
+
 def image_query_item(rng: np.random.Generator, items, leaf: str, customer_source: str | None = None):
-    """같은 소분류 상품 중 고객과 **다른 데이터셋** 상품 하나 (없으면 같은 데이터셋). items: source · item_id · category_l3 열.
+    """같은 소분류에서 **사진이 있는** 상품 하나. 고객과 다른 데이터셋을 우선하고, 거기 없으면 같은 데이터셋, 둘 다 없으면 None.
+    items: source · item_id · category_l3 · has_image 열 (has_image는 mark_has_image(items, image_keys(데이터 폴더))로 붙인다).
     반환: (source, item_id) 또는 None. 호출자는 이 상품을 검색 결과에서 빼고, 이 상품 사진을 업로드한다."""
-    pool = items[items.category_l3 == leaf]
+    if "has_image" not in items.columns:
+        raise ValueError("items에 has_image 열이 필요합니다: mark_has_image(items, image_keys(데이터 폴더))")
+    pool = items[(items.category_l3 == leaf) & items.has_image.astype(bool)]
     if customer_source is not None and (pool.source != customer_source).any():
         pool = pool[pool.source != customer_source]
     if pool.empty:

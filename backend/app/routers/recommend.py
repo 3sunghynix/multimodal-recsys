@@ -55,6 +55,7 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
         product_id=str(item_id),
         score=round(float(score), 4),
         score_kind=score_kind,
+        score_basis=recommender.score_basis,                   # 점수 단위 (UME 표준화 · 데이터셋 백분위 · 인기 가중치 합 · 순위)
         reason=reason,
         is_exploration=False,                                  # MAB 미구현 — 전부 exploit
     ) for item_id, score in scored]

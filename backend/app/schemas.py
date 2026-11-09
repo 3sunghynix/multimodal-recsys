@@ -96,6 +96,8 @@ class RecommendationOut(BaseModel):
     product_id: str                   # 서버 내부 int id 를 문자열로 노출
     score: float                      # 모델이 돌려준 점수 (score_kind="model") 또는 순위 placeholder (score_kind="rank")
     score_kind: Literal["model", "rank"]  # 자동 채점·리뷰에서 "모델 점수"로 오해되지 않도록 출처 명시
+    # 점수 단위. 같은 score_kind="model" 이라도 경로마다 단위가 달라 값끼리 비교하면 안 된다 (recommenders.base 참고)
+    score_basis: Literal["event_weight_sum", "ume_zscore", "rank_percentile", "rank_placeholder"]
     reason: str                       # 모델별 간단 라벨 (popular · brand_match · personalized)
     is_exploration: bool              # MAB 탐색 슬롯 여부 — 미구현이라 항상 False
 

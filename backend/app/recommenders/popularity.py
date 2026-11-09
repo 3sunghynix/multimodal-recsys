@@ -45,6 +45,7 @@ def _popular(db: Session, k: int, brand_ids=None, exclude=()) -> list[int]:
 class Popularity(Recommender):
     name = "popularity"
     scored_native = True              # 이벤트 가중치 합계가 실제 모델 점수
+    score_basis = "event_weight_sum"
 
     def recommend(self, db, user_id, k):
         return _popular(db, k)
@@ -58,6 +59,7 @@ class BrandPopularity(Recommender):
     """고객이 가장 많이 상호작용한 브랜드(params.top_brands개) 안의 인기 상품. 브랜드 충성도 기준 모델."""
     name = "brand_popularity"
     scored_native = True              # 브랜드 안의 인기도 가중치 합계가 실제 모델 점수
+    score_basis = "event_weight_sum"
 
     def recommend(self, db, user_id, k):
         return [i for i, _ in self.recommend_scored(db, user_id, k)]
