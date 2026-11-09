@@ -77,6 +77,23 @@ def test_features_latency_endpoint_reports_redis_off():
     assert body["redis"] is False
 
 
+def test_features_latency_includes_feature_read_times_when_redis_on(monkeypatch):
+    """PR #46 리뷰 반영: ping 뿐 아니라 실제 피처 조회 세 가지 시간도 함께 재고 worst 로 종합."""
+    mock_client = MagicMock()
+    monkeypatch.setattr(feature_store, "_get_client", lambda: mock_client)
+
+    with TestClient(app) as c:
+        body = c.get("/features/latency?user_id=7").json()
+
+    assert body["redis"] is True
+    assert body["user_id"] == 7
+    for key in ("ping_ms", "recent_clicks_ms", "recent_views_ms", "session_clicks_ms", "worst_ms"):
+        assert isinstance(body[key], (int, float)) and body[key] >= 0
+    assert body["worst_ms"] == max(body["ping_ms"], body["recent_clicks_ms"],
+                                    body["recent_views_ms"], body["session_clicks_ms"])
+    assert "within_spec" in body and "limit_ms" in body
+
+
 # ─── 실제 Redis 호출 패턴 (MagicMock) ─────────────────────────────────────
 
 def test_record_click_pushes_to_list_and_increments_session(monkeypatch):
