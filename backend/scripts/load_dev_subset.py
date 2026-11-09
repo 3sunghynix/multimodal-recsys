@@ -13,17 +13,23 @@ Docker:
     docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset [--embeddings /data/embeddings/v2]
 """
 import argparse
+import time
 import zipfile
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sqlalchemy import select
+from sqlalchemy import insert, select
 
 from app.db import Base, SessionLocal, engine, init_db
 from app.models import Brand, Event, Item, ModelVersion, User
 
-CHUNK = 5_000
+# 한 INSERT 로 보낼 행 수. 10만 상품 · 100만 이벤트가 시판 적재 규모.
+# 너무 작으면 왕복이 많아 느려지고 (ORM 패턴), 너무 크면 PG wal 압력·쿼리 파라미터 상한에 걸린다.
+# 이벤트는 임베딩 없이 작은 행이라 크게, 상품은 임베딩 있어서 중간 크기로.
+ITEM_CHUNK = 2_000
+USER_CHUNK = 5_000
+EVENT_CHUNK = 20_000
 
 
 def _none(v):
@@ -32,6 +38,25 @@ def _none(v):
 
 def _with_source(df, default="amazon"):
     return df if "source" in df.columns else df.assign(source=default)
+
+
+def _bulk_insert_returning_ids(db, model, rows):
+    """Core INSERT ... RETURNING id — ORM overhead(상태 추적 · identity map · flush) 없이 삽입하고
+    생성된 id 를 입력 순서 그대로 돌려준다. PostgreSQL/SQLite 둘 다 지원 (SQLAlchemy 2.0+).
+
+    중요: sort_by_parameter_order=True 는 insertmanyvalues 가 내부 배치(1000개 단위)로 나눠 보낼 때도
+    반환 순서가 입력 파라미터 순서와 일치하도록 보장한다. 없으면 PG 에서 조용히 순서가 섞여 상품 id ↔
+    (source, item_id) 매핑이 어긋나고 그 결과 임베딩/이벤트가 엉뚱한 상품에 붙는 버그가 생긴다 (PR #43 리뷰)."""
+    if not rows:
+        return []
+    result = db.execute(insert(model).returning(model.id, sort_by_parameter_order=True), rows)
+    return [r[0] for r in result]
+
+
+def _bulk_insert(db, model, rows):
+    """Core INSERT (RETURNING 없이). 이벤트처럼 FK 재사용이 필요 없는 큰 테이블에."""
+    if rows:
+        db.execute(insert(model), rows)
 
 
 class _Embeddings:
@@ -101,48 +126,55 @@ def load(db, data: Path, embeddings: Path | None = None, extract_images: bool = 
         print("주의: items에 임베딩 열이 없어 임베딩은 건너뜀 (PR #14 병합 후 다시 적재)")
     has_price_source = hasattr(Item, "price_source")
 
+    t = time.perf_counter()
     item_db = {}
-    for start in range(0, len(items), CHUNK):
-        objs = []
-        for r in items.iloc[start:start + CHUNK].itertuples():
+    for start in range(0, len(items), ITEM_CHUNK):
+        keys, rows = [], []
+        for r in items.iloc[start:start + ITEM_CHUNK].itertuples():
             key = (r.source, int(r.item_id))
             desc = " ".join(x for x in (_none(getattr(r, "features", None)), _none(getattr(r, "description", None))) if x)
             if getattr(r, "category_l1", None):                  # 3단계 공통 분류 (recsys/taxonomy.py로 미리 계산된 열)
                 cat = " > ".join((r.category_l1, r.category_l2, r.category_l3))
             else:
                 cat = " > ".join(x for x in (_none(getattr(r, "cat_target", None)), _none(getattr(r, "cat_type", None))) if x)
-            kw = dict(source=r.source, source_item_id=str(r.source_item_id), brand_id=brand_db.get(r.brand_norm),
-                      title=str(r.title)[:500], description=desc,
-                      category=(cat or str(_none(getattr(r, "categories", None)) or ""))[:200],
-                      price=_none(getattr(r, "price", None)),
-                      image_path=f"dev_subset/images/{r.source}/{int(r.item_id)}.jpg" if img_dir else None)
+            row = dict(source=r.source, source_item_id=str(r.source_item_id), brand_id=brand_db.get(r.brand_norm),
+                       title=str(r.title)[:500], description=desc,
+                       category=(cat or str(_none(getattr(r, "categories", None)) or ""))[:200],
+                       price=_none(getattr(r, "price", None)),
+                       image_path=f"dev_subset/images/{r.source}/{int(r.item_id)}.jpg" if img_dir else None)
             if has_price_source:
-                kw["price_source"] = _none(getattr(r, "price_source", None))
+                row["price_source"] = _none(getattr(r, "price_source", None))
             if key in vec:
-                kw["text_embedding"], kw["image_embedding"] = vec[key]
-            objs.append((key, Item(**kw)))
-        db.add_all([o for _, o in objs])
-        db.flush()
-        item_db.update({k: o.id for k, o in objs})
+                row["text_embedding"], row["image_embedding"] = vec[key]
+            keys.append(key)
+            rows.append(row)
+        ids = _bulk_insert_returning_ids(db, Item, rows)
+        item_db.update(dict(zip(keys, ids)))
+    print(f"items: {len(item_db):,}개 · {time.perf_counter() - t:.1f}s")
 
+    t = time.perf_counter()
     user_db = {}
-    for start in range(0, len(users), CHUNK):
-        objs = [((r.source, int(r.user_id)), User(source=r.source, source_user_id=str(r.source_user_id)))
-                for r in users.iloc[start:start + CHUNK].itertuples()]
-        db.add_all([o for _, o in objs])
-        db.flush()
-        user_db.update({k: o.id for k, o in objs})
+    for start in range(0, len(users), USER_CHUNK):
+        chunk = users.iloc[start:start + USER_CHUNK]
+        keys = [(r.source, int(r.user_id)) for r in chunk.itertuples()]
+        rows = [dict(source=r.source, source_user_id=str(r.source_user_id)) for r in chunk.itertuples()]
+        ids = _bulk_insert_returning_ids(db, User, rows)
+        user_db.update(dict(zip(keys, ids)))
+    print(f"users: {len(user_db):,}명 · {time.perf_counter() - t:.1f}s")
 
+    # 이벤트는 FK id 재사용이 필요 없어 RETURNING 생략 (큰 테이블 — 1M+). 단순 Core INSERT.
+    t = time.perf_counter()
     n_ev = 0
-    for start in range(0, len(events), CHUNK):
-        objs = []
-        for r in events.iloc[start:start + CHUNK].itertuples():
+    for start in range(0, len(events), EVENT_CHUNK):
+        rows = []
+        for r in events.iloc[start:start + EVENT_CHUNK].itertuples():
             u, i = user_db.get((r.source, int(r.user_id))), item_db.get((r.source, int(r.item_id)))
             if u is not None and i is not None:
-                objs.append(Event(user_id=u, item_id=i, type=str(r.type), created_at=pd.Timestamp(r.ts).to_pydatetime()))
-        db.add_all(objs)
-        db.flush()
-        n_ev += len(objs)
+                rows.append(dict(user_id=u, item_id=i, type=str(r.type),
+                                 created_at=pd.Timestamp(r.ts).to_pydatetime()))
+        _bulk_insert(db, Event, rows)
+        n_ev += len(rows)
+    print(f"events: {n_ev:,}건 · {time.perf_counter() - t:.1f}s")
 
     if db.scalars(select(ModelVersion)).first() is None:     # 처음 적재면 기준 모델 등록
         db.add_all([ModelVersion(name="popularity", status="active"),
