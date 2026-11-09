@@ -107,27 +107,41 @@ def _item_vectors(ix: CatalogIndex, sel: np.ndarray, art: str):
 
 def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | None) -> np.ndarray:
     """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화.
-    is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 무효화 probe · 최근 구매 기준 시각 · 집계 모두.
-    캐시 키 = 가장 큰 id 이벤트 한 행 + 카탈로그 지문 + 상품 목록(개수 · 처음 · 끝 id) → 이벤트나 상품이 바뀌면 다시 계산.
-    이벤트는 추가만 되므로 보통은 최대 id로 충분하지만, --reset 재적재는 id를 1부터 다시 매기므로 그 행의 고객 · 상품 · 시각까지 본다."""
+    is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 갱신 판단 · 최근 구매 기준 시각 · 집계 모두.
+
+    캐시는 두 단계로 확인한다 (요청마다 실행되므로 가볍게):
+    1) 가장 큰 id 이벤트 한 행(id · 고객 · 상품 · 시각)이 그대로면 바로 캐시 사용 — 기본 키 역순 한 행, 1ms 안팎.
+       --reset 재적재로 id가 1부터 다시 매겨져도 그 행의 고객 · 상품 · 시각까지 보므로 잡힌다.
+    2) 바뀌었으면 집계에 쓰이는 이벤트(이 데이터셋의 비 setup 구매)의 마지막 행만 다시 본다.
+       그것도 그대로면 (초기 이력 · 조회 · 클릭만 추가) 집계를 다시 하지 않는다.
+    상품 목록(개수 · 처음 · 끝 id)이나 카탈로그 지문이 바뀌어도 다시 계산한다."""
     non_setup = (Event.is_setup == False)                                               # noqa: E712
-    last = db.execute(select(Event.id, Event.user_id, Event.item_id, Event.created_at)   # 기본 키 역순 한 행 (1ms 안팎)
-                      .order_by(Event.id.desc()).limit(1)).first()
-    last = tuple(last) if last is not None else None
+    raw = db.execute(select(Event.id, Event.user_id, Event.item_id, Event.created_at)
+                     .order_by(Event.id.desc()).limit(1)).first()
+    raw = tuple(raw) if raw is not None else None
     catalog = (len(item_ids), int(item_ids[0]) if len(item_ids) else None, int(item_ids[-1]) if len(item_ids) else None)
-    key = (str(db.bind.url), source, days, last, catalog_signature(db), catalog)
-    if _pop_cache.get(source, (None,))[0] != key:
-        q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
-             .where(Event.type == "purchase", Item.source == source, non_setup))
-        if days is not None:
-            latest = db.scalar(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
-                               .where(Event.type == "purchase", Item.source == source, non_setup))
-            if latest is not None:
-                q = q.where(Event.created_at >= latest - timedelta(days=days))
-        counts = dict(db.execute(q.group_by(Event.item_id)).all())
-        c = np.log1p(np.array([counts.get(int(i), 0) for i in item_ids], np.float32))
-        _pop_cache[source] = (key, (c - c.mean()) / (c.std() + 1e-6))
-    return _pop_cache[source][1]
+    scope = (str(db.bind.url), days, catalog_signature(db), catalog)
+    cached = _pop_cache.get(source)
+    if cached is not None and cached["scope"] == scope and cached["raw"] == raw:
+        return cached["z"]
+    purchases = (select(Event.id, Event.user_id, Event.item_id, Event.created_at).join(Item, Item.id == Event.item_id)
+                 .where(Event.type == "purchase", Item.source == source, non_setup))
+    sig = db.execute(purchases.order_by(Event.id.desc()).limit(1)).first()
+    sig = tuple(sig) if sig is not None else None
+    if cached is not None and cached["scope"] == scope and cached["sig"] == sig:
+        cached["raw"] = raw                                     # 집계와 무관한 이벤트만 늘었음
+        return cached["z"]
+    q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
+         .where(Event.type == "purchase", Item.source == source, non_setup))
+    if days is not None:
+        latest = db.scalar(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
+                           .where(Event.type == "purchase", Item.source == source, non_setup))
+        if latest is not None:
+            q = q.where(Event.created_at >= latest - timedelta(days=days))
+    counts = dict(db.execute(q.group_by(Event.item_id)).all())
+    c = np.log1p(np.array([counts.get(int(i), 0) for i in item_ids], np.float32))
+    _pop_cache[source] = {"scope": scope, "raw": raw, "sig": sig, "z": (c - c.mean()) / (c.std() + 1e-6)}
+    return _pop_cache[source]["z"]
 
 
 @register

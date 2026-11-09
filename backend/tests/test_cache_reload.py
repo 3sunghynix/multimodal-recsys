@@ -61,3 +61,27 @@ def test_index_kept_when_nothing_changed(tmp_path):
     Session = _load(engine, seed=1, buyer_item=0)
     with Session() as s:
         assert get_index(s) is get_index(s)                             # 바뀐 게 없으면 다시 만들지 않는다
+
+
+def test_popularity_cache_ignores_setup_and_non_purchase_events(tmp_path):
+    """#47 리뷰: 초기 이력(is_setup=True)이나 조회 · 클릭만 늘면 인기 집계를 다시 하지 않는다 (같은 배열 객체를 그대로 돌려줌).
+    비 setup 구매가 늘면 다시 집계한다."""
+    engine = app_db.make_engine(f"sqlite:///{tmp_path / 'setup.db'}")
+    app_db.init_db(engine)
+    Session = _load(engine, seed=1, buyer_item=0)
+
+    with Session() as s:
+        ids = get_index(s).ids
+        z0 = _popularity_z(s, "amazon", ids, None)
+        user = s.query(User).first()
+        # 초기 이력 구매 5건 (인기 1위를 바꿀 만큼) · 일반 조회 · 클릭 추가 → 다시 집계하지 않음
+        s.add_all([Event(user_id=user.id, item_id=int(ids[2]), type="purchase", is_setup=True) for _ in range(5)])
+        s.add_all([Event(user_id=user.id, item_id=int(ids[2]), type=t) for t in ("view", "click")])
+        s.commit()
+        assert _popularity_z(s, "amazon", ids, None) is z0
+        assert z0.argmax() == 0
+        # 비 setup 구매 추가 → 다시 집계해서 1위가 바뀜
+        s.add_all([Event(user_id=user.id, item_id=int(ids[2]), type="purchase") for _ in range(5)])
+        s.commit()
+        z2 = _popularity_z(s, "amazon", ids, None)
+        assert z2 is not z0 and z2.argmax() == 2
