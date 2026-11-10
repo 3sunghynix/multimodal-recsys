@@ -45,7 +45,7 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
     recommender = recommenders.get(mv.name, mv.params)
     scored = recommender.recommend_scored(db, user_id, k)       # (id, score) 쌍 — 모델이 실제 점수를 돌려주거나 base 가 폴백
     items = [i for i, _ in scored]
-    total_ms = round((time.perf_counter() - t_start) * 1000, 3)
+    model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천까지 (세션 컨텍스트 전)
 
     # recommendations[]: product_id · score · score_kind · reason · is_exploration.
     #   score_kind="model" → recommender.scored_native=True (Popularity · BrandPopularity 는 이벤트 가중치 합계가 실제 점수)
@@ -72,12 +72,14 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
         recent_clicks = [str(i) for i in recent]
     # 세션 관심: 현재 세션(30분 안) 클릭 상품의 가장 많은 소분류 (세션이 없으면 None)
     interest = session_interest(db, session_click_ids(db, user_id))
+    # total_ms 는 세션 컨텍스트(최근 클릭 · 세션 관심의 DB · Redis 조회)까지 만든 뒤 — 응답 직전까지의 요청 처리 시간
+    total_ms = round((time.perf_counter() - t_start) * 1000, 3)
 
-    # 단계별 시간: 나눠 재는 모델(UME)은 그 값, 아니면 전체를 candidate_ms 에.
+    # 단계별 시간: 나눠 재는 모델(UME)은 그 값, 아니면 모델 추천 시간 전체를 candidate_ms 에.
     t = recommender.timings
     latency = (PipelineLatency(candidate_ms=round(t["candidate_ms"], 3), ranking_ms=round(t["ranking_ms"], 3),
                                reranking_ms=round(t["reranking_ms"], 3), total_ms=total_ms) if t else
-               PipelineLatency(candidate_ms=total_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
+               PipelineLatency(candidate_ms=model_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
 
     return RecommendOut(
         user_id=user_id, model=mv.name, model_version_id=mv.id,

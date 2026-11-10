@@ -105,7 +105,7 @@ class RecommendationOut(BaseModel):
 class PipelineLatency(BaseModel):
     """명세 요구 pipeline_latency. UME: candidate = 타워 점수 계산, ranking = 인기 · 브랜드 · 데이터셋 결합,
     reranking = 다양성 재정렬. 단계를 나누지 않는 모델(인기 등)은 candidate_ms 에 전체 시간, 나머지 0.
-    total_ms 는 요청 전체(DB 조회 포함)라 세 단계 합보다 크다."""
+    total_ms 는 요청 처리 전체(고객 확인 · 모델 선택 · 세션 컨텍스트의 DB · Redis 조회 포함)라 세 단계 합보다 크다."""
     candidate_ms: float
     ranking_ms: float
     reranking_ms: float
