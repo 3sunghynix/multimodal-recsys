@@ -64,7 +64,7 @@ docker compose run --rm --no-deps \
 
 ## 10,000명 결과 (2026-11-10, `catalog_pilot_10k`)
 
-고객 10,000명 (A 5,000 · B 5,000), seed 42, 실행 71.6분 (고객당 0.43초).
+고객 10,000명 (A 5,000 · B 5,000), seed 42, 실행 71.6분 (고객당 0.43초). 요약 원본: [catalog_pilot_10k_summary.json](catalog_pilot_10k_summary.json) (`simulator/runs/`는 git에 올리지 않으므로 요약만 복사).
 
 **전체: 인기 34.6% vs UME 36.2%, 차이 +1.6%p [−0.2, +3.5], p = 0.086 → 유의하지 않음 (α = 0.05).**
 전체 세션 CTR 인기 4.76% vs UME 4.94%. 추천된 서로 다른 상품 수 인기 10 · UME 4,818.
