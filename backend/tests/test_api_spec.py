@@ -111,7 +111,9 @@ def test_recommend_session_context_includes_recent_clicks(client):
     body = client.get("/recommend/1?k=3").json()
     # 최근순, 문자열 ID
     assert body["session_context"]["recent_clicks"][:2] == ["7", "3"]
-    assert body["session_context"]["session_interest"] is None
+    # 세션 관심 = 이번 세션(30분 안) 클릭 상품의 가장 많은 소분류. 동률이면 최근(7번) 쪽
+    leaf = lambda i: client.get(f"/items/{i}").json()["category"].split(">")[-1].strip()   # noqa: E731
+    assert body["session_context"]["session_interest"] == leaf(7)        # 둘 다 1번씩 → 최근 클릭(7번)의 소분류
 
 
 def test_popularity_emits_real_model_scores_not_rank_placeholder(client):

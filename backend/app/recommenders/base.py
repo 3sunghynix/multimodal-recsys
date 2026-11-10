@@ -25,6 +25,8 @@ class Recommender:
     #   rank_percentile  : 데이터셋 안 순위 백분위 0 ~ 1 (UME 데이터셋 여럿)
     #   rank_placeholder : 모델이 점수를 주지 않아 순위로 만든 값 (score_kind="rank")
     score_basis: str = "rank_placeholder"
+    # 단계별 시간 (candidate_ms · ranking_ms · reranking_ms). 나눠 재는 모델만 채운다 — 없으면 응답은 전체를 candidate_ms에.
+    timings: dict | None = None
 
     def __init__(self, params: dict | None = None):
         self.params = params or {}

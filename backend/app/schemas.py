@@ -103,8 +103,9 @@ class RecommendationOut(BaseModel):
 
 
 class PipelineLatency(BaseModel):
-    """명세 요구 pipeline_latency. Multi-Stage(Candidate→Ranking→Re-ranking) 가 아직 쪼개져 있지 않아
-    candidate_ms 에 전체 시간을, ranking/reranking 에 0 을 넣는다. Ranking 모델 구현되면 쪼개서 측정."""
+    """명세 요구 pipeline_latency. UME: candidate = 타워 점수 계산, ranking = 인기 · 브랜드 · 데이터셋 결합,
+    reranking = 다양성 재정렬. 단계를 나누지 않는 모델(인기 등)은 candidate_ms 에 전체 시간, 나머지 0.
+    total_ms 는 요청 전체(DB 조회 포함)라 세 단계 합보다 크다."""
     candidate_ms: float
     ranking_ms: float
     reranking_ms: float
@@ -112,8 +113,8 @@ class PipelineLatency(BaseModel):
 
 
 class SessionContext(BaseModel):
-    """명세 요구 session_context. 지금은 해당 고객의 최근 click 이벤트 상품 id 만 돌려준다.
-    session_interest(단기 관심 라벨)는 세션 인코더 미구현이라 None."""
+    """명세 요구 session_context. recent_clicks: 최근 클릭 상품 id (세션과 무관하게 최근 5개).
+    session_interest: 현재 세션(30분 안) 클릭 상품의 가장 많은 소분류 (예: "니트·스웨터"), 세션이 없으면 None."""
     recent_clicks: list[str]
     session_interest: str | None
 

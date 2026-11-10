@@ -18,6 +18,7 @@ from ..models import Event, Experiment, ModelVersion, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
 from ..services import feature_store
 from ..services.ab import assign_variant
+from ..services.session import session_click_ids, session_interest
 
 router = APIRouter(prefix="/recommend", tags=["recommend"])
 
@@ -69,17 +70,22 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
             Event.user_id == user_id, Event.type == "click", Event.item_id.is_not(None)
         ).order_by(Event.created_at.desc(), Event.id.desc()).limit(_RECENT_CLICK_LIMIT)).all()
         recent_clicks = [str(i) for i in recent]
+    # 세션 관심: 현재 세션(30분 안) 클릭 상품의 가장 많은 소분류 (세션이 없으면 None)
+    interest = session_interest(db, session_click_ids(db, user_id))
+
+    # 단계별 시간: 나눠 재는 모델(UME)은 그 값, 아니면 전체를 candidate_ms 에.
+    t = recommender.timings
+    latency = (PipelineLatency(candidate_ms=round(t["candidate_ms"], 3), ranking_ms=round(t["ranking_ms"], 3),
+                               reranking_ms=round(t["reranking_ms"], 3), total_ms=total_ms) if t else
+               PipelineLatency(candidate_ms=total_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
 
     return RecommendOut(
         user_id=user_id, model=mv.name, model_version_id=mv.id,
         experiment_id=exp.id if exp else None, variant=variant["name"] if variant else None,
         items=items,
         recommendations=recommendations,
-        pipeline_latency=PipelineLatency(
-            # Multi-Stage 가 아직 쪼개져 있지 않아 전체 시간을 candidate_ms 에, 나머지는 0.
-            candidate_ms=total_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms,
-        ),
+        pipeline_latency=latency,
         session_context=SessionContext(
-            recent_clicks=recent_clicks, session_interest=None,
+            recent_clicks=recent_clicks, session_interest=interest,
         ),
     )
