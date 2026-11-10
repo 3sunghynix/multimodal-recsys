@@ -111,7 +111,9 @@ def test_recommend_session_context_includes_recent_clicks(client):
     body = client.get("/recommend/1?k=3").json()
     # 최근순, 문자열 ID
     assert body["session_context"]["recent_clicks"][:2] == ["7", "3"]
-    assert body["session_context"]["session_interest"] is None
+    # 세션 관심 = 이번 세션(30분 안) 클릭 상품의 가장 많은 소분류. 동률이면 최근(7번) 쪽
+    leaf = lambda i: client.get(f"/items/{i}").json()["category"].split(">")[-1].strip()   # noqa: E731
+    assert body["session_context"]["session_interest"] == leaf(7)        # 둘 다 1번씩 → 최근 클릭(7번)의 소분류
 
 
 def test_popularity_emits_real_model_scores_not_rank_placeholder(client):
@@ -154,3 +156,22 @@ def test_search_type_switches_with_inputs(client):
     # 여기선 text/hybrid 만 확인 (hybrid 는 이미지 파일 있으면 OK 하지만 인코더 없어 503, 그래서 체크 어려움).
     text_only = client.post("/search", data={"q": "Alpha", "k": 2}).json()
     assert text_only["search_type"] == "text"
+
+
+def test_total_ms_includes_session_context_lookup(client, monkeypatch):
+    """#49 리뷰: total_ms 는 세션 컨텍스트(세션 클릭 · 세션 관심 조회)까지 만든 뒤 잰다.
+    세션 조회를 일부러 50ms 늦추면 total_ms 에는 들어가고, 모델 추천 시간(candidate_ms)에는 들어가지 않는다."""
+    import time
+
+    from app.routers import recommend as rec_router
+
+    real = rec_router.session_click_ids
+
+    def slow_session_click_ids(db, user_id, limit=10):
+        time.sleep(0.05)
+        return real(db, user_id, limit)
+
+    monkeypatch.setattr(rec_router, "session_click_ids", slow_session_click_ids)
+    lat = client.get("/recommend/1?k=3").json()["pipeline_latency"]
+    assert lat["total_ms"] >= 50                                  # 세션 조회 지연이 합계에 포함
+    assert lat["total_ms"] - lat["candidate_ms"] >= 45            # 모델 단계 시간에는 섞이지 않음

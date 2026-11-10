@@ -6,12 +6,19 @@
   3. 그 데이터셋 전체 상품 벡터(상품 타워 MLP, 메모리 캐시)와 내적 → 고객별 z(텍스트) + z(이미지)
   4. + γ · 인기 점수(데이터셋별 구매 수 log1p 표준화, 최근 N일) + β · [상품 브랜드 = 고객 최다 브랜드]
   5. 데이터셋이 여럿이면 데이터셋 안 순위 백분위로 합침 (검색과 같은 per_source_rank)
+  6. 재정렬: 점수 상위 k × pool 후보에서 같은 소분류가 몰리지 않게 고른다 (services/rerank.py)
   이력이 없거나 모델이 없는 데이터셋뿐이면 인기 모델로 대체.
+
+세션 반영: 현재 세션(30분 안) 클릭이 있으면 고객 타워 입력 = (1 − w) · 이력 평균 + w · 세션 클릭 평균 (w = session_weight).
+  이력은 장기 취향, 세션은 지금 보고 있는 것. 이력이 없어도 세션 클릭이 있으면 그것만으로 개인화한다.
+단계별 시간(self.timings): candidate = 타워 점수 계산, ranking = 인기 · 브랜드 · 데이터셋 결합, reranking = 재정렬.
 
 model_versions.params 예 (드라이브 results/ume/{source}_test_pca = train + valid로 학습한 가중치):
   {"artifact_dirs": {"hm": "/data/models/ume/hm_test_pca", "amazon": "/data/models/ume/amazon_test_pca"},
-   "gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
+   "gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
+   "session_weight": 0.3, "rerank": {"max_category_share": 0.3}}      # rerank: null 이면 재정렬 끔
 """
+import time
 from datetime import timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -22,12 +29,23 @@ from sqlalchemy.orm import Session
 
 from ..models import Event, Item
 from ..services.catalog_index import CatalogIndex, catalog_signature, get_index
+from ..services.rerank import DEFAULT as RERANK_DEFAULT
+from ..services.rerank import diversify
 from ..services.search_core import rank_percentile
+from ..services.session import session_click_ids
 from .base import Recommender, register
 from .popularity import _popular_scored
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
-DEFAULTS = {"gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
+DEFAULTS = {"gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
+            "session_weight": 0.3, "rerank": {}}
+
+
+def _user_input(mat: np.ndarray, hist: np.ndarray, sess: np.ndarray, w: float) -> np.ndarray:
+    """고객 타워 입력: 이력 평균과 세션 클릭 평균을 w로 섞는다. 한쪽만 있으면 그쪽 평균."""
+    if len(hist) and len(sess) and w > 0:
+        return (1 - w) * mat[hist].mean(0) + w * mat[sess].mean(0)
+    return mat[hist].mean(0) if len(hist) else mat[sess].mean(0)
 
 
 @lru_cache(maxsize=16)
@@ -161,10 +179,14 @@ class UME(Recommender):
         p = {**DEFAULTS, **self.params}
         dirs: dict = p.get("artifact_dirs", {})
         max_hist = int(p["max_hist"])
+        w = float(p["session_weight"] or 0.0)
         ix = get_index(db)
         dim = ix.text.shape[1] if len(ix) else None
+        t_cand = t_rank = 0.0
 
-        scores, groups, ids = [], [], []
+        sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id) if w > 0 else [], np.int64))
+        self.session_clicks_used = len(sess_all)
+        scores, groups, ids, cats, brands = [], [], [], [], []
         for source, art in dirs.items():
             if tower_problem(art, dim):                             # 가중치가 없거나 불완전 → 이 데이터셋은 인기로 대체
                 continue
@@ -172,36 +194,52 @@ class UME(Recommender):
                                 .where(Event.user_id == user_id, Event.type.in_(HISTORY_TYPES), Item.source == source)
                                 .order_by(Event.created_at.desc(), Event.id.desc()).limit(max_hist)).all()
             hist = _rows_of(ix, np.asarray(recent, np.int64))       # 임베딩 없는 상품은 빠짐
-            if len(hist) == 0:
+            sess = sess_all[ix.sources[sess_all] == source]
+            if len(hist) == 0 and len(sess) == 0:
                 continue
+            t = time.perf_counter()
             sel = np.flatnonzero(ix.sources == source)
             v_text, v_image = _item_vectors(ix, sel, art)
-            u_text = mlp(load_tower(f"{art}/text"), "user", ix.text[hist].mean(0))
-            u_image = mlp(load_tower(f"{art}/image"), "user", ix.image[hist].mean(0))
+            u_text = mlp(load_tower(f"{art}/text"), "user", _user_input(ix.text, hist, sess, w))
+            u_image = mlp(load_tower(f"{art}/image"), "user", _user_input(ix.image, hist, sess, w))
             s = _z(v_text @ u_text) + _z(v_image @ u_image)
+            t_cand += time.perf_counter() - t
+            t = time.perf_counter()
             gamma = float(p["gamma"])
             if gamma:
                 s = s + gamma * _popularity_z(db, source, ix.ids[sel], (p["pop_recent_days"] or {}).get(source))
             beta = (p["beta"] or {}).get(source, 0.0)
             if beta:
-                b = ix.brands[hist]
+                b = ix.brands[hist if len(hist) else sess]
                 b = b[b >= 0]
                 if len(b):
                     top = np.bincount(b).argmax()
                     s = s + float(beta) * (ix.brands[sel] == top)
+            t_rank += time.perf_counter() - t
             scores.append(s)
             groups.append(np.full(len(sel), source, object))
             ids.append(ix.ids[sel])
+            cats.append(ix.cats[sel] if ix.cats is not None else np.full(len(sel), "", object))
+            brands.append(ix.brands[sel])
         if not scores:
             self.fallback_reason = "popular"                        # 응답 reason: 개인화가 아니라 인기
             self.score_basis = "event_weight_sum"
             return _popular_scored(db, k)                           # 신규 고객 · 모델 없는 데이터셋
+        t = time.perf_counter()
         s, g, all_ids = np.concatenate(scores), np.concatenate(groups), np.concatenate(ids)
         self.score_basis = "ume_zscore"
         if len(scores) > 1:                                         # 여러 데이터셋: 카탈로그 비율대로 섞기
             s = rank_percentile(s[None, :], g)[0]
             self.score_basis = "rank_percentile"
+        rr = p["rerank"]
         k = min(k, len(s))
-        top = np.argpartition(-s, k - 1)[:k]                        # 상위 k만 정렬 (상품 8.7만 기준 p95 약 4ms)
+        n_pool = k if rr is None else min(len(s), k * int({**RERANK_DEFAULT, **rr}["pool"]))
+        top = np.argpartition(-s, n_pool - 1)[:n_pool]              # 상위 후보만 정렬 (상품 8.7만 기준 p95 약 4ms)
         top = top[np.argsort(-s[top], kind="stable")]
+        t_rank += time.perf_counter() - t
+        t = time.perf_counter()
+        if rr is not None:                                          # 재정렬: 같은 소분류가 몰리지 않게
+            top = diversify(top, k, np.concatenate(cats), np.concatenate(brands), rr)
+        self.timings = {"candidate_ms": t_cand * 1000, "ranking_ms": t_rank * 1000,
+                        "reranking_ms": (time.perf_counter() - t) * 1000}
         return [(int(i), round(float(v), 4)) for i, v in zip(all_ids[top], s[top])]

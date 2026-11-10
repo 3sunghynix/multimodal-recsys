@@ -304,3 +304,103 @@ def test_score_basis_per_path(env):
         assert {r["reason"] for r in new} == {"popular"}
     finally:
         app.dependency_overrides.clear()
+
+
+# ---- 세션 반영 · 재정렬 · 단계별 시간
+
+def _ume_tower_score(tmp, items, ids_src, x_by_modality):
+    """주어진 고객 타워 입력으로 정의대로 계산한 z(텍스트) + z(이미지)."""
+    total = 0
+    for m, col in (("text", "text_embedding"), ("image", "image_embedding")):
+        w = dict(np.load(tmp / "art" / "amazon" / m / "weights.npz"))
+        u = mlp(w, "user", x_by_modality[m])
+        V = mlp(w, "item", np.array([getattr(items[i], col) for i in ids_src], np.float32))
+        total = total + _z(V @ u)
+    return total
+
+
+def test_session_clicks_blend_into_user_vector(env):
+    """세션(30분 안) 클릭이 있으면 고객 타워 입력 = (1 − w) · 이력 평균 + w · 세션 평균."""
+    Session, ids, params, tmp = env
+    uid = ids["users"][0]
+    with Session() as s:
+        s.add(Event(user_id=uid, item_id=ids["amazon"][20], type="click"))   # 지금 시각 → 현재 세션
+        s.commit()
+        items = {it.id: it for it in s.query(Item).all()}
+        # 이력 = 최근 순 클릭 20 · 구매 4 · 6 · 3 · 0 (DB 이벤트 전체), 세션 = 클릭 20
+        hist = [ids["amazon"][j] for j in (20, 4, 6, 3, 0)]
+        sess = [ids["amazon"][20]]
+        w = 0.5
+        x = {m: (1 - w) * np.mean([getattr(items[i], col) for i in hist], axis=0)
+                + w * np.mean([getattr(items[i], col) for i in sess], axis=0)
+             for m, col in (("text", "text_embedding"), ("image", "image_embedding"))}
+        expect = _ume_tower_score(tmp, items, ids["amazon"], x)
+        rec = recommenders.get("ume", {**params, "session_weight": w, "rerank": None})
+        got = rec.recommend(s, uid, 5)
+        assert got == [ids["amazon"][i] for i in np.argsort(-expect, kind="stable")[:5]]
+        assert rec.session_clicks_used == 1
+        # 세션 반영을 끄면 (w=0) 이력 평균만 쓴다 → 세션 반영과 결과가 다를 수 있음 (같은 정의로 다시 계산)
+        x0 = {m: np.mean([getattr(items[i], col) for i in hist], axis=0)
+              for m, col in (("text", "text_embedding"), ("image", "image_embedding"))}
+        expect0 = _ume_tower_score(tmp, items, ids["amazon"], x0)
+        got0 = recommenders.get("ume", {**params, "session_weight": 0.0, "rerank": None}).recommend(s, uid, 5)
+        assert got0 == [ids["amazon"][i] for i in np.argsort(-expect0, kind="stable")[:5]]
+
+
+def test_rerank_caps_same_category(env):
+    """재정렬: k개 중 한 소분류는 max(min_cap, ⌈k · share⌉)개까지. 후보 집합은 점수 상위 k × pool 안."""
+    Session, ids, params, _ = env
+    with Session() as s:
+        for j, iid in enumerate(ids["amazon"]):                 # 소분류 4종을 돌아가며
+            s.get(Item, iid).category = f"여성 > 상의 > C{j % 4}"
+        s.commit()
+    from app.services import catalog_index
+    catalog_index._cache["key"] = None                          # 테스트에서 카테고리만 바꿨으니 색인 다시 만들기
+    with Session() as s:
+        uid = ids["users"][0]
+        plain = recommenders.get("ume", {**params, "rerank": None}).recommend_scored(s, uid, 30)
+        ranked = [i for i, _ in plain]
+        rec = recommenders.get("ume", {**params, "rerank": {"max_category_share": 0.3, "min_cap": 2, "pool": 3}})
+        out = [i for i, _ in rec.recommend_scored(s, uid, 8)]
+        cat = {iid: s.get(Item, iid).category for iid in ids["amazon"]}
+        counts = {}
+        for i in out:
+            counts[cat[i]] = counts.get(cat[i], 0) + 1
+        assert len(out) == 8 and max(counts.values()) <= 3      # ⌈8 · 0.3⌉ = 3
+        assert set(out) <= set(ranked[:24])                     # 상위 8 × 3 후보 안에서만
+        assert out[0] == ranked[0]                              # 1위는 그대로
+        assert set(rec.timings) == {"candidate_ms", "ranking_ms", "reranking_ms"}
+
+
+def test_api_session_interest_and_stage_latency(env):
+    Session, ids, params, _ = env
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="session", status="active", params=params))
+        for iid in (ids["amazon"][1], ids["amazon"][2]):
+            s.get(Item, iid).category = "여성 > 원피스 > 미니 원피스"
+        s.commit()
+    from app.services import catalog_index
+    catalog_index._cache["key"] = None
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        client = TestClient(app)
+        uid = ids["users"][0]
+        before = client.get(f"/recommend/{uid}", params={"k": 5}).json()
+        assert before["session_context"]["session_interest"] is None          # 세션 없음 (이력은 2023년)
+        for iid in (ids["amazon"][1], ids["amazon"][2]):
+            assert client.post("/events", json={"user_id": uid, "type": "click", "item_id": iid}).status_code == 201
+        body = client.get(f"/recommend/{uid}", params={"k": 5}).json()
+        assert body["session_context"]["session_interest"] == "미니 원피스"
+        lat = body["pipeline_latency"]
+        assert lat["candidate_ms"] > 0 and lat["ranking_ms"] >= 0 and lat["reranking_ms"] >= 0
+        assert lat["candidate_ms"] + lat["ranking_ms"] + lat["reranking_ms"] <= lat["total_ms"]
+    finally:
+        app.dependency_overrides.clear()

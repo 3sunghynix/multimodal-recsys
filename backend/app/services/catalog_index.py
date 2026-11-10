@@ -23,6 +23,7 @@ class CatalogIndex:
     brands: np.ndarray       # (N,) brand_id (없으면 −1)
     text: np.ndarray         # (N, d) text_embedding
     image: np.ndarray        # (N, d) image_embedding (없으면 0 벡터)
+    cats: np.ndarray | None = None   # (N,) 소분류 (category "대 > 중 > 소"의 마지막, 없으면 "") — 추천 재정렬의 다양성 기준
 
     def __len__(self):
         return len(self.ids)
@@ -56,11 +57,11 @@ def get_index(db: Session) -> CatalogIndex:
 
 
 def _build(db: Session, has_text) -> CatalogIndex:
-    rows = db.execute(select(Item.id, Item.source, Item.brand_id, Item.text_embedding, Item.image_embedding)
+    rows = db.execute(select(Item.id, Item.source, Item.brand_id, Item.category, Item.text_embedding, Item.image_embedding)
                       .where(has_text).order_by(Item.id)).all()
     if not rows:
         z = np.zeros((0, 0), np.float32)
-        return CatalogIndex(np.zeros(0, np.int64), np.zeros(0, object), np.zeros(0, np.int64), z, z)
+        return CatalogIndex(np.zeros(0, np.int64), np.zeros(0, object), np.zeros(0, np.int64), z, z, np.zeros(0, object))
     text = np.asarray([r.text_embedding for r in rows], np.float32)
     image = np.zeros_like(text)
     for i, r in enumerate(rows):
@@ -69,4 +70,5 @@ def _build(db: Session, has_text) -> CatalogIndex:
     return CatalogIndex(ids=np.array([r.id for r in rows], np.int64),
                         sources=np.array([r.source for r in rows], object),
                         brands=np.array([r.brand_id if r.brand_id is not None else -1 for r in rows], np.int64),
-                        text=text, image=image)
+                        text=text, image=image,
+                        cats=np.array([(r.category or "").split(">")[-1].strip() for r in rows], object))

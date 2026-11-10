@@ -87,6 +87,11 @@ def record_event(user_id: int, event_type: str, item_id: int | None) -> None:
         log.warning(f"Redis write 실패: {e}")
 
 
+def enabled() -> bool:
+    """Redis에 연결돼 있는지. False면 get_* 는 모두 빈 값이므로 호출자가 DB로 대체한다."""
+    return _get_client() is not None
+
+
 def get_recent_clicks(user_id: int, k: int = 5) -> list[str]:
     """최신 순 클릭 상품 id (문자열). Redis 없으면 빈 리스트 → 호출자가 DB 폴백."""
     c = _get_client()
