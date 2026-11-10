@@ -196,3 +196,51 @@ class ExperimentStats(BaseModel):
     experiment_name: str
     variants: list[VariantMetrics]
     comparisons: list[ABComparison]
+
+
+# ───── Continuous Training (명세 4.6) 지원 ─────
+
+class MetricSnapshotIn(BaseModel):
+    """오프라인 평가 결과 · 모델 교체 전후 비교 결과 저장. 모델 재학습 pipeline 과 대시보드가 쓴다."""
+    model_version_id: int | None = None
+    experiment_id: int | None = None
+    variant: str | None = None
+    metric: str                                   # "recall@50", "hit_rate", "ctr", "ndcg@10" 등 자유 라벨
+    value: float
+    n: int = 0                                    # 지표 산출에 쓰인 샘플 수 (있으면 CI 계산 등에 활용)
+
+
+class MetricSnapshotOut(MetricSnapshotIn):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+
+
+class MetricWindowOut(BaseModel):
+    """monitoring/runner.py observe() 가 요구하는 window JSON 포맷 (광석 PR #37).
+    서버가 지정 시간 구간에서 집계해서 돌려주면 CT runner 가 cron 으로 받아 임계값 체크 · 재학습 트리거.
+    - setup_excluded 는 항상 True (PR #30 규칙 일관).
+    - views · clicks · evaluated_users · hit_users 는 window 안의 non-setup 이벤트에서 집계.
+    - cumulative_new_logs 는 전체 non-setup 이벤트 누적 (window_end 시점까지).
+    """
+    window_id: str
+    window_start: str
+    window_end: str
+    model_version: str                            # 호출자가 지정한 라벨 (e.g. "popularity-v1")
+    source: str
+    cohort: str
+    metric_definition_version: str
+    setup_excluded: bool
+    views: int
+    clicks: int
+    evaluated_users: int
+    hit_users: int
+    cumulative_new_logs: int
+
+
+class LogDeltaOut(BaseModel):
+    """since_event_id 이후로 쌓인 non-setup 이벤트 수. CT runner 가 "재학습 임계값(예: 10000)" 비교에 쓴다.
+    서버는 수치만 제공하고 임계값 판단은 runner 가 한다 (policy 는 runner 책임)."""
+    since_event_id: int
+    max_event_id: int
+    delta: int                                    # 지정 id 초과 ~ max_event_id 구간의 non-setup 이벤트 수
