@@ -34,6 +34,7 @@ services:
 
   api:
     build: ./backend
+    image: msrs-backend:latest   # trainer와 같은 이미지 (한 번만 빌드)
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@db:5432/${POSTGRES_DB:-recsys}
       REDIS_URL: redis://redis:6379/0
@@ -58,6 +59,7 @@ services:
   # 서빙과 같은 이미지(torch CPU 포함) + recsys 코드. 새 가중치는 ./data/models/ume/retrain_* 에 저장되어 api가 바로 읽는다.
   trainer:
     build: ./backend
+    image: msrs-backend:latest   # api가 빌드한 이미지를 그대로 사용 (따로 빌드하지 않음)
     profiles: ["trainer"]
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@db:5432/${POSTGRES_DB:-recsys}
