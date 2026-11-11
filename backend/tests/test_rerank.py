@@ -29,3 +29,13 @@ def test_empty_category_and_no_brand_cap_by_default():
 
 def test_cap_values():
     assert cap(20, 0.3, 3) == 6 and cap(5, 0.3, 3) == 3 and cap(20, None, 3) is None
+
+
+def test_fill_uses_personal_score_outside_original_top_k():
+    # 최종 점수 순 0..7. 앞 4개는 "T"(상한 3) → 빈 자리 1개를 원래 상위 4 밖(4..7)에서 채운다
+    cats = np.array(["T"] * 4 + ["P", "S", "P", "S"], object)
+    personal = np.array([9, 8, 7, 6, 0.1, 0.2, 0.3, 5.0])     # 4는 인기 보정으로 올라온 상품, 7은 개인 취향에 가장 가까움
+    p = {"max_category_share": 0.3, "min_cap": 3}
+    assert diversify(np.arange(8), 4, cats=cats, params={**p, "fill": "score"}, fill_scores=personal).tolist() == [0, 1, 2, 4]
+    assert diversify(np.arange(8), 4, cats=cats, params=p, fill_scores=personal).tolist() == [0, 1, 2, 7]   # 기본: 개인화 점수
+    assert diversify(np.arange(8), 4, cats=cats, params=p).tolist() == [0, 1, 2, 4]                         # fill_scores 없으면 예전과 같음

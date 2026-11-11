@@ -6,7 +6,8 @@
   3. 그 데이터셋 전체 상품 벡터(상품 타워 MLP, 메모리 캐시)와 내적 → 고객별 z(텍스트) + z(이미지)
   4. + γ · 인기 점수(데이터셋별 구매 수 log1p 표준화, 최근 N일) + β · [상품 브랜드 = 고객 최다 브랜드]
   5. 데이터셋이 여럿이면 데이터셋 안 순위 백분위로 합침 (검색과 같은 per_source_rank)
-  6. 재정렬: 점수 상위 k × pool 후보에서 같은 소분류가 몰리지 않게 고른다 (services/rerank.py)
+  6. 재정렬: 점수 상위 k × pool 후보에서 같은 소분류가 몰리지 않게 고른다 (services/rerank.py).
+     빈 자리는 개인화 점수(인기 · 브랜드 보정 전) 순으로 채운다 — 인기 상품이 고객마다 겹치지 않게
   이력이 없거나 모델이 없는 데이터셋뿐이면 인기 모델로 대체.
 
 세션 반영: 현재 세션(30분 안) 클릭이 있으면 고객 타워 입력 = (1 − w) · 이력 평균 + w · 세션 클릭 평균 (w = session_weight).
@@ -186,7 +187,7 @@ class UME(Recommender):
 
         sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id) if w > 0 else [], np.int64))
         self.session_clicks_used = len(sess_all)
-        scores, groups, ids, cats, brands = [], [], [], [], []
+        scores, personal, groups, ids, cats, brands = [], [], [], [], [], []
         for source, art in dirs.items():
             if tower_problem(art, dim):                             # 가중치가 없거나 불완전 → 이 데이터셋은 인기로 대체
                 continue
@@ -203,6 +204,7 @@ class UME(Recommender):
             u_text = mlp(load_tower(f"{art}/text"), "user", _user_input(ix.text, hist, sess, w))
             u_image = mlp(load_tower(f"{art}/image"), "user", _user_input(ix.image, hist, sess, w))
             s = _z(v_text @ u_text) + _z(v_image @ u_image)
+            personal.append(s)                                      # 재정렬 빈 자리 채우기용 (인기 · 브랜드 보정 전)
             t_cand += time.perf_counter() - t
             t = time.perf_counter()
             gamma = float(p["gamma"])
@@ -239,7 +241,10 @@ class UME(Recommender):
         t_rank += time.perf_counter() - t
         t = time.perf_counter()
         if rr is not None:                                          # 재정렬: 같은 소분류가 몰리지 않게
-            top = diversify(top, k, np.concatenate(cats), np.concatenate(brands), rr)
+            pers = np.concatenate(personal)
+            if len(scores) > 1:
+                pers = rank_percentile(pers[None, :], g)[0]
+            top = diversify(top, k, np.concatenate(cats), np.concatenate(brands), rr, fill_scores=pers)
         self.timings = {"candidate_ms": t_cand * 1000, "ranking_ms": t_rank * 1000,
                         "reranking_ms": (time.perf_counter() - t) * 1000}
         return [(int(i), round(float(v), 4)) for i, v in zip(all_ids[top], s[top])]
