@@ -212,4 +212,92 @@ def test_log_delta_counts_since_id(empty_client):
 def test_log_delta_empty_db(empty_client):
     c, _ = empty_client
     body = c.get("/metrics/log-delta?since_event_id=0").json()
-    assert body == {"since_event_id": 0, "max_event_id": 0, "delta": 0}
+    assert body == {"since_event_id": 0, "max_event_id": 0, "delta": 0, "reset_detected": False}
+
+
+def test_log_delta_detects_reset(empty_client):
+    """--reset 재적재 후 max_event_id < since_event_id → reset_detected=True.
+    runner 가 기준점(마지막 training 의 since_event_id)을 다시 잡는 신호 (PR #48 리뷰)."""
+    c, Session = empty_client
+    _insert_event(Session, 1, 1, "click", datetime(2026, 11, 1, tzinfo=timezone.utc))
+    _insert_event(Session, 1, 1, "click", datetime(2026, 11, 1, tzinfo=timezone.utc))
+
+    body = c.get("/metrics/log-delta?since_event_id=100").json()
+    assert body["max_event_id"] == 2
+    assert body["since_event_id"] == 100
+    assert body["reset_detected"] is True
+
+    body = c.get("/metrics/log-delta?since_event_id=1").json()
+    assert body["reset_detected"] is False               # max >= since 이면 정상
+
+
+# ─── PR #48 리뷰 반영: model_version_id 필터 · hit intersection · tz 정규화 ───
+
+def test_window_filters_by_model_version_id(client):
+    """A/B 중 모델별 집계 — model_version_id 로 Event 필터링 (PR #48 리뷰)."""
+    c, Session = client
+    t_start = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    inside = t_start + timedelta(hours=1)
+
+    # 두 모델 각각 2개/1개 view
+    with Session() as s:
+        s.add(Event(user_id=1, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=100))
+        s.add(Event(user_id=2, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=100))
+        s.add(Event(user_id=3, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=200))
+        s.commit()
+
+    # 필터 없으면 전부 (3건)
+    body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
+                                             "model_version": "v1", "source": "all"}).json()
+    assert body["views"] == 3
+
+    # 100번 모델만 (2건)
+    body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
+                                             "model_version": "v1", "source": "all",
+                                             "model_version_id": 100}).json()
+    assert body["views"] == 2
+
+    # 200번 모델만 (1건)
+    body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
+                                             "model_version": "v1", "source": "all",
+                                             "model_version_id": 200}).json()
+    assert body["views"] == 1
+
+
+def test_window_hit_users_is_intersection(client):
+    """hit_users = viewers ∩ clickers — 노출 없이 클릭만 한 유저는 제외 (PR #48 리뷰 by 유환)."""
+    c, Session = client
+    t_start = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    inside = t_start + timedelta(hours=1)
+
+    # user 1: view 만 / user 2: click 만 (검색결과 직행) / user 3: view + click (진짜 hit)
+    _insert_event(Session, 1, 3, "view", inside)
+    _insert_event(Session, 2, 3, "click", inside)
+    _insert_event(Session, 3, 3, "view", inside)
+    _insert_event(Session, 3, 3, "click", inside)
+
+    body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
+                                             "model_version": "v1", "source": "all"}).json()
+    assert body["evaluated_users"] == 2                   # view 한 유저: 1, 3
+    assert body["hit_users"] == 1                         # view + click 교집합: 3 만
+    assert body["clicks"] == 2                            # click 이벤트 자체는 2건
+
+
+def test_window_normalizes_timezone_for_consistent_db_comparison(client):
+    """같은 UTC 순간을 다른 timezone 표기로 줘도 같은 결과 — DB 비교는 UTC-naive 로 정규화 (PR #48 리뷰)."""
+    c, Session = client
+    # 2026-11-01 09:00 KST == 2026-11-01 00:00 UTC
+    moment_utc = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+    _insert_event(Session, 1, 3, "view", moment_utc.replace(tzinfo=None))      # DB 는 naive UTC 저장
+
+    # UTC 로 요청
+    body_utc = c.get("/metrics/window", params={
+        "start": "2026-11-01T00:00:00+00:00", "end": "2026-11-02T00:00:00+00:00",
+        "model_version": "v1", "source": "all"}).json()
+    # 같은 범위를 KST 로 요청 (2026-11-01 09:00+09:00 ~ 2026-11-02 09:00+09:00 == UTC 동일 범위)
+    body_kst = c.get("/metrics/window", params={
+        "start": "2026-11-01T09:00:00+09:00", "end": "2026-11-02T09:00:00+09:00",
+        "model_version": "v1", "source": "all"}).json()
+    assert body_utc["views"] == body_kst["views"] == 1

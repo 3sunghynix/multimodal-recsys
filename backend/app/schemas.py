@@ -244,3 +244,4 @@ class LogDeltaOut(BaseModel):
     since_event_id: int
     max_event_id: int
     delta: int                                    # 지정 id 초과 ~ max_event_id 구간의 non-setup 이벤트 수
+    reset_detected: bool                          # max_event_id < since_event_id → --reset 재적재 가능성, runner 가 기준점 재설정
