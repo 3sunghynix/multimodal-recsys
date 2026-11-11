@@ -85,6 +85,10 @@ train 긍정 구매 상품에서 브랜드별 최소 상품 수 조건을 만족
 
 서버 연결은 다음 PR: items.parquet의 (source, item_id) → source_item_id → DB의 (source, source_item_id)에 대응하는 items.id로 변환한다. initial_purchase_keys의 서버 이력 주입도 고객 생성 API와 함께 정하며, 준비용 구매 이력은 실험의 새 구매 전환에 포함하지 않도록 계약을 맞춘다.
 
+## 실제 카탈로그 A/B 파일럿
+
+`python -m simulator.catalog_pilot`은 전체 카탈로그 DB와 실행 중인 API로 인기(A) vs UME(B)를 비교한다. API 컨테이너 안에서 실행한다. 실행 방법 · 출력 · 해석 주의: [실제카탈로그_AB_파일럿.md](../docs/project/실제카탈로그_AB_파일럿.md)
+
 ## 서버 연결 준비 (읽기 전용)
 
 `python -m simulator.server`는 API 준비 상태와 상품 ID 매핑을 기록한다.

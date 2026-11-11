@@ -206,31 +206,81 @@ def ab_page():
     with offline_tab:
         lab()
     with simulated_tab:
-        st.caption("합성 · 임시 결과 (실제 카탈로그 A/B로 교체 예정). 현재 가상 상품으로 만든 인기 vs 카테고리 인기 비교이며, 최종 목표는 실제 카탈로그와 추천 API를 사용한 UME vs 인기 비교입니다.")
         st.caption("첫 세션에서 한 번 이상 클릭한 고객 비율의 Z-test입니다. 전체 세션 CTR은 별도로 표시하며 검정에 사용하지 않습니다.")
-        files = sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
-        chosen = st.selectbox("규모·A/B 실행 결과", files, format_func=lambda p:p.parent.name, key="ab_file") if files else None
-        upload = st.file_uploader("scale_summary.json", type=["json"], key="ab_upload")
-        if upload or chosen:
+        from dashboard.data import load_json
+        pilot_files = sorted(RUNS.glob("*/catalog_ab_summary.json")) if RUNS.is_dir() else []
+        if pilot_files:
+            path = st.selectbox("실제 카탈로그 파일럿", pilot_files, format_func=lambda p: p.parent.name)
             try:
-                from dashboard.data import load_json
-                obj=load_json(upload.getvalue() if upload else read_small(chosen))
-                if obj.get("kind")!="synthetic_scale_fixture": raise ValueError("규모 실험 결과 파일이 필요합니다.")
-                persona=st.selectbox("검정 페르소나", list(obj['ab_by_persona']),format_func=lambda p:PERSONAS.get(p,p))
-                result=obj['ab_by_persona'][persona]
-                if result.get('metric')!='first_session_customer_click_rate':
-                    raise ValueError('첫 세션 클릭률로 생성한 A/B 결과가 필요합니다. 이전 scale_summary.json을 다시 생성하세요.')
-                st.json(result)
-                st.bar_chart(pd.DataFrame({"그룹":["A","B"],"첫 세션 고객 클릭률":[result['A']['rate'],result['B']['rate']]}).set_index('그룹'))
-                groups={r['variant']:r for r in obj.get('groups',[]) if r.get('persona')==persona}
-                if all(v in groups for v in ('A','B')):
-                    st.dataframe(pd.DataFrame([{'그룹':v,'전체 세션 클릭':groups[v]['clicks'],
-                                                '전체 세션 노출':groups[v]['views'],
-                                                '전체 세션 CTR':groups[v]['clicks']/groups[v]['views'] if groups[v]['views'] else None}
-                                               for v in ('A','B')]),hide_index=True)
-                st.caption("CTR = 전체 세션 클릭 / 전체 세션 노출. 페르소나별 검정은 다중 비교 미보정입니다. 자동 승자는 선택하지 않습니다.")
-            except (ValueError, KeyError, TypeError, OSError) as error:st.error(str(error))
-        else: st.info("아직 A/B 시뮬레이션 결과가 없습니다. python -m simulator.scale 실행 후 연결하세요.")
+                pilot = load_json(read_small(path))
+                if pilot["kind"] != "real_catalog_ab_pilot":
+                    raise ValueError("실제 카탈로그 파일럿 요약이 필요합니다.")
+                result = pilot["comparison"]
+                st.caption("실제 상품과 추천 모델을 사용한 모의 고객 실험입니다.")
+                st.bar_chart(pd.DataFrame({
+                    "그룹": ["A · Popularity", "B · UME"],
+                    "첫 세션 고객 클릭률": [result[arm]["rate"] for arm in "AB"],
+                }).set_index("그룹"))
+                lo, hi = result["ci95"]
+                p = result["p_value"]
+                st.write(f"B − A의 95% 신뢰구간: [{lo:+.2%}, {hi:+.2%}]")
+                st.write(f"p-value: {p:.4g}" if p is not None else "p-value: 표본 또는 기대 빈도 부족")
+                st.dataframe(pd.DataFrame([
+                    {"그룹": arm, "고객": result[arm]["customers"],
+                     "전체 CTR": pilot["groups"][arm].get("click", 0) / pilot["groups"][arm]["view"]}
+                    for arm in "AB"
+                ]), hide_index=True)
+                st.write(f"UME 인기 모델 대체: {pilot['ume_fallback_count']} / {pilot['ume_requests']}"
+                         f" · 이력 0개 신규 고객 (두 그룹 합계): {pilot.get('cold_start_customers', '—')}명")
+                if "distinct_recommended_items" in pilot:
+                    d = pilot["distinct_recommended_items"]
+                    st.write(f"추천된 서로 다른 상품 수: A {d['A']:,} · B {d['B']:,}")
+                if "elapsed_seconds" in pilot:
+                    st.caption(f"실행 시간 {pilot['elapsed_seconds']:,.0f}초 (고객당 {pilot['seconds_per_customer']}초)")
+                rows = []
+                for persona, item in pilot.get("by_persona", {}).items():
+                    c = item["comparison"]
+                    if c is None:
+                        continue
+                    rows.append({"페르소나": PERSONAS.get(persona, persona),
+                                 "고객 A/B": f"{c['A']['customers']}/{c['B']['customers']}",
+                                 "A 클릭률": c["A"]["rate"], "B 클릭률": c["B"]["rate"],
+                                 "B − A": c["difference_B_minus_A"],
+                                 "95% 구간": f"[{c['ci95'][0]:+.2%}, {c['ci95'][1]:+.2%}]",
+                                 "p-value": c["p_value"],
+                                 "신규 고객": item["cold_start_customers"],
+                                 "UME 대체": item["ume_fallback_count"]})
+                if rows:
+                    st.markdown("**페르소나별**")
+                    st.dataframe(pd.DataFrame(rows), hide_index=True)
+                    st.caption("페르소나별 검정은 다중 비교 미보정입니다. 표본 부족이면 p-value가 비어 있습니다. 자동 승자는 선택하지 않습니다.")
+            except (ValueError, KeyError, TypeError, OSError) as error:
+                st.error(str(error))
+        else:
+            st.caption("합성 · 임시 결과 (실제 카탈로그 A/B로 교체 예정). 현재 가상 상품으로 만든 인기 vs 카테고리 인기 비교이며, 최종 목표는 실제 카탈로그와 추천 API를 사용한 UME vs 인기 비교입니다.")
+            files = sorted(RUNS.glob("*/scale_summary.json")) if RUNS.is_dir() else []
+            chosen = st.selectbox("규모·A/B 실행 결과", files, format_func=lambda p:p.parent.name, key="ab_file") if files else None
+            upload = st.file_uploader("scale_summary.json", type=["json"], key="ab_upload")
+            if upload or chosen:
+                try:
+                    from dashboard.data import load_json
+                    obj=load_json(upload.getvalue() if upload else read_small(chosen))
+                    if obj.get("kind")!="synthetic_scale_fixture": raise ValueError("규모 실험 결과 파일이 필요합니다.")
+                    persona=st.selectbox("검정 페르소나", list(obj['ab_by_persona']),format_func=lambda p:PERSONAS.get(p,p))
+                    result=obj['ab_by_persona'][persona]
+                    if result.get('metric')!='first_session_customer_click_rate':
+                        raise ValueError('첫 세션 클릭률로 생성한 A/B 결과가 필요합니다. 이전 scale_summary.json을 다시 생성하세요.')
+                    st.json(result)
+                    st.bar_chart(pd.DataFrame({"그룹":["A","B"],"첫 세션 고객 클릭률":[result['A']['rate'],result['B']['rate']]}).set_index('그룹'))
+                    groups={r['variant']:r for r in obj.get('groups',[]) if r.get('persona')==persona}
+                    if all(v in groups for v in ('A','B')):
+                        st.dataframe(pd.DataFrame([{'그룹':v,'전체 세션 클릭':groups[v]['clicks'],
+                                                    '전체 세션 노출':groups[v]['views'],
+                                                    '전체 세션 CTR':groups[v]['clicks']/groups[v]['views'] if groups[v]['views'] else None}
+                                                   for v in ('A','B')]),hide_index=True)
+                    st.caption("CTR = 전체 세션 클릭 / 전체 세션 노출. 페르소나별 검정은 다중 비교 미보정입니다. 자동 승자는 선택하지 않습니다.")
+                except (ValueError, KeyError, TypeError, OSError) as error:st.error(str(error))
+            else: st.info("아직 A/B 시뮬레이션 결과가 없습니다. python -m simulator.scale 실행 후 연결하세요.")
     with search_tab:
         upload=st.file_uploader("검색 품질 평가 JSON",type=['json'],key='search_quality')
         st.caption("형식: source, split, evaluation_id, metrics 객체. 값은 0~1. 평가 코드는 별도이며 이 화면은 저장값을 표시합니다.")

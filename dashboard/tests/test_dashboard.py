@@ -207,3 +207,24 @@ def test_new_scale_ab_and_monitoring_pages(monkeypatch, tmp_path):
     assert not at.exception
     assert at.metric[0].value=='1.00%'
     assert at.metric[1].value=='계산 불가'
+
+
+def test_real_catalog_pilot_replaces_synthetic_ab(monkeypatch, tmp_path):
+    folder = tmp_path / 'runs/catalog_pilot_1k'; folder.mkdir(parents=True)
+    test = lambda a, b: {'A': {'customers': 50, 'clicked_customers': a, 'rate': a / 50},
+                         'B': {'customers': 50, 'clicked_customers': b, 'rate': b / 50},
+                         'difference_B_minus_A': (b - a) / 50, 'ci95': [-.1, .2], 'p_value': .5}
+    pilot = {'kind': 'real_catalog_ab_pilot', 'comparison': test(14, 16),
+             'groups': {'A': {'view': 500, 'click': 22}, 'B': {'view': 500, 'click': 22}},
+             'ume_fallback_count': 2, 'ume_requests': 50, 'cold_start_customers': 4,
+             'distinct_recommended_items': {'A': 10, 'B': 256}, 'elapsed_seconds': 44.5, 'seconds_per_customer': .445,
+             'by_persona': {'window_shopper': {'comparison': test(20, 10), 'cold_start_customers': 4, 'ume_fallback_count': 2},
+                            'practical': {'comparison': None, 'cold_start_customers': 0, 'ume_fallback_count': 0}}}
+    (folder / 'catalog_ab_summary.json').write_bytes(encode(pilot))
+    at = app(monkeypatch, tmp_path)
+    assert not at.exception
+    assert any('실제 상품과 추천 모델을 사용한 모의 고객 실험' in c.value for c in at.caption)
+    assert not any('합성 · 임시 결과' in c.value for c in at.caption)
+    assert any('A 10 · B 256' in m.value for m in at.markdown)
+    persona_tables = [df.value for df in at.dataframe if '페르소나' in df.value.columns]
+    assert len(persona_tables) == 1 and list(persona_tables[0]['페르소나']) == ['눈팅형']   # no-comparison persona skipped
