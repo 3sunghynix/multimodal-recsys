@@ -52,6 +52,24 @@ services:
       redis:
         condition: service_healthy
 
+  # 재학습 (명세 4.6). 평소에는 뜨지 않는다 (profile) — 필요할 때 한 번 실행:
+  #   docker compose run --rm trainer                       # 새 로그 1만 건 이상이면 이어서 학습 → 후보 버전 등록
+  #   docker compose run --rm trainer python -m recsys.retrain --min-new-logs 0 --no-register   # 평가만
+  # 서빙과 같은 이미지(torch CPU 포함) + recsys 코드. 새 가중치는 ./data/models/ume/retrain_* 에 저장되어 api가 바로 읽는다.
+  trainer:
+    build: ./backend
+    profiles: ["trainer"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-recsys}:${POSTGRES_PASSWORD:-recsys}@db:5432/${POSTGRES_DB:-recsys}
+      PYTHONPATH: /app
+    volumes:
+      - ./data:/data
+      - ./recsys:/app/recsys:ro
+    command: ["python", "-m", "recsys.retrain"]
+    depends_on:
+      db:
+        condition: service_healthy
+
   dashboard:
     build: ./dashboard
     environment:
