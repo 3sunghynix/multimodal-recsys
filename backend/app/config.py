@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     text_encoder_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     pca_text_path: str = "/data/embeddings/v2/pca_text.npz"
     load_text_encoder: bool = True
+    # 검색어 인코딩(MiniLM · SigLIP 텍스트)의 torch 스레드 수. 기본(코어 수 8)이면 가끔 수백 ms씩 튄다
+    # (실측 SigLIP p95: 8스레드 480ms → 4스레드 76ms, p50은 비슷). 0이면 torch 기본값.
+    torch_threads: int = 4
 
     # Feature Store (명세 4.4). docker-compose 에서 "redis://redis:6379/0" 로 덮어쓴다.
     # 비어 있으면 feature_store 가 전체 no-op 로 돌아 서버는 계속 뜸 (로컬 pytest 등).

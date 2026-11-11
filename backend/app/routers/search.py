@@ -112,7 +112,8 @@ async def search(
         keep &= ix.brands == brand_id
     hits = []
     if keep.any():
-        sel = np.flatnonzero(keep)
+        # 필터가 없으면 색인 행렬을 그대로 쓴다 (복사하면 상품 10만 × 256 × 3개 ≈ 330MB, 약 20ms)
+        sel = slice(None) if keep.all() else np.flatnonzero(keep)
         item_mats = {"text": ix.text[sel], "text_image": ix.image[sel], "image": ix.image[sel]}
         top, scores = search_core.search({m: queries[m] for m in weights}, {m: item_mats[m] for m in weights},
                                          weights, ix.sources[sel], k, merge, min_rel or None)

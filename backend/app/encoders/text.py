@@ -41,4 +41,6 @@ class TextEncoder:
 
 @lru_cache(maxsize=1)
 def load_text_encoder(model_name: str, pca_path: str | None = None) -> TextEncoder:
+    from . import set_torch_threads
+    set_torch_threads()
     return TextEncoder(model_name, pca_path)
