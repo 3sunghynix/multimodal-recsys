@@ -1,0 +1,1049 @@
+{
+  "kind": "real_catalog_ab_pilot",
+  "seed": 42,
+  "catalog_products": 106825,
+  "customers": 10000,
+  "comparison": {
+    "metric": "first_session_customer_click_rate",
+    "unit": "customer",
+    "kind": "synthetic_randomized_first_session",
+    "A": {
+      "customers": 3334,
+      "clicked_customers": 1163,
+      "rate": 0.34883023395320933,
+      "ci95": [
+        0.33283478824579904,
+        0.3651736365293726
+      ]
+    },
+    "B": {
+      "customers": 3333,
+      "clicked_customers": 1210,
+      "rate": 0.36303630363036304,
+      "ci95": [
+        0.34687725638814504,
+        0.37951070322361546
+      ]
+    },
+    "difference_B_minus_A": 0.01420606967715371,
+    "ci95": [
+      -0.00877700269237022,
+      0.037168215163515955
+    ],
+    "z": 1.2113223583711223,
+    "p_value": 0.22577188300210854,
+    "status": "test_computed",
+    "interpretation": "Overall pilot. Simulated customer behavior on real catalog products."
+  },
+  "by_persona": {
+    "brand_loyal": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 400,
+          "clicked_customers": 76,
+          "rate": 0.19,
+          "ci95": [
+            0.15457385084236502,
+            0.2313237716448988
+          ]
+        },
+        "B": {
+          "customers": 400,
+          "clicked_customers": 131,
+          "rate": 0.3275,
+          "ci95": [
+            0.2833400429179013,
+            0.37494169862743104
+          ]
+        },
+        "difference_B_minus_A": 0.1375,
+        "ci95": [
+          0.07702061580627215,
+          0.1967091784506
+        ],
+        "z": 4.440124661368967,
+        "p_value": 8.990678254634267e-06,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 400,
+            "clicked_customers": 131,
+            "rate": 0.3275,
+            "ci95": [
+              0.2833400429179013,
+              0.37494169862743104
+            ]
+          },
+          "B": {
+            "customers": 400,
+            "clicked_customers": 111,
+            "rate": 0.2775,
+            "ci95": [
+              0.2358942363133194,
+              0.3233387346654426
+            ]
+          },
+          "difference_B_minus_A": -0.04999999999999999,
+          "ci95": [
+            -0.11310114373454654,
+            0.013649755735757912
+          ],
+          "z": -1.5393954787901873,
+          "p_value": 0.12370777713925821,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 400,
+            "clicked_customers": 76,
+            "rate": 0.19,
+            "ci95": [
+              0.15457385084236502,
+              0.2313237716448988
+            ]
+          },
+          "B": {
+            "customers": 400,
+            "clicked_customers": 111,
+            "rate": 0.2775,
+            "ci95": [
+              0.2358942363133194,
+              0.3233387346654426
+            ]
+          },
+          "difference_B_minus_A": 0.08750000000000002,
+          "ci95": [
+            0.02885962419193025,
+            0.14543273375103105
+          ],
+          "z": 2.923896512817635,
+          "p_value": 0.0034567964993900253,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "careful_explorer": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 567,
+          "clicked_customers": 238,
+          "rate": 0.41975308641975306,
+          "ci95": [
+            0.3798045447526512,
+            0.46078166601767784
+          ]
+        },
+        "B": {
+          "customers": 566,
+          "clicked_customers": 219,
+          "rate": 0.3869257950530035,
+          "ci95": [
+            0.34769171324697623,
+            0.4276844058144549
+          ]
+        },
+        "difference_B_minus_A": -0.032827291366749556,
+        "ci95": [
+          -0.089595746682931,
+          0.02424415799746122
+        ],
+        "z": -1.1262072059910717,
+        "p_value": 0.26007782410309543,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 566,
+            "clicked_customers": 219,
+            "rate": 0.3869257950530035,
+            "ci95": [
+              0.34769171324697623,
+              0.4276844058144549
+            ]
+          },
+          "B": {
+            "customers": 567,
+            "clicked_customers": 227,
+            "rate": 0.400352733686067,
+            "ci95": [
+              0.36082385795211674,
+              0.4412227554220281
+            ]
+          },
+          "difference_B_minus_A": 0.01342693863306349,
+          "ci95": [
+            -0.04335154644705802,
+            0.07008090453007704
+          ],
+          "z": 0.46253638957767523,
+          "p_value": 0.6436967129165716,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 567,
+            "clicked_customers": 238,
+            "rate": 0.41975308641975306,
+            "ci95": [
+              0.3798045447526512,
+              0.46078166601767784
+            ]
+          },
+          "B": {
+            "customers": 567,
+            "clicked_customers": 227,
+            "rate": 0.400352733686067,
+            "ci95": [
+              0.36082385795211674,
+              0.4412227554220281
+            ]
+          },
+          "difference_B_minus_A": -0.019400352733686066,
+          "ci95": [
+            -0.0763729457992411,
+            0.03775071600545571
+          ],
+          "z": -0.6641400600654727,
+          "p_value": 0.50660067253236,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "impulse_buyer": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 267,
+          "clicked_customers": 219,
+          "rate": 0.8202247191011236,
+          "ci95": [
+            0.7697256688956426,
+            0.8616400043826407
+          ]
+        },
+        "B": {
+          "customers": 267,
+          "clicked_customers": 194,
+          "rate": 0.7265917602996255,
+          "ci95": [
+            0.670199410038502,
+            0.7765564172519792
+          ]
+        },
+        "difference_B_minus_A": -0.09363295880149813,
+        "ci95": [
+          -0.16359954384695158,
+          -0.022593385210280134
+        ],
+        "z": -2.5842999917737184,
+        "p_value": 0.009757688084123715,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 267,
+            "clicked_customers": 194,
+            "rate": 0.7265917602996255,
+            "ci95": [
+              0.670199410038502,
+              0.7765564172519792
+            ]
+          },
+          "B": {
+            "customers": 266,
+            "clicked_customers": 205,
+            "rate": 0.7706766917293233,
+            "ci95": [
+              0.7165159612616233,
+              0.8171307238301807
+            ]
+          },
+          "difference_B_minus_A": 0.04408493142969783,
+          "ci95": [
+            -0.029602595799550657,
+            0.11714705750333956
+          ],
+          "z": 1.1730360957906962,
+          "p_value": 0.24078133103793503,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 267,
+            "clicked_customers": 219,
+            "rate": 0.8202247191011236,
+            "ci95": [
+              0.7697256688956426,
+              0.8616400043826407
+            ]
+          },
+          "B": {
+            "customers": 266,
+            "clicked_customers": 205,
+            "rate": 0.7706766917293233,
+            "ci95": [
+              0.7165159612616233,
+              0.8171307238301807
+            ]
+          },
+          "difference_B_minus_A": -0.04954802737180031,
+          "ci95": [
+            -0.11772874737199016,
+            0.019067795658191666
+          ],
+          "z": -1.418045758142061,
+          "p_value": 0.15617740585680837,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "practical": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 600,
+          "clicked_customers": 96,
+          "rate": 0.16,
+          "ci95": [
+            0.13284248906564322,
+            0.1914834676236733
+          ]
+        },
+        "B": {
+          "customers": 600,
+          "clicked_customers": 124,
+          "rate": 0.20666666666666667,
+          "ci95": [
+            0.1761828266922091,
+            0.24088270456916197
+          ]
+        },
+        "difference_B_minus_A": 0.04666666666666666,
+        "ci95": [
+          0.0028434623885764884,
+          0.09035038960662112
+        ],
+        "z": 2.088931871468374,
+        "p_value": 0.03671385636270413,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 600,
+            "clicked_customers": 124,
+            "rate": 0.20666666666666667,
+            "ci95": [
+              0.1761828266922091,
+              0.24088270456916197
+            ]
+          },
+          "B": {
+            "customers": 600,
+            "clicked_customers": 88,
+            "rate": 0.14666666666666667,
+            "ci95": [
+              0.12060802259334437,
+              0.17722091278967084
+            ]
+          },
+          "difference_B_minus_A": -0.06,
+          "ci95": [
+            -0.10300918716605895,
+            -0.01683952669706399
+          ],
+          "z": -2.7248758573296636,
+          "p_value": 0.006432566842231156,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 600,
+            "clicked_customers": 96,
+            "rate": 0.16,
+            "ci95": [
+              0.13284248906564322,
+              0.1914834676236733
+            ]
+          },
+          "B": {
+            "customers": 600,
+            "clicked_customers": 88,
+            "rate": 0.14666666666666667,
+            "ci95": [
+              0.12060802259334437,
+              0.17722091278967084
+            ]
+          },
+          "difference_B_minus_A": -0.013333333333333336,
+          "ci95": [
+            -0.0542021682145846,
+            0.02754566318437516
+          ],
+          "z": -0.6409510222636156,
+          "p_value": 0.5215545047005585,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "trendsetter": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 400,
+          "clicked_customers": 266,
+          "rate": 0.665,
+          "ci95": [
+            0.617370024300236,
+            0.7094909185694462
+          ]
+        },
+        "B": {
+          "customers": 400,
+          "clicked_customers": 250,
+          "rate": 0.625,
+          "ci95": [
+            0.5765790058795889,
+            0.671042920536837
+          ]
+        },
+        "difference_B_minus_A": -0.040000000000000036,
+        "ci95": [
+          -0.10575739127095893,
+          0.026246246057581205
+        ],
+        "z": -1.1821727799742219,
+        "p_value": 0.23713715085236442,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 400,
+            "clicked_customers": 250,
+            "rate": 0.625,
+            "ci95": [
+              0.5765790058795889,
+              0.671042920536837
+            ]
+          },
+          "B": {
+            "customers": 400,
+            "clicked_customers": 250,
+            "rate": 0.625,
+            "ci95": [
+              0.5765790058795889,
+              0.671042920536837
+            ]
+          },
+          "difference_B_minus_A": 0.0,
+          "ci95": [
+            -0.06681723732069723,
+            0.06681723732069723
+          ],
+          "z": 0.0,
+          "p_value": 1.0,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 400,
+            "clicked_customers": 266,
+            "rate": 0.665,
+            "ci95": [
+              0.617370024300236,
+              0.7094909185694462
+            ]
+          },
+          "B": {
+            "customers": 400,
+            "clicked_customers": 250,
+            "rate": 0.625,
+            "ci95": [
+              0.5765790058795889,
+              0.671042920536837
+            ]
+          },
+          "difference_B_minus_A": -0.040000000000000036,
+          "ci95": [
+            -0.10575739127095893,
+            0.026246246057581205
+          ],
+          "z": -1.1821727799742219,
+          "p_value": 0.23713715085236442,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "value_seeker": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 600,
+          "clicked_customers": 124,
+          "rate": 0.20666666666666667,
+          "ci95": [
+            0.1761828266922091,
+            0.24088270456916197
+          ]
+        },
+        "B": {
+          "customers": 600,
+          "clicked_customers": 155,
+          "rate": 0.25833333333333336,
+          "ci95": [
+            0.22492438729595832,
+            0.29481710152733054
+          ]
+        },
+        "difference_B_minus_A": 0.051666666666666694,
+        "ci95": [
+          0.003845176465364593,
+          0.09920959296723908
+        ],
+        "z": 2.1184606434030084,
+        "p_value": 0.03413607464963224,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 0,
+      "ume_fallback_count": 0,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 600,
+            "clicked_customers": 155,
+            "rate": 0.25833333333333336,
+            "ci95": [
+              0.22492438729595832,
+              0.29481710152733054
+            ]
+          },
+          "B": {
+            "customers": 600,
+            "clicked_customers": 114,
+            "rate": 0.19,
+            "ci95": [
+              0.1606200129971531,
+              0.22332424163134137
+            ]
+          },
+          "difference_B_minus_A": -0.06833333333333336,
+          "ci95": [
+            -0.11517614471267708,
+            -0.021145805790218075
+          ],
+          "z": -2.8380725896322354,
+          "p_value": 0.004538685946790142,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 600,
+            "clicked_customers": 124,
+            "rate": 0.20666666666666667,
+            "ci95": [
+              0.1761828266922091,
+              0.24088270456916197
+            ]
+          },
+          "B": {
+            "customers": 600,
+            "clicked_customers": 114,
+            "rate": 0.19,
+            "ci95": [
+              0.1606200129971531,
+              0.22332424163134137
+            ]
+          },
+          "difference_B_minus_A": -0.016666666666666663,
+          "ci95": [
+            -0.06176567869611636,
+            0.028497141630379787
+          ],
+          "z": -0.7239600618659806,
+          "p_value": 0.4690902545232155,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    },
+    "window_shopper": {
+      "comparison": {
+        "metric": "first_session_customer_click_rate",
+        "unit": "customer",
+        "kind": "synthetic_randomized_first_session",
+        "A": {
+          "customers": 500,
+          "clicked_customers": 144,
+          "rate": 0.288,
+          "ci95": [
+            0.250043271115854,
+            0.32918944923984417
+          ]
+        },
+        "B": {
+          "customers": 500,
+          "clicked_customers": 137,
+          "rate": 0.274,
+          "ci95": [
+            0.2367406256658206,
+            0.3147055762228011
+          ]
+        },
+        "difference_B_minus_A": -0.013999999999999957,
+        "ci95": [
+          -0.06954126127894653,
+          0.04165660071559199
+        ],
+        "z": -0.4924707431131055,
+        "p_value": 0.6223865995672826,
+        "status": "test_computed",
+        "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons."
+      },
+      "cold_start_customers": 785,
+      "ume_fallback_count": 255,
+      "comparisons": {
+        "C_vs_B": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 500,
+            "clicked_customers": 137,
+            "rate": 0.274,
+            "ci95": [
+              0.2367406256658206,
+              0.3147055762228011
+            ]
+          },
+          "B": {
+            "customers": 500,
+            "clicked_customers": 142,
+            "rate": 0.284,
+            "ci95": [
+              0.2462377719556586,
+              0.32505594312373204
+            ]
+          },
+          "difference_B_minus_A": 0.009999999999999953,
+          "ci95": [
+            -0.045524137116240856,
+            0.06544232536206995
+          ],
+          "z": 0.3525334006407071,
+          "p_value": 0.7244382740794859,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "B",
+            "B": "C"
+          }
+        },
+        "C_vs_A": {
+          "metric": "first_session_customer_click_rate",
+          "unit": "customer",
+          "kind": "synthetic_randomized_first_session",
+          "A": {
+            "customers": 500,
+            "clicked_customers": 144,
+            "rate": 0.288,
+            "ci95": [
+              0.250043271115854,
+              0.32918944923984417
+            ]
+          },
+          "B": {
+            "customers": 500,
+            "clicked_customers": 142,
+            "rate": 0.284,
+            "ci95": [
+              0.2462377719556586,
+              0.32505594312373204
+            ]
+          },
+          "difference_B_minus_A": -0.0040000000000000036,
+          "ci95": [
+            -0.0598798406901321,
+            0.05191335916723018
+          ],
+          "z": -0.13995804686538235,
+          "p_value": 0.8886931378032503,
+          "status": "test_computed",
+          "interpretation": "Per-persona breakdown, unadjusted for multiple comparisons.",
+          "arms": {
+            "A": "A",
+            "B": "C"
+          }
+        }
+      }
+    }
+  },
+  "groups": {
+    "A": {
+      "view": 33340,
+      "click": 1604,
+      "add_to_cart": 220,
+      "purchase": 87,
+      "search": 3334
+    },
+    "B": {
+      "view": 33330,
+      "click": 1671,
+      "add_to_cart": 247,
+      "purchase": 111,
+      "search": 3333
+    },
+    "C": {
+      "view": 33330,
+      "click": 1533,
+      "add_to_cart": 189,
+      "purchase": 81,
+      "search": 3333
+    }
+  },
+  "distinct_recommended_items": {
+    "A": 10,
+    "B": 3080,
+    "C": 6016
+  },
+  "cold_start_customers": 785,
+  "ume_fallback_count": 255,
+  "ume_requests": 3333,
+  "search_types": {
+    "text": 7465,
+    "image": 2535
+  },
+  "excluded_recommendations": 0,
+  "comparisons": {
+    "B_vs_A": {
+      "metric": "first_session_customer_click_rate",
+      "unit": "customer",
+      "kind": "synthetic_randomized_first_session",
+      "A": {
+        "customers": 3334,
+        "clicked_customers": 1163,
+        "rate": 0.34883023395320933,
+        "ci95": [
+          0.33283478824579904,
+          0.3651736365293726
+        ]
+      },
+      "B": {
+        "customers": 3333,
+        "clicked_customers": 1210,
+        "rate": 0.36303630363036304,
+        "ci95": [
+          0.34687725638814504,
+          0.37951070322361546
+        ]
+      },
+      "difference_B_minus_A": 0.01420606967715371,
+      "ci95": [
+        -0.00877700269237022,
+        0.037168215163515955
+      ],
+      "z": 1.2113223583711223,
+      "p_value": 0.22577188300210854,
+      "status": "test_computed",
+      "interpretation": "Overall pilot. Simulated customer behavior on real catalog products."
+    },
+    "C_vs_B": {
+      "metric": "first_session_customer_click_rate",
+      "unit": "customer",
+      "kind": "synthetic_randomized_first_session",
+      "A": {
+        "customers": 3333,
+        "clicked_customers": 1210,
+        "rate": 0.36303630363036304,
+        "ci95": [
+          0.34687725638814504,
+          0.37951070322361546
+        ]
+      },
+      "B": {
+        "customers": 3333,
+        "clicked_customers": 1137,
+        "rate": 0.34113411341134114,
+        "ci95": [
+          0.3252302114532852,
+          0.3574037964644085
+        ]
+      },
+      "difference_B_minus_A": -0.0219021902190219,
+      "ci95": [
+        -0.0448006604615864,
+        0.001028518327019598
+      ],
+      "z": -1.872006567213977,
+      "p_value": 0.06120569495665869,
+      "status": "test_computed",
+      "interpretation": "Overall pilot. Simulated customer behavior on real catalog products.",
+      "arms": {
+        "A": "B",
+        "B": "C"
+      }
+    },
+    "C_vs_A": {
+      "metric": "first_session_customer_click_rate",
+      "unit": "customer",
+      "kind": "synthetic_randomized_first_session",
+      "A": {
+        "customers": 3334,
+        "clicked_customers": 1163,
+        "rate": 0.34883023395320933,
+        "ci95": [
+          0.33283478824579904,
+          0.3651736365293726
+        ]
+      },
+      "B": {
+        "customers": 3333,
+        "clicked_customers": 1137,
+        "rate": 0.34113411341134114,
+        "ci95": [
+          0.3252302114532852,
+          0.3574037964644085
+        ]
+      },
+      "difference_B_minus_A": -0.00769612054186819,
+      "ci95": [
+        -0.030500525933327038,
+        0.01511959487593052
+      ],
+      "z": -0.6609704280044371,
+      "p_value": 0.5086312783865938,
+      "status": "test_computed",
+      "interpretation": "Overall pilot. Simulated customer behavior on real catalog products.",
+      "arms": {
+        "A": "A",
+        "B": "C"
+      }
+    }
+  },
+  "mab": {
+    "exploration_slots": 6666,
+    "distinct_exploration_items": 3291,
+    "exploration_views": 6666,
+    "exploration_clicks": 243,
+    "exploration_ctr": 0.036453645364536456,
+    "exploit_ctr_in_c": 0.04837983798379838,
+    "new_item_slots": 3568,
+    "new_items_shown": 199,
+    "new_items_shown_in_other_arms": 5
+  },
+  "arms": "ABC",
+  "batches": [
+    {
+      "batch": 0,
+      "customers": 1000,
+      "exploration_views": 620,
+      "exploration_clicks": 26,
+      "exploration_ctr": 0.041935483870967745,
+      "c_ctr": 0.05096774193548387
+    },
+    {
+      "batch": 1,
+      "customers": 1000,
+      "exploration_views": 654,
+      "exploration_clicks": 25,
+      "exploration_ctr": 0.0382262996941896,
+      "c_ctr": 0.047706422018348627
+    },
+    {
+      "batch": 2,
+      "customers": 1000,
+      "exploration_views": 678,
+      "exploration_clicks": 22,
+      "exploration_ctr": 0.032448377581120944,
+      "c_ctr": 0.04277286135693215
+    },
+    {
+      "batch": 3,
+      "customers": 1000,
+      "exploration_views": 640,
+      "exploration_clicks": 20,
+      "exploration_ctr": 0.03125,
+      "c_ctr": 0.0425
+    },
+    {
+      "batch": 4,
+      "customers": 1000,
+      "exploration_views": 682,
+      "exploration_clicks": 32,
+      "exploration_ctr": 0.0469208211143695,
+      "c_ctr": 0.04838709677419355
+    },
+    {
+      "batch": 5,
+      "customers": 1000,
+      "exploration_views": 668,
+      "exploration_clicks": 17,
+      "exploration_ctr": 0.025449101796407185,
+      "c_ctr": 0.04221556886227545
+    },
+    {
+      "batch": 6,
+      "customers": 1000,
+      "exploration_views": 702,
+      "exploration_clicks": 22,
+      "exploration_ctr": 0.03133903133903134,
+      "c_ctr": 0.05014245014245014
+    },
+    {
+      "batch": 7,
+      "customers": 1000,
+      "exploration_views": 662,
+      "exploration_clicks": 29,
+      "exploration_ctr": 0.04380664652567976,
+      "c_ctr": 0.04954682779456193
+    },
+    {
+      "batch": 8,
+      "customers": 1000,
+      "exploration_views": 708,
+      "exploration_clicks": 27,
+      "exploration_ctr": 0.038135593220338986,
+      "c_ctr": 0.0403954802259887
+    },
+    {
+      "batch": 9,
+      "customers": 1000,
+      "exploration_views": 652,
+      "exploration_clicks": 23,
+      "exploration_ctr": 0.0352760736196319,
+      "c_ctr": 0.04570552147239264
+    }
+  ],
+  "new_items": 200,
+  "elapsed_seconds": 4127.0,
+  "seconds_per_customer": 0.413
+}

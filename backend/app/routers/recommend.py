@@ -16,7 +16,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import Event, Experiment, ModelVersion, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
-from ..services import feature_store
+from ..services import explore, feature_store
 from ..services.ab import assign_variant
 from ..services.session import session_click_ids, session_interest
 
@@ -44,8 +44,12 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
         raise HTTPException(409, "active 모델이 없습니다. /models 에서 등록 · 활성화하세요")
     recommender = recommenders.get(mv.name, mv.params)
     scored = recommender.recommend_scored(db, user_id, k)       # (id, score) 쌍 — 모델이 실제 점수를 돌려주거나 base 가 폴백
-    items = [i for i, _ in scored]
-    model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천까지 (세션 컨텍스트 전)
+    # 재정렬 마지막 단계: MAB 탐색 슬롯(params["explore"] 있을 때) + 같은 소분류 3개 연속 금지 (services/explore.py)
+    t_explore = time.perf_counter()
+    recs = explore.apply(db, user_id, scored, k, mv.params)
+    explore_ms = (time.perf_counter() - t_explore) * 1000
+    items = [r.item_id for r in recs]
+    model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천 · 재정렬까지 (세션 컨텍스트 전)
 
     # recommendations[]: product_id · score · score_kind · reason · is_exploration.
     #   score_kind="model" → recommender.scored_native=True (Popularity · BrandPopularity 는 이벤트 가중치 합계가 실제 점수)
@@ -53,14 +57,16 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
     # 자동 채점·리뷰에서 "모델 점수"로 오해되지 않도록 두 종류를 분리해 노출한다.
     score_kind = "model" if recommender.scored_native else "rank"
     reason = recommender.fallback_reason or _REASON.get(mv.name, mv.name)   # 대체 경로면 그 이유 (예: UME 신규 고객 → popular)
+    # 탐색 슬롯 상품은 모델 점수가 없으므로 순위 placeholder (score_kind="rank"), reason="mab_exploration".
+    n = len(recs)
     recommendations = [RecommendationOut(
-        product_id=str(item_id),
-        score=round(float(score), 4),
-        score_kind=score_kind,
-        score_basis=recommender.score_basis,                   # 점수 단위 (UME 표준화 · 데이터셋 백분위 · 인기 가중치 합 · 순위)
-        reason=reason,
-        is_exploration=False,                                  # MAB 미구현 — 전부 exploit
-    ) for item_id, score in scored]
+        product_id=str(r.item_id),
+        score=round(1 - pos / max(n, 1), 4) if r.is_exploration else round(r.score, 4),
+        score_kind="rank" if r.is_exploration else score_kind,
+        score_basis="rank_placeholder" if r.is_exploration else recommender.score_basis,
+        reason=explore.REASON if r.is_exploration else reason,
+        is_exploration=r.is_exploration,
+    ) for pos, r in enumerate(recs)]
 
     # 세션 컨텍스트: 해당 고객의 최근 클릭 상품 5개 (Feature Store 우선, 비면 DB 폴백).
     # 서비스가 처음 뜨거나 Redis 가 없거나 Redis 가 cold(앞 선 이벤트 없음) 일 때 DB 가 보완.
@@ -77,9 +83,11 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
 
     # 단계별 시간: 나눠 재는 모델(UME)은 그 값, 아니면 모델 추천 시간 전체를 candidate_ms 에.
     t = recommender.timings
+    # reranking_ms 에는 탐색 슬롯 · 연속 제한(explore_ms)도 더한다.
     latency = (PipelineLatency(candidate_ms=round(t["candidate_ms"], 3), ranking_ms=round(t["ranking_ms"], 3),
-                               reranking_ms=round(t["reranking_ms"], 3), total_ms=total_ms) if t else
-               PipelineLatency(candidate_ms=model_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
+                               reranking_ms=round(t["reranking_ms"] + explore_ms, 3), total_ms=total_ms) if t else
+               PipelineLatency(candidate_ms=round(model_ms - explore_ms, 3), ranking_ms=0.0,
+                               reranking_ms=round(explore_ms, 3), total_ms=total_ms))
 
     return RecommendOut(
         user_id=user_id, model=mv.name, model_version_id=mv.id,

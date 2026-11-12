@@ -99,7 +99,7 @@ class RecommendationOut(BaseModel):
     # 점수 단위. 같은 score_kind="model" 이라도 경로마다 단위가 달라 값끼리 비교하면 안 된다 (recommenders.base 참고)
     score_basis: Literal["event_weight_sum", "ume_zscore", "rank_percentile", "rank_placeholder"]
     reason: str                       # 모델별 간단 라벨 (popular · brand_match · personalized)
-    is_exploration: bool              # MAB 탐색 슬롯 여부 — 미구현이라 항상 False
+    is_exploration: bool              # MAB 탐색 슬롯 여부 (model_versions.params["explore"] 설정 시 1 ~ 2개, services/explore.py)
 
 
 class PipelineLatency(BaseModel):
