@@ -119,8 +119,10 @@ def _bag(flat, start, length, device):
     return flat[torch.repeat_interleave(start, length) + pos], offsets
 
 
-def train_tower(X: np.ndarray, seq: Sequences, p: dict, device: str, feedback_weight: bool = True, log=print):
-    """모달리티 하나의 Two-Tower 학습. 반환: {"user": nn.Module, "item": nn.Module}."""
+def train_tower(X: np.ndarray, seq: Sequences, p: dict, device: str, feedback_weight: bool = True, log=print,
+                init: dict | None = None):
+    """모달리티 하나의 Two-Tower 학습. 반환: {"user": nn.Module, "item": nn.Module}.
+    init: 이어서 학습할 가중치 (save_tower가 저장한 weights.npz를 dict로 읽은 것, 키 user.0.weight …). 재학습(warm start)용."""
     import torch
     import torch.nn.functional as F
     torch.manual_seed(p["seed"])
@@ -133,7 +135,10 @@ def train_tower(X: np.ndarray, seq: Sequences, p: dict, device: str, feedback_we
     labels = torch.from_numpy(seq.items[sid]).to(device)
     w = torch.from_numpy(seq.weight[sid] if feedback_weight else np.ones(len(sid), np.float32)).to(device)
     user, item = _mlp(X.shape[1], p).to(device), _mlp(X.shape[1], p).to(device)
-    opt = torch.optim.Adam(list(user.parameters()) + list(item.parameters()), lr=p["lr"], weight_decay=p["weight_decay"])
+    if init is not None:
+        for side, net in (("user", user), ("item", item)):
+            net.load_state_dict({k: torch.from_numpy(np.asarray(init[f"{side}.{k}"])) for k in net.state_dict()})
+    opt =torch.optim.Adam(list(user.parameters()) + list(item.parameters()), lr=p["lr"], weight_decay=p["weight_decay"])
     gen = torch.Generator().manual_seed(p["seed"])
     n, bs = len(sid), p["batch_size"]
     for epoch in range(p["epochs"]):
