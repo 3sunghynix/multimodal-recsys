@@ -234,7 +234,8 @@ def test_log_delta_detects_reset(empty_client):
 # ─── PR #48 리뷰 반영: model_version_id 필터 · hit intersection · tz 정규화 ───
 
 def test_window_filters_by_model_version_id(client):
-    """A/B 중 모델별 집계 — model_version_id 로 Event 필터링 (PR #48 리뷰)."""
+    """A/B 중 모델별 집계 — model_version_id 로 Event 필터링 (PR #48 1차 리뷰).
+    seed_sample 이 ModelVersion id=1(popularity), id=2(brand_popularity) 를 등록하므로 그걸 쓴다."""
     c, Session = client
     t_start = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
     t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
@@ -242,27 +243,97 @@ def test_window_filters_by_model_version_id(client):
 
     # 두 모델 각각 2개/1개 view
     with Session() as s:
-        s.add(Event(user_id=1, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=100))
-        s.add(Event(user_id=2, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=100))
-        s.add(Event(user_id=3, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=200))
+        s.add(Event(user_id=1, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1))
+        s.add(Event(user_id=2, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1))
+        s.add(Event(user_id=3, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=2))
         s.commit()
 
-    # 필터 없으면 전부 (3건)
+    # 필터 없으면 전부 (3건) — seed_sample 의 150 이벤트는 현재 시각(2026-11-12)이라 window 밖
     body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
                                              "model_version": "v1", "source": "all"}).json()
     assert body["views"] == 3
 
-    # 100번 모델만 (2건)
+    # 1번 모델만 (2건)
     body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
-                                             "model_version": "v1", "source": "all",
-                                             "model_version_id": 100}).json()
+                                             "model_version": "popularity-v1", "source": "all",
+                                             "model_version_id": 1}).json()
     assert body["views"] == 2
 
-    # 200번 모델만 (1건)
+    # 2번 모델만 (1건)
     body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
-                                             "model_version": "v1", "source": "all",
-                                             "model_version_id": 200}).json()
+                                             "model_version": "brand_popularity-v1", "source": "all",
+                                             "model_version_id": 2}).json()
     assert body["views"] == 1
+
+
+def test_window_rejects_unknown_model_version_id(client):
+    """ModelVersion 테이블에 없는 id → 422 (라벨/id 불일치 사전 차단; PR #48 2차 리뷰)."""
+    c, _ = client
+    r = c.get("/metrics/window", params={"start": "2026-11-01T00:00:00Z", "end": "2026-11-02T00:00:00Z",
+                                          "model_version": "v1", "source": "all", "model_version_id": 9999})
+    assert r.status_code == 422
+    assert "ModelVersion" in r.json()["detail"]
+
+
+def test_window_model_version_label_overridden_from_id(client):
+    """model_version_id 가 오면 응답의 model_version 은 ModelVersion.name-version 으로 override
+    (호출자 라벨 오타 보호; PR #48 2차 리뷰)."""
+    c, _ = client
+    body = c.get("/metrics/window", params={
+        "start": "2026-11-01T00:00:00Z", "end": "2026-11-02T00:00:00Z",
+        "model_version": "wrong-label", "source": "all", "model_version_id": 1,
+    }).json()
+    assert body["model_version"] == "popularity-v1"      # seed_sample 의 id=1
+    assert "popularity-v1" in body["window_id"]
+    assert "wrong-label" not in body["window_id"]
+
+
+def test_window_rejects_space_decoded_from_plus(client):
+    """'+' 가 curl 에서 공백으로 디코딩돼 서버에 도착하면 422 (문서는 Z 또는 %2B 써야; PR #48 2차 리뷰).
+    %20 을 URL 에 직접 박아 '+' 가 깨진 상태를 재현."""
+    c, _ = client
+    r = c.get("/metrics/window?start=2026-11-01T00:00:00%2000:00"
+              "&end=2026-11-02T00:00:00Z&model_version=v1&source=all")
+    assert r.status_code == 422
+    assert "ISO 8601" in r.json()["detail"]
+
+
+def test_window_accepts_z_suffix(client):
+    """Z 접미사 = +00:00 축약 (Python 3.12 지원, curl 에서 '+' 디코딩 문제 회피)."""
+    c, Session = client
+    _insert_event(Session, 1, 3, "view",
+                   datetime(2026, 11, 1, 12, 0))                     # window 안 (DB 는 naive UTC)
+    body = c.get("/metrics/window", params={"start": "2026-11-01T00:00:00Z",
+                                             "end": "2026-11-02T00:00:00Z",
+                                             "model_version": "v1", "source": "all"}).json()
+    assert body["views"] == 1
+
+
+def test_window_id_normalized_to_utc(client):
+    """같은 UTC 순간이면 Z / +00:00 / +09:00 (한국 시각) 로 호출해도 window_id 가 같음
+    (PR #48 2차 리뷰 nit — Z/+00:00 로 id 분기 방지)."""
+    c, _ = client
+    # 2026-11-01 00:00 UTC == 2026-11-01 09:00 KST
+    body_z = c.get("/metrics/window", params={
+        "start": "2026-11-01T00:00:00Z", "end": "2026-11-02T00:00:00Z",
+        "model_version": "v1", "source": "all"}).json()
+    body_offset = c.get("/metrics/window", params={
+        "start": "2026-11-01T00:00:00+00:00", "end": "2026-11-02T00:00:00+00:00",
+        "model_version": "v1", "source": "all"}).json()
+    body_kst = c.get("/metrics/window", params={
+        "start": "2026-11-01T09:00:00+09:00", "end": "2026-11-02T09:00:00+09:00",
+        "model_version": "v1", "source": "all"}).json()
+    assert body_z["window_id"] == body_offset["window_id"] == body_kst["window_id"]
+
+
+def test_window_default_metric_definition_version_is_user_click_through_v1(client):
+    """기본 metric_definition_version = user_click_through_v1 (runner HitRate@K 와 혼용 금지 신호;
+    PR #48 2차 리뷰 by 광석)."""
+    c, _ = client
+    body = c.get("/metrics/window", params={
+        "start": "2026-11-01T00:00:00Z", "end": "2026-11-02T00:00:00Z",
+        "model_version": "v1", "source": "all"}).json()
+    assert body["metric_definition_version"] == "user_click_through_v1"
 
 
 def test_window_hit_users_is_intersection(client):
