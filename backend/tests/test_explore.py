@@ -211,3 +211,39 @@ def test_new_items_rotate_across_requests(env):
             assert new_ids <= new
             firsts |= set(choose([i for i in cands if i in new_ids], {}, 1, cfg, np.random.default_rng(seed), new_ids))
     assert len(firsts) >= 3
+
+
+def test_old_registration_is_not_new(env):
+    client, Session = env
+    from app.services.explore import candidate_pool
+    from scripts.mark_new_items import mark
+    now = datetime(2026, 11, 12, 12, 0)
+    with Session() as s:
+        mark(s, ids=[5], days=0, now=now - timedelta(days=8))     # 8일 전 → 신규 아님
+        mark(s, ids=[6], days=0, now=now - timedelta(days=2))     # 2일 전 → 신규
+        _, new_ids = candidate_pool(s, 1, set(), E.config({"explore": True}), now=now)
+    assert new_ids == {6}
+
+
+def test_exploration_excludes_purchased_and_already_recommended(env):
+    client, Session = env
+    from sqlalchemy import select
+
+    from app.models import Event
+    from app.services.explore import candidate_pool
+    with Session() as s:
+        bought = set(s.scalars(select(Event.item_id).where(Event.user_id == 2, Event.type == "purchase")))
+        cands, _ = candidate_pool(s, 2, {1, 2, 3}, E.config({"explore": True}))
+    assert not (set(cands) & (bought | {1, 2, 3}))
+
+
+def test_item_stats_counts_views_and_clicks_excluding_setup(env):
+    _, Session = env
+    from app.models import Event
+    from app.services.explore import item_stats
+    with Session() as s:
+        before = item_stats(s, [7]).get(7, (0, 0))
+        s.add_all([Event(user_id=1, item_id=7, type="view"), Event(user_id=1, item_id=7, type="click"),
+                   Event(user_id=1, item_id=7, type="view", is_setup=True)])
+        s.commit()
+        assert item_stats(s, [7])[7] == (before[0] + 1, before[1] + 1)
