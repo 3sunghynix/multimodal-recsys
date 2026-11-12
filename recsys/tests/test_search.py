@@ -92,3 +92,22 @@ def test_min_rel_keeps_irrelevant_source_out():
         assert (g[idx[0]] == "b").sum() == expect_b
         idx0, _ = S.search({"text": q}, {"text": items}, {"text": 1.0}, g, k=10, merge="per_source_rank")
         assert (g[idx0[0]] == "b").sum() == 2                              # 기준 없이는 B 칸(10 × 20%)을 항상 채움
+
+
+def test_fast_topk_rank_matches_full_rank():
+    """서빙(k 지정, 그룹별 상위 k만 순위)과 전체 순위 백분위의 상위 k 결과 · 점수가 같다 (min_rel 후순위 포함)."""
+    rng = np.random.default_rng(7)
+    d = 32
+    items = {"text": S.l2(rng.normal(size=(500, d))), "text_image": S.l2(rng.normal(size=(500, d)))}
+    g = np.array(["amazon"] * 400 + ["hm"] * 100)
+    q = {m: S.l2(rng.normal(size=(5, d))) for m in items}
+    w = {"text": 0.5, "text_image": 0.5}
+    for k in (1, 20, 150):
+        for min_rel in (None, 0.7, 0.99):
+            scores = {m: q[m] @ items[m].T for m in items}
+            full = S.combine(scores, w, g, "per_source_rank", min_rel)
+            want = S.top_k(full, k)
+            got, got_s = S.search(q, items, w, g, k, "per_source_rank", min_rel)
+            # 데이터셋마다 1위 백분위는 모두 1.0이라 동점끼리 순서는 다를 수 있다 → 고른 상품의 전체 순위 점수로 비교
+            assert np.allclose(np.take_along_axis(full, got, 1), np.take_along_axis(full, want, 1)), (k, min_rel)
+            assert np.allclose(got_s, np.take_along_axis(full, want, 1))

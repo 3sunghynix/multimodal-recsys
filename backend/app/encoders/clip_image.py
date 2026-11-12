@@ -109,4 +109,6 @@ def _l2(x: np.ndarray) -> np.ndarray:
 @lru_cache(maxsize=1)
 def load_encoder(model_name: str, pca_path: str | None = None) -> ClipImageEncoder:
     """프로세스당 한 번만 로드. 같은 (model_name, pca_path) 조합은 재사용된다."""
+    from . import set_torch_threads
+    set_torch_threads()
     return ClipImageEncoder(model_name, pca_path)
