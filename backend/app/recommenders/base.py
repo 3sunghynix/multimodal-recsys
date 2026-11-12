@@ -27,6 +27,8 @@ class Recommender:
     score_basis: str = "rank_placeholder"
     # 단계별 시간 (candidate_ms · ranking_ms · reranking_ms). 나눠 재는 모델만 채운다 — 없으면 응답은 전체를 candidate_ms에.
     timings: dict | None = None
+    # 추천 요청의 클라이언트 세션 id (GET /recommend?session_id=). 세션 반영 모델(UME)이 현재 세션을 찾을 때 쓴다.
+    session_id: str | None = None
 
     def __init__(self, params: dict | None = None):
         self.params = params or {}

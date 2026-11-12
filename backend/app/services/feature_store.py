@@ -59,12 +59,20 @@ def reset_for_tests():
     _tried_connect = False
 
 
-def record_event(user_id: int, event_type: str, item_id: int | None) -> None:
-    """이벤트 하나 반영. Redis 없으면/실패해도 서버 진행에 영향 없음."""
+def record_event(user_id: int, event_type: str, item_id: int | None, session_id: str | None = None) -> None:
+    """이벤트 하나 반영. Redis 없으면/실패해도 서버 진행에 영향 없음.
+    session_id가 오고 저장된 값과 다르면 새 세션 — session_clicks를 0부터 다시 센다."""
     c = _get_client()
     if c is None:
         return
     try:
+        if session_id is not None:
+            skey = f"u:{user_id}:session_id"
+            cur = c.get(skey)
+            cur = cur.decode() if isinstance(cur, bytes) else cur
+            if cur != session_id:
+                c.delete(f"u:{user_id}:session_clicks")
+            c.set(skey, session_id, ex=SESSION_TTL_SEC)
         pipe = c.pipeline(transaction=False)
         if item_id is not None:
             if event_type == "view":
@@ -111,6 +119,19 @@ def get_recent_views(user_id: int, k: int = 10) -> list[str]:
         return c.lrange(f"u:{user_id}:recent_views", 0, k - 1) or []
     except Exception:
         return []
+
+
+def get_session_id(user_id: int) -> str | None:
+    """마지막 이벤트의 클라이언트 세션 id (30분 비활동 시 소멸). Redis 없으면 None."""
+    c = _get_client()
+    if c is None:
+        return None
+    try:
+        v = c.get(f"u:{user_id}:session_id")
+        return v.decode() if isinstance(v, bytes) else v
+    except Exception as e:
+        log.warning(f"Redis read 실패: {e}")
+        return None
 
 
 def get_session_click_count(user_id: int) -> int:

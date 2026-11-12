@@ -21,7 +21,7 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 # 재전송 멱등 비교에 쓰는 필드. event_id · 서버 생성 필드(id, created_at)는 제외.
 _IDEMPOTENT_FIELDS = ("user_id", "item_id", "type", "query",
-                      "model_version_id", "experiment_id", "variant", "is_setup")
+                      "model_version_id", "experiment_id", "variant", "is_setup", "session_id")
 
 
 def _idempotent_or_409(existing: Event, incoming: dict) -> Event:
@@ -65,7 +65,7 @@ def log_event(e: EventIn, response: Response, db: Session = Depends(get_db)):
     # Feature Store 반영 (명세 4.4). is_setup=True 는 집계 제외 규칙에 따라 Redis 에도 쓰지 않는다
     # — 초기 이력 적재가 "최근 활동" 으로 오해되지 않게. record_event 는 Redis 통신 실패 시 swallow.
     if not e.is_setup:
-        feature_store.record_event(user_id=e.user_id, event_type=e.type, item_id=e.item_id)
+        feature_store.record_event(user_id=e.user_id, event_type=e.type, item_id=e.item_id, session_id=e.session_id)
     return ev
 
 

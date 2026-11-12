@@ -167,9 +167,9 @@ def test_total_ms_includes_session_context_lookup(client, monkeypatch):
 
     real = rec_router.session_click_ids
 
-    def slow_session_click_ids(db, user_id, limit=10):
+    def slow_session_click_ids(db, user_id, limit=10, session_id=None):
         time.sleep(0.05)
-        return real(db, user_id, limit)
+        return real(db, user_id, limit, session_id=session_id)
 
     monkeypatch.setattr(rec_router, "session_click_ids", slow_session_click_ids)
     lat = client.get("/recommend/1?k=3").json()["pipeline_latency"]

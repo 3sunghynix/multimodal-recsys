@@ -73,6 +73,9 @@ class Event(Base):
     # 초기 이력 적재(시뮬레이터 신규 고객의 train 이력 주입)는 is_setup=True로 저장하고,
     # A/B 집계(CTR 등)에서 제외한다. 실험 전환 · 재학습 트리거는 is_setup=False만 센다.
     is_setup: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0", index=True)
+    # 클라이언트가 정한 세션 id (시뮬레이터 · 앱). 있으면 "현재 세션"을 30분 규칙 대신 이 값으로 구분한다
+    # (services/session.py). 시뮬레이터는 한 고객의 세션을 몇 초 간격으로 보내 30분 규칙이면 하나로 합쳐진다.
+    session_id: Mapped[str | None] = mapped_column(String(64), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

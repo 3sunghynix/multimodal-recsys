@@ -404,3 +404,36 @@ def test_api_session_interest_and_stage_latency(env):
         assert lat["candidate_ms"] + lat["ranking_ms"] + lat["reranking_ms"] <= lat["total_ms"]
     finally:
         app.dependency_overrides.clear()
+
+
+def test_api_session_id_separates_sessions(env):
+    """같은 고객이 몇 초 간격으로 세션 두 개 — session_id가 있으면 세션 관심 · 세션 반영이 세션별로 갈린다."""
+    Session, ids, params, _ = env
+
+    def override():
+        s = Session()
+        try:
+            yield s
+        finally:
+            s.close()
+
+    with Session() as s:
+        s.add(ModelVersion(name="ume", version="sid", status="active", params=params))
+        s.get(Item, ids["amazon"][1]).category = "여성 > 원피스 > 미니 원피스"
+        s.get(Item, ids["amazon"][2]).category = "남성 > 하의 > 청바지"
+        s.commit()
+    from app.services import catalog_index
+    catalog_index._cache["key"] = None
+    app.dependency_overrides[app_db.get_db] = override
+    try:
+        client = TestClient(app)
+        uid = ids["users"][0]
+        for iid, sid in ((ids["amazon"][1], "s1"), (ids["amazon"][2], "s2")):
+            assert client.post("/events", json={"user_id": uid, "type": "click", "item_id": iid,
+                                                "session_id": sid}).status_code == 201
+        interest = lambda **p: client.get(f"/recommend/{uid}", params={"k": 5, **p}).json()["session_context"]["session_interest"]
+        assert interest() == "청바지"                       # 마지막 이벤트의 세션 (s2)
+        assert interest(session_id="s1") == "미니 원피스"    # 요청이 세션을 지정
+        assert interest(session_id="s3") is None            # 새 세션 — 아직 클릭 없음
+    finally:
+        app.dependency_overrides.clear()
