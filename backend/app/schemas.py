@@ -67,6 +67,8 @@ class EventIn(BaseModel):
     event_id: UUID | None = None
     # 신규 고객의 초기 이력 주입. True이면 A/B · CTR 집계에서 제외.
     is_setup: bool = False
+    # 클라이언트 세션 id (선택). 있으면 현재 세션을 이 값으로 구분 (없으면 서버 시각 30분 규칙). 이벤트연결규약 2.4
+    session_id: str | None = Field(None, max_length=64)
 
 
 class EventOut(EventIn):

@@ -185,7 +185,7 @@ class UME(Recommender):
         dim = ix.text.shape[1] if len(ix) else None
         t_cand = t_rank = 0.0
 
-        sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id) if w > 0 else [], np.int64))
+        sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id, session_id=self.session_id) if w > 0 else [], np.int64))
         self.session_clicks_used = len(sess_all)
         scores, personal, groups, ids, cats, brands = [], [], [], [], [], []
         for source, art in dirs.items():

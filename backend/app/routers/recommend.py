@@ -7,7 +7,7 @@
 """
 import time
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,7 +28,9 @@ _RECENT_CLICK_LIMIT = 5
 
 
 @router.get("/{user_id}", response_model=RecommendOut)
-def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db)):
+def recommend(user_id: int, k: int | None = None,
+              session_id: str | None = Query(None, max_length=64, description="클라이언트 세션 id (선택). 주면 그 세션의 클릭으로 세션 반영"),
+              db: Session = Depends(get_db)):
     t_start = time.perf_counter()
     if db.get(User, user_id) is None:
         raise HTTPException(404, f"고객 없음: {user_id}")
@@ -43,6 +45,7 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
     if mv is None:
         raise HTTPException(409, "active 모델이 없습니다. /models 에서 등록 · 활성화하세요")
     recommender = recommenders.get(mv.name, mv.params)
+    recommender.session_id = session_id
     scored = recommender.recommend_scored(db, user_id, k)       # (id, score) 쌍 — 모델이 실제 점수를 돌려주거나 base 가 폴백
     items = [i for i, _ in scored]
     model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천까지 (세션 컨텍스트 전)
@@ -71,7 +74,7 @@ def recommend(user_id: int, k: int | None = None, db: Session = Depends(get_db))
         ).order_by(Event.created_at.desc(), Event.id.desc()).limit(_RECENT_CLICK_LIMIT)).all()
         recent_clicks = [str(i) for i in recent]
     # 세션 관심: 현재 세션(30분 안) 클릭 상품의 가장 많은 소분류 (세션이 없으면 None)
-    interest = session_interest(db, session_click_ids(db, user_id))
+    interest = session_interest(db, session_click_ids(db, user_id, session_id=session_id))
     # total_ms 는 세션 컨텍스트(최근 클릭 · 세션 관심의 DB · Redis 조회)까지 만든 뒤 — 응답 직전까지의 요청 처리 시간
     total_ms = round((time.perf_counter() - t_start) * 1000, 3)
 

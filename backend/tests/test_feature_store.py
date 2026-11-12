@@ -174,7 +174,7 @@ def test_events_endpoint_calls_feature_store_record(client, monkeypatch):
     )
     r = client.post("/events", json={"user_id": 1, "type": "click", "item_id": 3})
     assert r.status_code == 201
-    assert calls == [{"user_id": 1, "event_type": "click", "item_id": 3}]
+    assert calls == [{"user_id": 1, "event_type": "click", "item_id": 3, "session_id": None}]
 
 
 def test_events_endpoint_skips_feature_store_for_is_setup(client, monkeypatch):
@@ -205,3 +205,17 @@ def test_recommend_prefers_redis_when_populated(client, monkeypatch):
     )
     body = client.get("/recommend/1?k=3").json()
     assert body["session_context"]["recent_clicks"] == ["99", "88"]
+
+
+def test_record_event_new_session_id_resets_session_clicks(monkeypatch):
+    """session_id가 바뀌면 새 세션 — session_clicks를 지우고 0부터 (이벤트연결규약 2.4)."""
+    mock_client = MagicMock()
+    mock_client.pipeline.return_value = MagicMock()
+    monkeypatch.setattr(feature_store, "_get_client", lambda: mock_client)
+
+    mock_client.get.return_value = b"s1"
+    feature_store.record_event(user_id=5, event_type="click", item_id=1, session_id="s1")   # 같은 세션
+    mock_client.delete.assert_not_called()
+    feature_store.record_event(user_id=5, event_type="click", item_id=2, session_id="s2")   # 새 세션
+    mock_client.delete.assert_called_once_with("u:5:session_clicks")
+    mock_client.set.assert_any_call("u:5:session_id", "s2", ex=feature_store.SESSION_TTL_SEC)
