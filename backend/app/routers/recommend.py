@@ -6,6 +6,7 @@
 - session_context: recent_clicks · session_interest
 """
 import time
+import uuid as _uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -14,7 +15,7 @@ from sqlalchemy.orm import Session
 from .. import recommenders
 from ..config import settings
 from ..db import get_db
-from ..models import Event, Experiment, ModelVersion, User
+from ..models import Event, Experiment, Item, ModelVersion, RecommendRequest, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
 from ..services import feature_store
 from ..services.ab import assign_variant
@@ -50,20 +51,34 @@ def recommend(user_id: int, k: int | None = None,
     items = [i for i, _ in scored]
     model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천까지 (세션 컨텍스트 전)
 
-    # recommendations[]: product_id · score · score_kind · reason · is_exploration.
+    # 이벤트연결규약 (PR #54) — 요청 UUID · 상품별 source · source_item_id 노출.
+    # 상품을 한 번에 lookup (N+1 방지). recommender 가 돌려준 id 는 Item 에 반드시 존재.
+    request_id = _uuid.uuid4()
+    items_by_id = {it.id: it for it in db.scalars(select(Item).where(Item.id.in_(items))).all()} if items else {}
+
+    # recommendations[]: product_id · score · score_kind · reason · is_exploration + position · impression_id · source · source_item_id.
     #   score_kind="model" → recommender.scored_native=True (Popularity · BrandPopularity 는 이벤트 가중치 합계가 실제 점수)
     #   score_kind="rank"  → 모델이 점수를 돌려주지 않아 base 가 순위 기반 placeholder (1.0 → 0.0)
     # 자동 채점·리뷰에서 "모델 점수"로 오해되지 않도록 두 종류를 분리해 노출한다.
     score_kind = "model" if recommender.scored_native else "rank"
     reason = recommender.fallback_reason or _REASON.get(mv.name, mv.name)   # 대체 경로면 그 이유 (예: UME 신규 고객 → popular)
-    recommendations = [RecommendationOut(
-        product_id=str(item_id),
-        score=round(float(score), 4),
-        score_kind=score_kind,
-        score_basis=recommender.score_basis,                   # 점수 단위 (UME 표준화 · 데이터셋 백분위 · 인기 가중치 합 · 순위)
-        reason=reason,
-        is_exploration=False,                                  # MAB 미구현 — 전부 exploit
-    ) for item_id, score in scored]
+    recommendations = []
+    for pos, (item_id, score) in enumerate(scored, start=1):
+        it = items_by_id.get(item_id)
+        if it is None:                                         # 방어적 — recommender 계약 깨지면 skip (로그 남기지 않음, 추천 수가 k 미만으로 돌아감)
+            continue
+        recommendations.append(RecommendationOut(
+            product_id=str(item_id),
+            score=round(float(score), 4),
+            score_kind=score_kind,
+            score_basis=recommender.score_basis,               # 점수 단위 (UME 표준화 · 데이터셋 백분위 · 인기 가중치 합 · 순위)
+            reason=reason,
+            is_exploration=False,                              # MAB 미구현 — 전부 exploit
+            position=pos,
+            impression_id=f"{request_id}:{pos}",
+            source=it.source,
+            source_item_id=it.source_item_id,
+        ))
 
     # 세션 컨텍스트: 해당 고객의 최근 클릭 상품 5개 (Feature Store 우선, 비면 DB 폴백).
     # 서비스가 처음 뜨거나 Redis 가 없거나 Redis 가 cold(앞 선 이벤트 없음) 일 때 DB 가 보완.
@@ -84,7 +99,21 @@ def recommend(user_id: int, k: int | None = None,
                                reranking_ms=round(t["reranking_ms"], 3), total_ms=total_ms) if t else
                PipelineLatency(candidate_ms=model_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
 
+    # 응답 전에 recommend_requests 커밋 — 클라이언트가 즉시 POST /events 로 이 request_id 를 참조해도
+    # 서버가 역조회에 성공하도록 (이벤트연결규약.md §2.2).
+    db.add(RecommendRequest(
+        request_id=request_id,
+        user_id=user_id,
+        model_version_id=mv.id,
+        experiment_id=exp.id if exp else None,
+        variant=variant["name"] if variant else None,
+        k=k,
+        item_ids=items,
+    ))
+    db.commit()
+
     return RecommendOut(
+        request_id=request_id,
         user_id=user_id, model=mv.name, model_version_id=mv.id,
         experiment_id=exp.id if exp else None, variant=variant["name"] if variant else None,
         items=items,

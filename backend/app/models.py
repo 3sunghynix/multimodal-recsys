@@ -100,6 +100,22 @@ class Experiment(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class RecommendRequest(Base):
+    """추천 요청 1건 = 1 row. GET /recommend 가 응답 전에 insert.
+    이벤트가 request_id 로 역조회해 모델/실험/variant 정보를 서버가 자동 채우는 기준
+    (이벤트연결규약.md §2.1 · PR #54). 상품 단위 impression 은 저장하지 않고 item_ids 에서 position 으로 계산."""
+    __tablename__ = "recommend_requests"
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    model_version_id: Mapped[int | None] = mapped_column(ForeignKey("model_versions.id"))
+    experiment_id: Mapped[int | None] = mapped_column(ForeignKey("experiments.id"))
+    variant: Mapped[str | None] = mapped_column(String(32))
+    k: Mapped[int] = mapped_column(Integer)
+    # 응답에 담긴 순서 그대로의 Item.id 목록. position = index + 1. impression_id = f"{request_id}:{position}".
+    item_ids: Mapped[list] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
 class MetricSnapshot(Base):
     """평가 결과 기록 (오프라인 평가 · A/B 집계 · 재학습 전후). 대시보드 그래프의 데이터."""
     __tablename__ = "metric_snapshots"

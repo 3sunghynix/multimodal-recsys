@@ -102,6 +102,11 @@ class RecommendationOut(BaseModel):
     score_basis: Literal["event_weight_sum", "ume_zscore", "rank_percentile", "rank_placeholder"]
     reason: str                       # 모델별 간단 라벨 (popular · brand_match · personalized)
     is_exploration: bool              # MAB 탐색 슬롯 여부 — 미구현이라 항상 False
+    # ───── 이벤트연결규약 (PR #54) ─────
+    position: int                     # 1부터. 화면 순서 = recommendations 배열 index + 1
+    impression_id: str                # f"{request_id}:{position}" — 별도 저장 안함, 계산해서 돌려줌
+    source: str                       # Item.source (amazon · hm · ...)  — 시뮬레이터의 상품 매핑 확인용
+    source_item_id: str               # Item.source_item_id — 외부 상품 id (예: "B07XYZ")
 
 
 class PipelineLatency(BaseModel):
@@ -122,6 +127,10 @@ class SessionContext(BaseModel):
 
 
 class RecommendOut(BaseModel):
+    # 이벤트연결규약 (PR #54): 추천 요청 1건의 서버 생성 UUID. 뒤이은 이벤트가
+    # 이 값을 EventIn.request_id 로 보내면 서버가 recommend_requests 역조회로
+    # model_version_id · experiment_id · variant 를 자동 채운다.
+    request_id: UUID
     user_id: int
     model: str
     model_version_id: int | None
