@@ -17,7 +17,7 @@ from ..config import settings
 from ..db import get_db
 from ..models import Event, Experiment, Item, ModelVersion, RecommendRequest, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
-from ..services import feature_store
+from ..services import explore, feature_store
 from ..services.ab import assign_variant
 from ..services.session import session_click_ids, session_interest
 
@@ -48,8 +48,12 @@ def recommend(user_id: int, k: int | None = None,
     recommender = recommenders.get(mv.name, mv.params)
     recommender.session_id = session_id
     scored = recommender.recommend_scored(db, user_id, k)       # (id, score) 쌍 — 모델이 실제 점수를 돌려주거나 base 가 폴백
-    items = [i for i, _ in scored]
-    model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천까지 (세션 컨텍스트 전)
+    # 재정렬 마지막 단계: MAB 탐색 슬롯(params["explore"] 있을 때) + 같은 소분류 3개 연속 금지 (services/explore.py)
+    t_explore = time.perf_counter()
+    recs = explore.apply(db, user_id, scored, k, mv.params)
+    explore_ms = (time.perf_counter() - t_explore) * 1000
+    items = [r.item_id for r in recs]
+    model_ms = round((time.perf_counter() - t_start) * 1000, 3)   # 고객 확인 · 모델 선택 · 추천 · 재정렬까지 (세션 컨텍스트 전)
 
     # 이벤트연결규약 (PR #54) — 요청 UUID · 상품별 source · source_item_id 노출.
     # 상품을 한 번에 lookup (N+1 방지). recommender 가 돌려준 id 는 Item 에 반드시 존재.
@@ -62,18 +66,22 @@ def recommend(user_id: int, k: int | None = None,
     # 자동 채점·리뷰에서 "모델 점수"로 오해되지 않도록 두 종류를 분리해 노출한다.
     score_kind = "model" if recommender.scored_native else "rank"
     reason = recommender.fallback_reason or _REASON.get(mv.name, mv.name)   # 대체 경로면 그 이유 (예: UME 신규 고객 → popular)
+    # 최종 목록 = 탐색 슬롯 · 연속 제한까지 끝난 recs. position · impression_id · recommend_requests.item_ids 모두 이 순서
+    # (Item 에 없는 id 는 방어적으로 빼고, 뺀 뒤 목록으로 position 을 다시 매긴다 — impression_id 와 item_ids 가 항상 일치).
+    # 탐색 슬롯 상품은 모델 점수가 없으므로 순위 placeholder (score_kind="rank"), reason="mab_exploration".
+    recs = [r for r in recs if r.item_id in items_by_id]
+    items = [r.item_id for r in recs]
+    n = len(recs)
     recommendations = []
-    for pos, (item_id, score) in enumerate(scored, start=1):
-        it = items_by_id.get(item_id)
-        if it is None:                                         # 방어적 — recommender 계약 깨지면 skip (로그 남기지 않음, 추천 수가 k 미만으로 돌아감)
-            continue
+    for pos, r in enumerate(recs, start=1):
+        it = items_by_id[r.item_id]
         recommendations.append(RecommendationOut(
-            product_id=str(item_id),
-            score=round(float(score), 4),
-            score_kind=score_kind,
-            score_basis=recommender.score_basis,               # 점수 단위 (UME 표준화 · 데이터셋 백분위 · 인기 가중치 합 · 순위)
-            reason=reason,
-            is_exploration=False,                              # MAB 미구현 — 전부 exploit
+            product_id=str(r.item_id),
+            score=round(1 - (pos - 1) / max(n, 1), 4) if r.is_exploration else round(r.score, 4),
+            score_kind="rank" if r.is_exploration else score_kind,
+            score_basis="rank_placeholder" if r.is_exploration else recommender.score_basis,
+            reason=explore.REASON if r.is_exploration else reason,
+            is_exploration=r.is_exploration,
             position=pos,
             impression_id=f"{request_id}:{pos}",
             source=it.source,
@@ -111,9 +119,11 @@ def recommend(user_id: int, k: int | None = None,
 
     # 단계별 시간: 나눠 재는 모델(UME)은 그 값, 아니면 모델 추천 시간 전체를 candidate_ms 에.
     t = recommender.timings
+    # reranking_ms 에는 탐색 슬롯 · 연속 제한(explore_ms)도 더한다.
     latency = (PipelineLatency(candidate_ms=round(t["candidate_ms"], 3), ranking_ms=round(t["ranking_ms"], 3),
-                               reranking_ms=round(t["reranking_ms"], 3), total_ms=total_ms) if t else
-               PipelineLatency(candidate_ms=model_ms, ranking_ms=0.0, reranking_ms=0.0, total_ms=total_ms))
+                               reranking_ms=round(t["reranking_ms"] + explore_ms, 3), total_ms=total_ms) if t else
+               PipelineLatency(candidate_ms=round(model_ms - explore_ms, 3), ranking_ms=0.0,
+                               reranking_ms=round(explore_ms, 3), total_ms=total_ms))
 
     return RecommendOut(
         request_id=request_id,

@@ -200,6 +200,32 @@ def simulator():
     st.button("시뮬레이터 실행 · 후속 단계", disabled=True, help="현재 화면은 결과를 읽으며 작업 실행 API를 호출하지 않습니다.")
 
 
+def mab_section(pilot):
+    """C 그룹 (UME + MAB 탐색 슬롯) 결과. catalog_pilot --arms ABC 요약에만 있다."""
+    st.markdown("**C · UME + MAB 탐색 슬롯**")
+    labels = {"B_vs_A": "B(UME) − A(인기)", "C_vs_B": "C(UME+탐색) − B(UME)", "C_vs_A": "C(UME+탐색) − A(인기)"}
+    rows = []
+    for key, c in pilot.get("comparisons", {}).items():
+        if c is None:
+            continue
+        rows.append({"비교": labels.get(key, key), "대조 클릭률": c["A"]["rate"], "실험 클릭률": c["B"]["rate"],
+                     "차이": c["difference_B_minus_A"], "95% 구간": f"[{c['ci95'][0]:+.2%}, {c['ci95'][1]:+.2%}]",
+                     "p-value": c["p_value"]})
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True)
+    m = pilot["mab"]
+    ctr = lambda v: "—" if v is None else f"{v:.2%}"                                     # noqa: E731
+    st.write(f"탐색 슬롯 {m['exploration_slots']:,}개 (서로 다른 상품 {m['distinct_exploration_items']:,}) · "
+             f"탐색 CTR {ctr(m['exploration_ctr'])} vs C 그룹 일반 슬롯 CTR {ctr(m['exploit_ctr_in_c'])}")
+    st.write(f"신규 상품: 탐색 슬롯 {m['new_item_slots']:,}회 · 노출된 신규 상품 {m['new_items_shown']:,}개 "
+             f"(지정 {pilot.get('new_items', 0):,}개, 다른 그룹에서 노출 {m['new_items_shown_in_other_arms']:,}개)")
+    batches = pilot.get("batches")
+    if isinstance(batches, list) and len(batches) > 1:
+        df = pd.DataFrame(batches).set_index("batch")[["exploration_ctr", "c_ctr"]]
+        st.line_chart(df.rename(columns={"exploration_ctr": "탐색 슬롯 CTR", "c_ctr": "C 그룹 전체 CTR"}))
+        st.caption("배치마다 앞 배치의 노출 · 클릭이 탐색 선택(UCB)에 반영됩니다. 모의 행동이며 실제 사용자 반응 추정이 아닙니다.")
+
+
 def ab_page():
     st.title("A/B 테스트")
     offline_tab, simulated_tab, search_tab = st.tabs(["추천 평가", "A/B 시뮬레이션", "검색 품질"])
@@ -254,6 +280,8 @@ def ab_page():
                     st.markdown("**페르소나별**")
                     st.dataframe(pd.DataFrame(rows), hide_index=True)
                     st.caption("페르소나별 검정은 다중 비교 미보정입니다. 표본 부족이면 p-value가 비어 있습니다. 자동 승자는 선택하지 않습니다.")
+                if "mab" in pilot:
+                    mab_section(pilot)
             except (ValueError, KeyError, TypeError, OSError) as error:
                 st.error(str(error))
         else:
