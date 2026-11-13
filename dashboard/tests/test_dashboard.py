@@ -228,3 +228,27 @@ def test_real_catalog_pilot_replaces_synthetic_ab(monkeypatch, tmp_path):
     assert any('A 10 · B 256' in m.value for m in at.markdown)
     persona_tables = [df.value for df in at.dataframe if '페르소나' in df.value.columns]
     assert len(persona_tables) == 1 and list(persona_tables[0]['페르소나']) == ['눈팅형']   # no-comparison persona skipped
+
+
+def test_pilot_with_mab_arm_shows_c_section(monkeypatch, tmp_path):
+    folder = tmp_path / 'runs/catalog_pilot_abc'; folder.mkdir(parents=True)
+    test = lambda a, b: {'A': {'customers': 50, 'clicked_customers': a, 'rate': a / 50},
+                         'B': {'customers': 50, 'clicked_customers': b, 'rate': b / 50},
+                         'difference_B_minus_A': (b - a) / 50, 'ci95': [-.1, .2], 'p_value': .5}
+    pilot = {'kind': 'real_catalog_ab_pilot', 'comparison': test(14, 16),
+             'comparisons': {'B_vs_A': test(14, 16), 'C_vs_B': test(16, 18), 'C_vs_A': test(14, 18)},
+             'groups': {a: {'view': 500, 'click': 22} for a in 'ABC'},
+             'ume_fallback_count': 2, 'ume_requests': 50, 'cold_start_customers': 4,
+             'distinct_recommended_items': {'A': 10, 'B': 256, 'C': 300}, 'new_items': 100,
+             'mab': {'exploration_slots': 100, 'distinct_exploration_items': 80, 'exploration_views': 100,
+                     'exploration_clicks': 3, 'exploration_ctr': .03, 'exploit_ctr_in_c': .05,
+                     'new_item_slots': 40, 'new_items_shown': 35, 'new_items_shown_in_other_arms': 0},
+             'batches': [{'batch': b, 'exploration_ctr': .02 + b / 100, 'c_ctr': .05} for b in range(3)],
+             'by_persona': {}}
+    (folder / 'catalog_ab_summary.json').write_bytes(encode(pilot))
+    at = app(monkeypatch, tmp_path)
+    assert not at.exception
+    assert any('C · UME + MAB 탐색 슬롯' in m.value for m in at.markdown)
+    tables = [df.value for df in at.dataframe if '비교' in df.value.columns]
+    assert len(tables) == 1 and len(tables[0]) == 3
+    assert any('신규 상품: 탐색 슬롯 40회' in m.value for m in at.markdown)

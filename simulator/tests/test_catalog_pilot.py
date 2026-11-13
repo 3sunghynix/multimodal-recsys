@@ -78,3 +78,54 @@ def test_persona_with_one_arm_has_no_comparison(pilot):
 def test_module_imports_without_backend(monkeypatch):
     monkeypatch.setitem(sys.modules, "app", None)                          # backend package unavailable
     importlib.reload(importlib.import_module("simulator.catalog_pilot"))
+
+
+@pytest.fixture
+def pilot_abc(pilot):
+    """A · B 그대로 + C 두 명 (c7 탐색 상품 클릭, c8 클릭 없음). hm:9는 신규 상품."""
+    customers, assignments, responses, searches, actions = pilot
+    customers = customers + [customer("c7", "brand_loyal"), customer("c8", "window_shopper")]
+    assignments = {**assignments, "c7": "C", "c8": "C"}
+    responses = responses + [
+        dict(customer_id="c7", variant="C", items=["hm:1", "hm:9"], raw_count=2, fallback_reason=None,
+             exploration_items=["hm:9"]),
+        dict(customer_id="c8", variant="C", items=["hm:2", "hm:7"], raw_count=2, fallback_reason=None,
+             exploration_items=["hm:7"])]
+    searches = searches + [dict(type="search", customer_id=c, variant="C", search_type="text") for c in ("c7", "c8")]
+    actions = actions + [dict(type="view", customer_id=c, variant="C") for c in ("c7", "c7", "c8", "c8")] + \
+        [dict(type="click", customer_id="c7", variant="C")]
+    decisions = [dict(customer_id="c7", item_key="hm:1", actions=["view"]),
+                 dict(customer_id="c7", item_key="hm:9", actions=["view", "click"]),
+                 dict(customer_id="c8", item_key="hm:2", actions=["view"]),
+                 dict(customer_id="c8", item_key="hm:7", actions=["view"])]
+    return customers, assignments, responses, searches, actions, decisions
+
+
+def test_three_arms_add_c_comparisons_and_mab_metrics(pilot_abc):
+    customers, assignments, responses, searches, actions, decisions = pilot_abc
+    s = summarize(customers, assignments, responses, searches, actions, seed=42, catalog_products=10,
+                  min_per_arm=1, decisions=decisions, new_keys={"hm:9"})
+    assert s["comparison"]["A"]["customers"] == 2 and s["comparison"]["B"]["customers"] == 3   # B vs A 그대로
+    c = s["comparisons"]["C_vs_B"]
+    assert c["arms"] == {"A": "B", "B": "C"} and c["A"]["customers"] == 3 and c["B"]["customers"] == 2
+    assert c["B"]["clicked_customers"] == 1
+    assert set(s["comparisons"]) == {"B_vs_A", "C_vs_B", "C_vs_A"}
+    assert set(s["groups"]) == {"A", "B", "C"} and s["distinct_recommended_items"]["C"] == 4
+    m = s["mab"]
+    assert (m["exploration_slots"], m["exploration_views"], m["exploration_clicks"]) == (2, 2, 1)
+    assert m["exploration_ctr"] == 0.5 and m["exploit_ctr_in_c"] == 0.0
+    assert (m["new_item_slots"], m["new_items_shown"], m["new_items_shown_in_other_arms"]) == (1, 1, 0)
+    assert "comparisons" in s["by_persona"]["brand_loyal"]
+
+
+def test_two_arms_have_no_mab_section(pilot):
+    s = summarize(*pilot, seed=42, catalog_products=10, min_per_arm=1)
+    assert "mab" not in s and "comparisons" not in s
+
+
+def test_batch_stats_reports_exploration_ctr(pilot_abc):
+    from simulator.catalog_pilot import _batch_stats
+    *_, responses, _, _, decisions = pilot_abc
+    b = _batch_stats(0, [r for r in responses if r["variant"] == "C"], decisions)
+    assert (b["exploration_views"], b["exploration_clicks"], b["exploration_ctr"]) == (2, 1, 0.5)
+    assert b["c_ctr"] == 0.25

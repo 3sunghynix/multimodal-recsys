@@ -36,6 +36,10 @@ class Item(Base):
     category: Mapped[str] = mapped_column(String(200), default="")
     price: Mapped[float | None] = mapped_column(Float)
     image_path: Mapped[str | None] = mapped_column(String(500))      # 로컬 경로 또는 URL
+    # 상품 등록 시각 (naive UTC). 신규 상품(명세: 등록 7일 이내) 노출 보장에 쓴다 (services/explore.py).
+    # 공개 데이터셋(Amazon · H&M)에는 등록일이 없어 적재 상품은 NULL = 신규 아님. 데모 신규 상품은
+    # scripts/mark_new_items.py로 지정한다.
+    registered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     # 콘텐츠 임베딩(검색용). 상품마다 고정값이며 인코더가 바뀔 때만 재계산한다.
     # 인코더 산출물(MiniLM·Marqo·CLIP 등 L2 정규화 완료 벡터)을 그대로 저장한다 — 차원은 위 EMBEDDING_DIM.
     # Two-Tower 학습 결과 상품 벡터(모델마다 달라짐, A/B로 모델 두 개 동시 서빙 가능)는
