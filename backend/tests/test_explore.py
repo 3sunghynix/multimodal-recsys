@@ -247,3 +247,20 @@ def test_item_stats_counts_views_and_clicks_excluding_setup(env):
                    Event(user_id=1, item_id=7, type="view", is_setup=True)])
         s.commit()
         assert item_stats(s, [7])[7] == (before[0] + 1, before[1] + 1)
+
+
+def test_recommend_requests_store_final_order_with_exploration(env):
+    """이벤트연결규약: recommend_requests.item_ids · position · impression_id 는 탐색 슬롯 · 연속 제한 후 최종 목록 기준."""
+    import uuid
+
+    from app.models import RecommendRequest
+    client, Session = env
+    _enable_explore(Session)
+    body = client.get("/recommend/1", params={"k": 10}).json()
+    recs = body["recommendations"]
+    assert [r["position"] for r in recs] == list(range(1, len(recs) + 1))
+    assert all(r["impression_id"] == f"{body['request_id']}:{r['position']}" for r in recs)
+    assert any(r["is_exploration"] for r in recs)
+    with Session() as s:
+        row = s.get(RecommendRequest, uuid.UUID(body["request_id"]))
+    assert row.item_ids == [int(r["product_id"]) for r in recs] == body["items"]

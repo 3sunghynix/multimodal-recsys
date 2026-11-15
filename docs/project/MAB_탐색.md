@@ -127,4 +127,6 @@ docker compose run --rm --no-deps \
 - 탐색 CTR은 낮을 수 있다 — 탐색의 목적은 지금 클릭이 아니라 정보 수집 · 신규 상품 노출이다. 명세 과제 목표(Exploration vs Exploitation)는 C − B 클릭률 차이와 탐색 CTR의 묶음별 변화로 보고한다.
 - 상품 단위 팔이라 상품이 많으면 대부분 노출 0에서 시작한다 (후보를 선호 소분류 · 200개로 제한하는 이유).
 - 파일럿의 학습은 묶음 단위다 (묶음 안에서는 같은 통계). 서비스는 요청마다 DB 집계를 읽는다.
+- 보상 집계(`item_stats`)는 지금 모든 비 setup view · click을 센다. 이벤트연결규약 결정 3(view = 추천 노출, `request_id` 있는 것) 이후에는 `request_id IS NOT NULL`인 이벤트만 세도록 바꾼다 — `events.request_id`가 들어오는 형우님 이벤트 쪽 작업 후 후속 PR.
+- 탐색은 기본 꺼짐(`params.explore` 없음). C가 첫 세션 클릭률 −2.2%p라, 켤지는 운영 결정 — 켤 때의 대가는 신규 상품 노출 199/200 · 추천 다양성 2배.
 - Thompson Sampling은 보너스 과제로 남겨 둔다 (`algorithm` 값 추가로 확장).
