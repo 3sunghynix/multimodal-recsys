@@ -134,3 +134,215 @@ def test_recommend_under_ab_records_variant_and_experiment(client):
         assert row.experiment_id == exp["id"]
         assert row.variant == body["variant"]
         assert row.model_version_id == body["model_version_id"]
+
+
+# ─── PR #57 ③ POST /events request_id 검증 · 자동 채움 ───────────────────
+
+def _recommend(c, user_id=1, k=3):
+    """추천 요청 → (request_id, item_ids, model_version_id, experiment_id, variant) 돌려줌."""
+    body = c.get(f"/recommend/{user_id}", params={"k": k}).json()
+    return (uuid.UUID(body["request_id"]),
+            [int(r["product_id"]) for r in body["recommendations"]],
+            body["model_version_id"], body.get("experiment_id"), body.get("variant"))
+
+
+def test_event_with_request_id_autofills_model_info(client):
+    """request_id 만 주고 model_version_id 등을 생략하면 서버가 recommend_requests 역조회로 채움 (톡방 결정 5)."""
+    c, _ = client
+    req_id, items, mv_id, _, _ = _recommend(c, user_id=1, k=3)
+
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[1],
+                                 "request_id": str(req_id), "position": 2})
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["model_version_id"] == mv_id          # 서버가 자동 채움
+    assert body["request_id"] == str(req_id)
+    assert body["position"] == 2
+
+
+def test_event_with_matching_model_info_passes(client):
+    """request_id + 일치하는 model_version_id 명시 → 그대로 저장 (덮어쓰지 않음)."""
+    c, _ = client
+    req_id, items, mv_id, _, _ = _recommend(c, user_id=1, k=2)
+    r = c.post("/events", json={"user_id": 1, "type": "view", "item_id": items[0],
+                                 "request_id": str(req_id), "position": 1,
+                                 "model_version_id": mv_id})
+    assert r.status_code == 201 and r.json()["model_version_id"] == mv_id
+
+
+def test_event_with_mismatched_model_version_id_rejected(client):
+    """request_id 서버 기록과 model_version_id 가 다르면 422 (톡방 결정 5)."""
+    c, _ = client
+    req_id, items, mv_id, _, _ = _recommend(c, user_id=1, k=2)
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[0],
+                                 "request_id": str(req_id), "position": 1,
+                                 "model_version_id": mv_id + 999})
+    assert r.status_code == 422 and "model_version_id" in r.json()["detail"]
+
+
+def test_event_with_mismatched_user_id_rejected(client):
+    """다른 유저의 request_id 가로채면 422 (보안 이슈)."""
+    c, _ = client
+    req_id, items, _, _, _ = _recommend(c, user_id=1, k=2)
+    r = c.post("/events", json={"user_id": 2, "type": "click", "item_id": items[0],
+                                 "request_id": str(req_id), "position": 1})
+    assert r.status_code == 422 and "user_id" in r.json()["detail"]
+
+
+def test_event_with_unknown_request_id_rejected(client):
+    """recommend_requests 에 없는 request_id → 422."""
+    c, _ = client
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": 3,
+                                 "request_id": str(uuid.uuid4())})
+    assert r.status_code == 422 and "recommend_requests" in r.json()["detail"]
+
+
+def test_event_position_validated_against_item_ids(client):
+    """position 명시 시 그 자리 상품이 item_id 와 같아야 함; 다르면 422."""
+    c, _ = client
+    req_id, items, _, _, _ = _recommend(c, user_id=1, k=3)
+    # items[0] 을 position=2 로 보내면 미스매치
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[0],
+                                 "request_id": str(req_id), "position": 2})
+    assert r.status_code == 422 and ("position" in r.json()["detail"] or "불일치" in r.json()["detail"])
+
+
+def test_event_position_autofilled_from_item_id(client):
+    """position 생략 + item_id 가 item_ids 안에 있으면 서버가 position 자동 채움."""
+    c, _ = client
+    req_id, items, _, _, _ = _recommend(c, user_id=1, k=3)
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[2],
+                                 "request_id": str(req_id)})
+    assert r.status_code == 201 and r.json()["position"] == 3
+
+
+def test_event_without_request_id_still_works(client):
+    """기존 호출 (request_id 없음) 그대로 작동 — 호환성."""
+    c, _ = client
+    r = c.post("/events", json={"user_id": 1, "type": "click", "item_id": 3})
+    assert r.status_code == 201 and r.json()["request_id"] is None
+
+
+# ─── PR #57 ④ POST /events/batch ─────────────────────────────────────────
+
+def test_events_batch_creates_all_valid(client):
+    """유효한 3건 → 모두 created."""
+    c, _ = client
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "click", "item_id": 3},
+        {"user_id": 1, "type": "click", "item_id": 4},
+        {"user_id": 2, "type": "view", "item_id": 3},
+    ]}).json()
+    assert body["created"] == 3 and body["duplicate"] == 0 and body["error"] == 0
+    assert all(r["status"] == "created" for r in body["results"])
+
+
+def test_events_batch_partial_success_keeps_valid_ones(client):
+    """3건 중 1건이 검증 실패여도 나머지 2건은 저장 (톡방 결정 2)."""
+    c, _ = client
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "click", "item_id": 3},
+        {"user_id": 999, "type": "click", "item_id": 3},            # 없는 고객 → 404
+        {"user_id": 1, "type": "click", "item_id": 4},
+    ]}).json()
+    assert body["created"] == 2 and body["error"] == 1
+    assert body["results"][1]["status"] == "error" and body["results"][1]["code"] == 404
+    assert body["results"][0]["status"] == "created"
+    assert body["results"][2]["status"] == "created"
+
+
+def test_events_batch_duplicate_event_id(client):
+    """같은 event_id 로 저장된 이벤트가 있으면 duplicate (id · event_id 반환)."""
+    c, _ = client
+    eid = "6b1c7d9e-0000-4000-8000-000000000001"
+    first = c.post("/events", json={"user_id": 1, "type": "click", "item_id": 3, "event_id": eid}).json()
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "click", "item_id": 3, "event_id": eid},        # 멱등 같은 내용
+        {"user_id": 1, "type": "view",  "item_id": 3, "event_id": eid},        # 다른 내용 → 409
+    ]}).json()
+    assert body["duplicate"] == 1 and body["error"] == 1
+    assert body["results"][0]["status"] == "duplicate" and body["results"][0]["id"] == first["id"]
+    assert body["results"][1]["status"] == "error" and body["results"][1]["code"] == 409
+
+
+def test_events_batch_rejects_over_1000(client):
+    """1,001 건이면 Pydantic 이 422 로 거절 (max_length)."""
+    c, _ = client
+    r = c.post("/events/batch", json={
+        "events": [{"user_id": 1, "type": "click", "item_id": 3}] * 1001})
+    assert r.status_code == 422
+
+
+def test_events_batch_autofills_from_request_id(client):
+    """배치 안에서 request_id 로 model_version_id 자동 채움 — 배치 내 distinct request_id 는 한 번에 fetch (N+1 방지)."""
+    c, _ = client
+    req_id, items, mv_id, _, _ = _recommend(c, user_id=1, k=3)
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "view",  "item_id": items[0], "request_id": str(req_id)},
+        {"user_id": 1, "type": "click", "item_id": items[1], "request_id": str(req_id), "position": 2},
+    ]}).json()
+    assert body["created"] == 2
+    # 저장된 각 이벤트의 model_version_id 가 서버 기록으로 채워졌는지는 /events/count 로는 못 보지만,
+    # 결과에 id 가 반환되면 저장 자체는 성공. 상세 검증은 아래 통합 테스트에서.
+
+
+def test_events_batch_rejects_empty(client):
+    """빈 배치는 422 (min_length=1)."""
+    c, _ = client
+    r = c.post("/events/batch", json={"events": []})
+    assert r.status_code == 422
+
+
+# ─── PR #59 리뷰 반영 (유환) ────────────────────────────────────────────
+
+def test_event_autofill_then_resend_is_idempotent(client):
+    """request_id 로 model_version_id 자동 채움 후, 같은 event_id · 같은 생략 상태로 재전송하면
+    멱등 통과 (409 안 남; PR #59 리뷰 by 유환). 자동 채움을 멱등 비교 전에 적용해야 저장된
+    (채워진) 값과 incoming(채워진) 값이 같아진다."""
+    c, _ = client
+    req_id, items, _mv_id, _, _ = _recommend(c, user_id=1, k=3)
+    eid = "7b2c8e9f-0000-4000-8000-000000000011"
+
+    # 1차: model_version_id 생략 + request_id 만 → 서버가 자동 채움해 저장
+    r1 = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[1],
+                                  "request_id": str(req_id), "position": 2, "event_id": eid})
+    assert r1.status_code == 201
+
+    # 2차: 같은 생략 상태로 재전송 → 서버가 또 자동 채움 → 비교 통과 → 200 멱등
+    r2 = c.post("/events", json={"user_id": 1, "type": "click", "item_id": items[1],
+                                  "request_id": str(req_id), "position": 2, "event_id": eid})
+    assert r2.status_code == 200 and r2.json()["id"] == r1.json()["id"]
+
+
+def test_events_batch_in_batch_duplicate_event_id_doesnt_rollback_others(client):
+    """배치 안에 같은 event_id 가 두 번 있으면 첫 건은 created, 두 번째는 duplicate(같은 내용)
+    또는 error(409, 다른 내용). 그리고 **전체 롤백 없이** 다른 valid 건은 그대로 저장됨
+    (톡방 결정 2, PR #59 리뷰)."""
+    c, _ = client
+    eid_dup = "7b2c8e9f-0000-4000-8000-000000000021"
+    eid_other = "7b2c8e9f-0000-4000-8000-000000000022"
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "click", "item_id": 3, "event_id": eid_dup},    # 1번째 — created
+        {"user_id": 1, "type": "click", "item_id": 3, "event_id": eid_dup},    # 2번째 — 같은 내용 → duplicate
+        {"user_id": 1, "type": "view",  "item_id": 3, "event_id": eid_dup},    # 3번째 — 다른 내용 → error 409
+        {"user_id": 1, "type": "click", "item_id": 4, "event_id": eid_other},  # 4번째 — 정상 → created
+    ]}).json()
+    assert body["created"] == 2 and body["duplicate"] == 1 and body["error"] == 1
+    assert body["results"][0]["status"] == "created"
+    assert body["results"][1]["status"] == "duplicate" and body["results"][1]["id"] == body["results"][0]["id"]
+    assert body["results"][2]["status"] == "error" and body["results"][2]["code"] == 409
+    assert body["results"][3]["status"] == "created"       # 중복이 전체 롤백 유발 안 함
+
+
+def test_events_batch_autofill_then_resend_mix(client):
+    """배치: autofill 저장 → 같은 event_id · 같은 생략 상태로 재전송된 2번째는 duplicate (PR #59 리뷰)."""
+    c, _ = client
+    req_id, items, _mv_id, _, _ = _recommend(c, user_id=1, k=3)
+    eid = "7b2c8e9f-0000-4000-8000-000000000031"
+    body = c.post("/events/batch", json={"events": [
+        {"user_id": 1, "type": "click", "item_id": items[0],
+         "request_id": str(req_id), "position": 1, "event_id": eid},          # autofill 적용 저장
+        {"user_id": 1, "type": "click", "item_id": items[0],
+         "request_id": str(req_id), "position": 1, "event_id": eid},          # 같은 생략 상태 재전송
+    ]}).json()
+    assert body["created"] == 1 and body["duplicate"] == 1 and body["error"] == 0

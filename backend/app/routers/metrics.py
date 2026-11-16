@@ -78,8 +78,10 @@ def metric_window(
     metric_definition_version: str = Query(
         "user_click_through_v1",
         description="지표 정의 버전. 현재 기본값 user_click_through_v1 = "
-                    "'hit_users 는 (start,end] 구간에 view 와 click 이 둘 다 있는 distinct user'. "
-                    "runner HitRate@K (정답 기반) 와는 정의가 다르므로 혼용 금지 — 광석 PR #48 2차 리뷰.",
+                    "'views · clicks · hit_users 모두 request_id 가 있는 노출 이벤트만 센다 "
+                    "(상세 페이지 조회 · 검색 결과 직행 클릭 제외 — PR #59 리뷰). "
+                    "hit_users 는 (start,end] 구간에 노출 view 와 노출 click 이 둘 다 있는 distinct user'. "
+                    "runner HitRate@K (정답 기반) 와는 정의가 다르므로 혼용 금지 — 광석 PR #48 2차 리뷰 + 톡방 결정 3.",
     ),
     model_version_id: int | None = Query(
         None,
@@ -130,17 +132,19 @@ def metric_window(
     model_filter = (Event.model_version_id == model_version_id) if model_version_id is not None else True
     in_window = and_(Event.created_at > t_start, Event.created_at <= t_end, non_setup, model_filter)
 
-    views = int(db.scalar(select(func.count(Event.id))
-                          .where(and_(in_window, Event.type == "view"))) or 0)
-    clicks = int(db.scalar(select(func.count(Event.id))
-                           .where(and_(in_window, Event.type == "click"))) or 0)
+    # 노출 view · 노출 click 모두 request_id 있는 것만 — 상세 페이지 조회 · 검색 결과 클릭 등 제외
+    # (톡방 결정 3, PR #57 ⑤ + PR #59 리뷰: CTR 분자/분모 기준 일치).
+    # metric_definition_version=user_click_through_v1 정의에 맞춰 노출 기준으로만 CTR 집계.
+    view_filter = and_(in_window, Event.type == "view", Event.request_id.is_not(None))
+    click_filter = and_(in_window, Event.type == "click", Event.request_id.is_not(None))
 
-    # evaluated_users = 노출 받은 distinct user, hit_users = 노출 받고 **또** 클릭한 user (교집합).
-    # 노출 없이 클릭만 한 유저 (예: 검색결과 클릭) 는 hit_users 에 포함 안 됨 (PR #48 1차 리뷰 by 유환).
-    viewers = {r for (r,) in db.execute(
-        select(Event.user_id).distinct().where(and_(in_window, Event.type == "view")))}
-    clickers = {r for (r,) in db.execute(
-        select(Event.user_id).distinct().where(and_(in_window, Event.type == "click")))}
+    views = int(db.scalar(select(func.count(Event.id)).where(view_filter)) or 0)
+    clicks = int(db.scalar(select(func.count(Event.id)).where(click_filter)) or 0)
+
+    # evaluated_users = 노출 받은 distinct user, hit_users = 노출받고 **또** 노출 click 한 user (교집합).
+    # 검색 결과 직행 클릭 (request_id 없음) 은 clickers 에서도 제외 (PR #48 1차 리뷰 + PR #59 리뷰 by 유환).
+    viewers = {r for (r,) in db.execute(select(Event.user_id).distinct().where(view_filter))}
+    clickers = {r for (r,) in db.execute(select(Event.user_id).distinct().where(click_filter))}
     evaluated_users = len(viewers)
     hit_users = len(viewers & clickers)
 

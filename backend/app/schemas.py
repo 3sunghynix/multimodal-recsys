@@ -69,6 +69,15 @@ class EventIn(BaseModel):
     is_setup: bool = False
     # 클라이언트 세션 id (선택). 있으면 현재 세션을 이 값으로 구분 (없으면 서버 시각 30분 규칙). 이벤트연결규약 2.4
     session_id: str | None = Field(None, max_length=64)
+    # 이벤트연결규약 §2.2 (PR #57 ③): 어떤 추천 요청에서 비롯됐는지.
+    # 있으면 서버가 recommend_requests 역조회로:
+    #   · user_id 가 요청의 user 와 다르면 422
+    #   · model_version_id · experiment_id · variant 가 생략되면 서버 기록으로 자동 채움
+    #   · 명시됐는데 서버 기록과 다르면 422 (톡방 결정 5)
+    request_id: UUID | None = None
+    # position 이 주어지면 그 자리 상품(item_ids[position-1])이 item_id 와 같아야 함 (422 if 아님).
+    # 없고 item_id 만 있으면 서버가 item_ids 에서 찾아 자동 채움.
+    position: int | None = Field(None, ge=1)
 
 
 class EventOut(EventIn):
@@ -76,6 +85,34 @@ class EventOut(EventIn):
     id: int
     event_id: UUID
     created_at: datetime
+
+
+# ───── POST /events/batch (이벤트연결규약 §2.3, PR #57 ④) ─────
+
+class EventsBatchIn(BaseModel):
+    """최대 1,000건 입력. 건별 검증 후 성공한 것만 모아 한 번에 commit — 일부 실패해도
+    나머지는 저장 (톡방 결정 2). 멱등 규칙은 POST /events 와 같음."""
+    events: list[EventIn] = Field(min_length=1, max_length=1000)
+
+
+class EventBatchResult(BaseModel):
+    """건별 결과. status 는 세 가지:
+       - created: 새로 저장됨 (id · event_id 반환)
+       - duplicate: 같은 event_id 로 저장된 멱등 이벤트 재전송 (기존 id · event_id 반환)
+       - error: 검증/저장 실패 (code HTTP 상태 + detail 문자열)."""
+    index: int
+    status: Literal["created", "duplicate", "error"]
+    id: int | None = None
+    event_id: UUID | None = None
+    code: int | None = None
+    detail: str | None = None
+
+
+class EventsBatchOut(BaseModel):
+    results: list[EventBatchResult]
+    created: int
+    duplicate: int
+    error: int
 
 
 class UserIn(BaseModel):
