@@ -44,6 +44,10 @@ docker compose run --rm --no-deps \
 - 출력 폴더가 이미 있으면 실행하지 않는다. 결과는 `simulator/runs/<이름>/`, 대시보드가 바로 읽는다.
 - 실행 시간: 고객당 약 0.45초 (M 시리즈 MacBook, CPU). 1,000명 7분 25초, 10,000명 약 75분.
 
+### C 그룹 (MAB 탐색 슬롯)
+
+`--arms ABC --batches 10 --new-items 200`을 주면 C = UME + MAB 탐색 슬롯이 추가되고 묶음마다 탐색이 학습된다. 설정 · 해석: [MAB_탐색.md](MAB_탐색.md)
+
 ## 출력
 
 | 파일 | 내용 |
