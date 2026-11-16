@@ -68,7 +68,8 @@ def env(tmp_path):
 def test_retrain_registers_candidate_usable_by_serving(env):
     Session, tmp = env
     with Session() as db:
-        r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=1.0, log=lambda *_: None)
+        r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=1.0,
+                recall_tolerance=1.0, log=lambda *_: None)
         assert r["status"] == "trained" and r["sources"]["hm"]["status"] == "trained"
         src = r["sources"]["hm"]
         assert src["eval_users"] > 0 and src["base_recall@5"] is not None and src["new_recall@5"] is not None
@@ -98,12 +99,25 @@ def test_skips_when_not_enough_new_logs(env):
 def test_not_registered_when_worse(env, monkeypatch):
     Session, tmp = env
     import recsys.retrain as rt
-    scores = iter([0.50, 0.30])                                                # 기준 0.50 → 새 모델 0.30 (나빠짐)
-    monkeypatch.setattr(rt, "recall_at_k", lambda rec, targets: next(scores))
+    maps = iter([0.50, 0.30])                                                  # MAP@12 기준 0.50 → 새 모델 0.30 (나빠짐)
+    monkeypatch.setattr(rt, "accuracy_at_k", lambda rec, users, truth, ks: ({f"map@{ks[0]}": next(maps)}, {}))
     with Session() as db:
         r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=0.02, log=lambda *_: None)
         assert r["sources"]["hm"]["accepted"] is False and "registered_version_id" not in r
         assert db.query(ModelVersion).count() == 1                             # 기존 운영 모델 그대로
+
+
+@pytest.mark.parametrize("base_map,new_map,base_rec,new_rec,ok", [
+    (0.0425, 0.0428, 0.1530, 0.1516, True),     # 11-16 실측 H&M
+    (0.0039, 0.0041, 0.0198, 0.0192, True),     # 11-16 실측 Amazon: Recall −3%는 보조 허용 10% 안
+    (0.0400, 0.0393, 0.15, 0.15, True),         # MAP −1.75%: 주 허용 2% 안
+    (0.0400, 0.0390, 0.15, 0.15, False),        # MAP −2.5%: 거절
+    (0.0400, 0.0500, 0.15, 0.13, False),        # MAP는 좋아져도 Recall −13%면 거절 (안전장치)
+    (None, None, None, None, True),             # 평가 고객 없음 → 판정 안 함
+])
+def test_accept_rule_map12_primary_recall_guard(base_map, new_map, base_rec, new_rec, ok):
+    from recsys.retrain import accept
+    assert accept(base_map, new_map, base_rec, new_rec) is ok
 
 
 def test_holdout_map12_matches_reference():
