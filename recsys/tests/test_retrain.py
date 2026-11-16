@@ -80,9 +80,11 @@ def test_retrain_registers_candidate_usable_by_serving(env):
         assert tower_problem(new_dir, D) is None                              # 서빙이 읽을 수 있는 가중치
         recs = recommenders.get("ume", new.params).recommend(db, 1, 5)        # 새 버전으로 실제 추천
         assert len(recs) == 5
+        assert 0 <= src["base_map@12"] <= 1 and 0 <= src["new_map@12"] <= 1    # 모니터링 runner 비교 지표
+        assert src["evaluation_key"].startswith("leave-last-out:")
         metrics = {m.metric for m in db.query(MetricSnapshot).all()}
-        assert metrics == {"hm/holdout/recall@5"}
-        assert db.query(MetricSnapshot).count() == 2                          # 기준 · 새 모델 하나씩
+        assert metrics == {"hm/holdout/recall@5", "hm/holdout/map@12"}
+        assert db.query(MetricSnapshot).count() == 4                          # 지표 2개 × 기준 · 새 모델
         assert (tmp / "models").glob("retrain_*/report.json")
 
 
@@ -102,6 +104,17 @@ def test_not_registered_when_worse(env, monkeypatch):
         r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=0.02, log=lambda *_: None)
         assert r["sources"]["hm"]["accepted"] is False and "registered_version_id" not in r
         assert db.query(ModelVersion).count() == 1                             # 기존 운영 모델 그대로
+
+
+def test_holdout_map12_matches_reference():
+    """trainer의 MAP@12는 공통 평가 코드와 같다: 정답 1개가 3위면 AP = 1/3, 없으면 0."""
+    import pandas as pd
+
+    from recsys.eval.metrics import accuracy_at_k
+    rec = np.array([[5, 6, 7] + list(range(10, 19)), [1, 2, 3] + list(range(20, 29))])
+    truth = pd.DataFrame({"user_id": [100, 200], "item_id": [7, 99]})
+    m = accuracy_at_k(rec, np.array([100, 200]), truth, ks=(12,))[0]["map@12"]
+    assert m == pytest.approx((1 / 3 + 0) / 2)
 
 
 def test_holdout_leaves_history_for_every_eval_user():

@@ -19,7 +19,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from recsys.eval.metrics import accuracy_at_k
 from recsys.ume import DEFAULT, Sequences, _mlp, build_sequences, recommend, save_tower, tower_vectors, train_tower
+
+MAP_K = 12      # 모니터링 runner · 대시보드와 같은 후보 비교 지표 (MAP@12)
 
 WEIGHTS = {"purchase": 1.0, "add_to_cart": 0.5, "click": 0.25}       # 학습 정답 가중치 (조회 view는 정답으로 쓰지 않음)
 FINE_TUNE = {"epochs": 1, "lr": 1e-4}                                # 이어서 학습: 짧게 · 작은 학습률
@@ -109,23 +112,35 @@ def retrain_source(X: dict, ev: pd.DataFrame, base_dir: Path, out_dir: Path, hol
     users = np.array([u for u in targets.index if u in seen], dtype=np.int64)[:max_eval_users]
     catalog = np.arange(len(X["text"]))
 
-    def score(models):
+    truth = pd.DataFrame([(u, i) for u in users for i in targets[u]], columns=["user_id", "item_id"])
+
+    def score(models) -> tuple[float, float]:
+        """(Recall@k, MAP@12). 같은 추천 목록에서 둘 다 계산한다. MAP@12는 공통 평가 코드(recsys.eval.metrics)."""
         U, V = {}, {}
         for m in ("text", "image"):
             U[m], V[m] = tower_vectors(models[m], X[m], seq, users, catalog, p["max_hist"], device)
-        return recall_at_k(recommend(U, V, catalog, k, device), [targets[u] for u in users])
+        rec = recommend(U, V, catalog, min(max(k, MAP_K), len(catalog)), device)
+        recall = recall_at_k(rec[:, :k], [targets[u] for u in users])
+        mk = min(MAP_K, rec.shape[1])                                  # 상품이 12개보다 적은 카탈로그 방어
+        mapk = accuracy_at_k(rec[:, :mk], users, truth, ks=(mk,))[0][f"map@{mk}"]
+        return recall, mapk
 
     base_w = {m: dict(np.load(base_dir / m / "weights.npz")) for m in ("text", "image")}
-    base_recall = score({m: _tower_from_npz(base_w[m], p, device) for m in ("text", "image")}) if len(users) else None
+    base_recall, base_map = score({m: _tower_from_npz(base_w[m], p, device) for m in ("text", "image")}) \
+        if len(users) else (None, None)
     t = time.perf_counter()
     new = {m: train_tower(X[m], seq, p, device, log=log, init=base_w[m]) for m in ("text", "image")}
     train_sec = time.perf_counter() - t
-    new_recall = score(new) if len(users) else None
+    new_recall, new_map = score(new) if len(users) else (None, None)
     meta = {"warm_start_from": str(base_dir), "train_samples": int(n_samples), "trained_until_event_id": int(ev.event_id.max())}
     for m in ("text", "image"):
         save_tower(new[m], out_dir / m, p, {**meta, "modality": m})
+    # 모니터링 runner(finish_training)에 넘길 평가 식별자: 같은 평가 집합에서 잰 두 모델만 비교한다
+    eval_key = f"leave-last-out:holdout={holdout}:upto={int(ev.event_id.max())}:users={len(users)}"
     return {"status": "trained", "dir": str(out_dir), "train_samples": int(n_samples), "eval_users": int(len(users)),
-            f"base_recall@{k}": base_recall, f"new_recall@{k}": new_recall, "train_seconds": round(train_sec, 1)}
+            f"base_recall@{k}": base_recall, f"new_recall@{k}": new_recall,
+            f"base_map@{MAP_K}": base_map, f"new_map@{MAP_K}": new_map, "evaluation_key": eval_key,
+            "train_seconds": round(train_sec, 1)}
 
 
 # ---------------------------------------------------------------- 전체
@@ -173,9 +188,10 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
         db.flush()
         for s in improved:
             r = sources[s]
-            for vid, key in ((base.id, f"base_recall@{k}"), (mv.id, f"new_recall@{k}")):
-                if r[key] is not None:
-                    db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/recall@{k}", value=r[key], n=r["eval_users"]))
+            for metric in (f"recall@{k}", f"map@{MAP_K}"):
+                for vid, key in ((base.id, f"base_{metric}"), (mv.id, f"new_{metric}")):
+                    if r[key] is not None:
+                        db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/{metric}", value=r[key], n=r["eval_users"]))
         db.commit()
         report["registered_version_id"] = mv.id
     out.mkdir(parents=True, exist_ok=True)
