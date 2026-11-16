@@ -76,6 +76,11 @@ class Event(Base):
     # 클라이언트가 정한 세션 id (시뮬레이터 · 앱). 있으면 "현재 세션"을 30분 규칙 대신 이 값으로 구분한다
     # (services/session.py). 시뮬레이터는 한 고객의 세션을 몇 초 간격으로 보내 30분 규칙이면 하나로 합쳐진다.
     session_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    # 이 이벤트가 어느 추천 요청에서 비롯됐는지 (이벤트연결규약 §2.2, PR #57 ③).
+    # 서버가 recommend_requests 역조회로 model_version_id · experiment_id · variant 를 자동 채운다.
+    # 명세 2-5 노출 view 는 이 값이 있는 이벤트만 (/metrics/window user_click_through_v1 필터).
+    request_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, ForeignKey("recommend_requests.request_id"), index=True)
+    position: Mapped[int | None] = mapped_column(Integer)                 # 1부터. 추천 목록의 몇 번째 자리였는지
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
 
 

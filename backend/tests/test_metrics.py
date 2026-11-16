@@ -68,10 +68,20 @@ def empty_client(tmp_path):
     app.dependency_overrides.clear()
 
 
-def _insert_event(Session, user_id, item_id, type_, when, is_setup=False):
-    """테스트용 — created_at 을 직접 지정해 window 테스트 (ORM default=now() 는 테스트에서 통제 불가)."""
+def _insert_event(Session, user_id, item_id, type_, when, is_setup=False, request_id=...):
+    """테스트용 — created_at 을 직접 지정해 window 테스트 (ORM default=now() 는 테스트에서 통제 불가).
+
+    request_id: 기본값 ... (sentinel) 이면 view / click 에 더미 UUID 를 넣어 user_click_through_v1
+    필터를 통과시킨다 (PR #57 ⑤ · PR #59 리뷰: click 에도 필터). 명시적으로 None 을 주면
+    "노출 없이 바로 클릭 (검색 결과 직행)" 또는 "상세 페이지 조회" 시나리오.
+    SQLite 는 FK 를 엄격히 체크하지 않아 더미 UUID 가 recommend_requests 에 없어도 OK.
+    """
+    import uuid as _uuid
+    if request_id is ...:
+        request_id = _uuid.uuid4() if type_ in ("view", "click") else None
     with Session() as s:
-        ev = Event(user_id=user_id, item_id=item_id, type=type_, is_setup=is_setup, created_at=when)
+        ev = Event(user_id=user_id, item_id=item_id, type=type_, is_setup=is_setup,
+                    created_at=when, request_id=request_id)
         s.add(ev)
         s.commit()
 
@@ -241,11 +251,12 @@ def test_window_filters_by_model_version_id(client):
     t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
     inside = t_start + timedelta(hours=1)
 
-    # 두 모델 각각 2개/1개 view
+    # 두 모델 각각 2개/1개 view. request_id 는 더미 UUID — user_click_through_v1 필터 통과용
+    import uuid as _uuid
     with Session() as s:
-        s.add(Event(user_id=1, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1))
-        s.add(Event(user_id=2, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1))
-        s.add(Event(user_id=3, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=2))
+        s.add(Event(user_id=1, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1, request_id=_uuid.uuid4()))
+        s.add(Event(user_id=2, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=1, request_id=_uuid.uuid4()))
+        s.add(Event(user_id=3, item_id=3, type="view", is_setup=False, created_at=inside, model_version_id=2, request_id=_uuid.uuid4()))
         s.commit()
 
     # 필터 없으면 전부 (3건) — seed_sample 의 150 이벤트는 현재 시각(2026-11-12)이라 window 밖
@@ -326,6 +337,29 @@ def test_window_id_normalized_to_utc(client):
     assert body_z["window_id"] == body_offset["window_id"] == body_kst["window_id"]
 
 
+def test_window_excludes_view_and_click_without_request_id(client):
+    """노출 view · 노출 click 모두 request_id 있는 이벤트만 센다 — 상세 페이지 조회 · 검색 직행
+    클릭은 제외 (톡방 결정 3, PR #57 ⑤ + PR #59 리뷰: CTR 분자/분모 기준 일치)."""
+    c, Session = client
+    t_start = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
+    t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
+    inside = t_start + timedelta(hours=1)
+
+    # user 1: 노출 view + 노출 click → hit
+    # user 2: 상세 페이지 view (request_id=None) + 검색 직행 click (request_id=None) → 둘 다 제외
+    _insert_event(Session, 1, 3, "view", inside)                              # request_id 자동 부여
+    _insert_event(Session, 1, 3, "click", inside)                             # request_id 자동 부여
+    _insert_event(Session, 2, 3, "view", inside, request_id=None)             # 상세 페이지 조회
+    _insert_event(Session, 2, 3, "click", inside, request_id=None)            # 검색 결과 직행
+
+    body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
+                                             "model_version": "v1", "source": "all"}).json()
+    assert body["views"] == 1                            # user 1 만
+    assert body["clicks"] == 1                           # user 1 만 (user 2 검색 직행 제외)
+    assert body["evaluated_users"] == 1
+    assert body["hit_users"] == 1
+
+
 def test_window_default_metric_definition_version_is_user_click_through_v1(client):
     """기본 metric_definition_version = user_click_through_v1 (runner HitRate@K 와 혼용 금지 신호;
     PR #48 2차 리뷰 by 광석)."""
@@ -337,23 +371,24 @@ def test_window_default_metric_definition_version_is_user_click_through_v1(clien
 
 
 def test_window_hit_users_is_intersection(client):
-    """hit_users = viewers ∩ clickers — 노출 없이 클릭만 한 유저는 제외 (PR #48 리뷰 by 유환)."""
+    """hit_users = viewers ∩ clickers — 노출 없이 클릭만 한 유저는 제외 (PR #48 리뷰 by 유환).
+    노출 click 만 세므로 user 2 의 '검색 직행 클릭' (request_id=None) 은 clicks 에서도 빠짐 (PR #59)."""
     c, Session = client
     t_start = datetime(2026, 11, 1, 0, 0, tzinfo=timezone.utc)
     t_end = datetime(2026, 11, 2, 0, 0, tzinfo=timezone.utc)
     inside = t_start + timedelta(hours=1)
 
-    # user 1: view 만 / user 2: click 만 (검색결과 직행) / user 3: view + click (진짜 hit)
+    # user 1: view 만 / user 2: click 만 (검색결과 직행, request_id=None) / user 3: view + click (진짜 hit)
     _insert_event(Session, 1, 3, "view", inside)
-    _insert_event(Session, 2, 3, "click", inside)
+    _insert_event(Session, 2, 3, "click", inside, request_id=None)       # 검색 결과 직행
     _insert_event(Session, 3, 3, "view", inside)
     _insert_event(Session, 3, 3, "click", inside)
 
     body = c.get("/metrics/window", params={"start": t_start.isoformat(), "end": t_end.isoformat(),
                                              "model_version": "v1", "source": "all"}).json()
     assert body["evaluated_users"] == 2                   # view 한 유저: 1, 3
-    assert body["hit_users"] == 1                         # view + click 교집합: 3 만
-    assert body["clicks"] == 2                            # click 이벤트 자체는 2건
+    assert body["hit_users"] == 1                         # view + 노출 click 교집합: 3 만
+    assert body["clicks"] == 1                            # 노출 click 만 (user 2 의 검색 직행 제외; PR #59)
 
 
 def test_window_normalizes_timezone_for_consistent_db_comparison(client):
