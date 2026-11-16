@@ -54,7 +54,7 @@
 
 ## 3. 신규 상품 (`items.registered_at`)
 
-Amazon · H&M 공개 데이터에는 등록일이 없어 적재 상품은 `registered_at = NULL`(신규 아님)이다. 마이그레이션 `0004_item_registered_at`(부모 `0003_recommend_requests`)이 열만 추가하므로 기존 DB는 다시 적재할 필요가 없다 (api 재시작 시 Alembic이 자동 적용).
+Amazon · H&M 공개 데이터에는 등록일이 없어 적재 상품은 `registered_at = NULL`(신규 아님)이다. 마이그레이션 `0005_item_registered_at`(부모 `0004_events_request_id_position`)이 열만 추가하므로 기존 DB는 다시 적재할 필요가 없다 (api 재시작 시 Alembic이 자동 적용).
 
 데모 · 확인용으로 일부 상품을 신규로 지정한다.
 
