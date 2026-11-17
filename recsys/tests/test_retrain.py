@@ -68,7 +68,8 @@ def env(tmp_path):
 def test_retrain_registers_candidate_usable_by_serving(env):
     Session, tmp = env
     with Session() as db:
-        r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=1.0, log=lambda *_: None)
+        r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=1.0,
+                recall_tolerance=1.0, log=lambda *_: None)
         assert r["status"] == "trained" and r["sources"]["hm"]["status"] == "trained"
         src = r["sources"]["hm"]
         assert src["eval_users"] > 0 and src["base_recall@5"] is not None and src["new_recall@5"] is not None
@@ -80,9 +81,11 @@ def test_retrain_registers_candidate_usable_by_serving(env):
         assert tower_problem(new_dir, D) is None                              # 서빙이 읽을 수 있는 가중치
         recs = recommenders.get("ume", new.params).recommend(db, 1, 5)        # 새 버전으로 실제 추천
         assert len(recs) == 5
+        assert 0 <= src["base_map@12"] <= 1 and 0 <= src["new_map@12"] <= 1    # 모니터링 runner 비교 지표
+        assert src["evaluation_key"].startswith("leave-last-out:")
         metrics = {m.metric for m in db.query(MetricSnapshot).all()}
-        assert metrics == {"hm/holdout/recall@5"}
-        assert db.query(MetricSnapshot).count() == 2                          # 기준 · 새 모델 하나씩
+        assert metrics == {"hm/holdout/recall@5", "hm/holdout/map@12"}
+        assert db.query(MetricSnapshot).count() == 4                          # 지표 2개 × 기준 · 새 모델
         assert (tmp / "models").glob("retrain_*/report.json")
 
 
@@ -96,12 +99,36 @@ def test_skips_when_not_enough_new_logs(env):
 def test_not_registered_when_worse(env, monkeypatch):
     Session, tmp = env
     import recsys.retrain as rt
-    scores = iter([0.50, 0.30])                                                # 기준 0.50 → 새 모델 0.30 (나빠짐)
-    monkeypatch.setattr(rt, "recall_at_k", lambda rec, targets: next(scores))
+    maps = iter([0.50, 0.30])                                                  # MAP@12 기준 0.50 → 새 모델 0.30 (나빠짐)
+    monkeypatch.setattr(rt, "accuracy_at_k", lambda rec, users, truth, ks: ({f"map@{ks[0]}": next(maps)}, {}))
     with Session() as db:
         r = run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, tolerance=0.02, log=lambda *_: None)
         assert r["sources"]["hm"]["accepted"] is False and "registered_version_id" not in r
         assert db.query(ModelVersion).count() == 1                             # 기존 운영 모델 그대로
+
+
+@pytest.mark.parametrize("base_map,new_map,base_rec,new_rec,ok", [
+    (0.0425, 0.0428, 0.1530, 0.1516, True),     # 11-16 실측 H&M
+    (0.0039, 0.0041, 0.0198, 0.0192, True),     # 11-16 실측 Amazon: Recall −3%는 보조 허용 10% 안
+    (0.0400, 0.0393, 0.15, 0.15, True),         # MAP −1.75%: 주 허용 2% 안
+    (0.0400, 0.0390, 0.15, 0.15, False),        # MAP −2.5%: 거절
+    (0.0400, 0.0500, 0.15, 0.13, False),        # MAP는 좋아져도 Recall −13%면 거절 (안전장치)
+    (None, None, None, None, True),             # 평가 고객 없음 → 판정 안 함
+])
+def test_accept_rule_map12_primary_recall_guard(base_map, new_map, base_rec, new_rec, ok):
+    from recsys.retrain import accept
+    assert accept(base_map, new_map, base_rec, new_rec) is ok
+
+
+def test_holdout_map12_matches_reference():
+    """trainer의 MAP@12는 공통 평가 코드와 같다: 정답 1개가 3위면 AP = 1/3, 없으면 0."""
+    import pandas as pd
+
+    from recsys.eval.metrics import accuracy_at_k
+    rec = np.array([[5, 6, 7] + list(range(10, 19)), [1, 2, 3] + list(range(20, 29))])
+    truth = pd.DataFrame({"user_id": [100, 200], "item_id": [7, 99]})
+    m = accuracy_at_k(rec, np.array([100, 200]), truth, ks=(12,))[0]["map@12"]
+    assert m == pytest.approx((1 / 3 + 0) / 2)
 
 
 def test_holdout_leaves_history_for_every_eval_user():

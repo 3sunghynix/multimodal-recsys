@@ -4,8 +4,8 @@
   1. 기준 모델 = 운영 중(active) UME 버전. 마지막 학습 이후 쌓인 비 setup 이벤트가 --min-new-logs 미만이면 건너뜀
   2. 데이터셋마다: DB 이벤트(구매 1 · 장바구니 0.5 · 클릭 0.25)를 학습 표본으로, 상품 임베딩은 서비스와 같은 DB 값
   3. 최근 비 setup 이벤트 --holdout 비율을 평가용으로 떼고, 나머지로 기준 가중치에서 이어서 학습 (warm start)
-  4. 평가용 이벤트를 맞히는지 Recall@k를 기준 모델과 새 모델로 같은 방식(타워 점수 z 합)으로 비교
-  5. 새 가중치 저장 → 나빠지지 않았으면 model_versions에 status="candidate"로 등록 + metric_snapshots에 두 모델 지표
+  4. 평가용 이벤트를 맞히는지 MAP@12 · Recall@k를 기준 모델과 새 모델로 같은 방식(타워 점수 z 합)으로 비교
+  5. 새 가중치 저장 → 채택 규칙(accept)을 통과하면 model_versions에 status="candidate"로 등록 + metric_snapshots에 두 모델 지표
   운영 교체(activate)는 하지 않는다 — 관리자가 대시보드 · POST /models/{id}/activate로 결정.
 
 데이터셋 하나라도 표본이 모자라면 그 데이터셋은 기준 가중치를 그대로 쓴다 (artifact_dirs 유지).
@@ -19,7 +19,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from recsys.eval.metrics import accuracy_at_k
 from recsys.ume import DEFAULT, Sequences, _mlp, build_sequences, recommend, save_tower, tower_vectors, train_tower
+
+MAP_K = 12      # 모니터링 runner · 대시보드와 같은 후보 비교 지표 (MAP@12)
+
+
+def accept(base_map, new_map, base_recall, new_recall, map_tolerance: float = 0.02, recall_tolerance: float = 0.10) -> bool:
+    """채택 규칙 (주 지표 MAP@12 하나, Recall@k는 보조 안전장치):
+      새 MAP@12 ≥ 기준 × (1 − map_tolerance)  그리고  새 Recall@k ≥ 기준 × (1 − recall_tolerance)
+    1 epoch 이어서 학습이라 변화가 작고, 평가 고객 5,000명 · 정답 1개의 차이는 측정 오차 수준이므로
+    "기준 이상"이 아니라 "크게 나빠지지 않음"으로 판정한다. 운영 교체는 여전히 관리자가 결정한다.
+    평가 고객이 없어 값이 없으면 판정하지 않고 채택(기존 동작)."""
+    if base_map is None or new_map is None:
+        return True
+    ok_map = new_map >= base_map * (1 - map_tolerance)
+    ok_recall = base_recall is None or new_recall is None or new_recall >= base_recall * (1 - recall_tolerance)
+    return bool(ok_map and ok_recall)
 
 WEIGHTS = {"purchase": 1.0, "add_to_cart": 0.5, "click": 0.25}       # 학습 정답 가중치 (조회 view는 정답으로 쓰지 않음)
 FINE_TUNE = {"epochs": 1, "lr": 1e-4}                                # 이어서 학습: 짧게 · 작은 학습률
@@ -109,30 +125,42 @@ def retrain_source(X: dict, ev: pd.DataFrame, base_dir: Path, out_dir: Path, hol
     users = np.array([u for u in targets.index if u in seen], dtype=np.int64)[:max_eval_users]
     catalog = np.arange(len(X["text"]))
 
-    def score(models):
+    truth = pd.DataFrame([(u, i) for u in users for i in targets[u]], columns=["user_id", "item_id"])
+
+    def score(models) -> tuple[float, float]:
+        """(Recall@k, MAP@12). 같은 추천 목록에서 둘 다 계산한다. MAP@12는 공통 평가 코드(recsys.eval.metrics)."""
         U, V = {}, {}
         for m in ("text", "image"):
             U[m], V[m] = tower_vectors(models[m], X[m], seq, users, catalog, p["max_hist"], device)
-        return recall_at_k(recommend(U, V, catalog, k, device), [targets[u] for u in users])
+        rec = recommend(U, V, catalog, min(max(k, MAP_K), len(catalog)), device)
+        recall = recall_at_k(rec[:, :k], [targets[u] for u in users])
+        mk = min(MAP_K, rec.shape[1])                                  # 상품이 12개보다 적은 카탈로그 방어
+        mapk = accuracy_at_k(rec[:, :mk], users, truth, ks=(mk,))[0][f"map@{mk}"]
+        return recall, mapk
 
     base_w = {m: dict(np.load(base_dir / m / "weights.npz")) for m in ("text", "image")}
-    base_recall = score({m: _tower_from_npz(base_w[m], p, device) for m in ("text", "image")}) if len(users) else None
+    base_recall, base_map = score({m: _tower_from_npz(base_w[m], p, device) for m in ("text", "image")}) \
+        if len(users) else (None, None)
     t = time.perf_counter()
     new = {m: train_tower(X[m], seq, p, device, log=log, init=base_w[m]) for m in ("text", "image")}
     train_sec = time.perf_counter() - t
-    new_recall = score(new) if len(users) else None
+    new_recall, new_map = score(new) if len(users) else (None, None)
     meta = {"warm_start_from": str(base_dir), "train_samples": int(n_samples), "trained_until_event_id": int(ev.event_id.max())}
     for m in ("text", "image"):
         save_tower(new[m], out_dir / m, p, {**meta, "modality": m})
+    # 모니터링 runner(finish_training)에 넘길 평가 식별자: 같은 평가 집합에서 잰 두 모델만 비교한다
+    eval_key = f"leave-last-out:holdout={holdout}:upto={int(ev.event_id.max())}:users={len(users)}"
     return {"status": "trained", "dir": str(out_dir), "train_samples": int(n_samples), "eval_users": int(len(users)),
-            f"base_recall@{k}": base_recall, f"new_recall@{k}": new_recall, "train_seconds": round(train_sec, 1)}
+            f"base_recall@{k}": base_recall, f"new_recall@{k}": new_recall,
+            f"base_map@{MAP_K}": base_map, f"new_map@{MAP_K}": new_map, "evaluation_key": eval_key,
+            "train_seconds": round(train_sec, 1)}
 
 
 # ---------------------------------------------------------------- 전체
 
 def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 10000, holdout: float = 0.1, k: int = 20,
         device: str = "cpu", max_eval_users: int = 5000, min_samples: int = 100, tolerance: float = 0.02,
-        register: bool = True, log=print) -> dict:
+        register: bool = True, log=print, recall_tolerance: float = 0.10) -> dict:
     from app.models import MetricSnapshot, ModelVersion
     from app.services.catalog_index import get_index
 
@@ -159,8 +187,8 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
                            holdout, k, device, max_eval_users, min_samples, log)
         sources[source] = r
         if r["status"] == "trained":
-            b, n = r[f"base_recall@{k}"], r[f"new_recall@{k}"]
-            r["accepted"] = b is None or n is None or n >= b * (1 - tolerance)
+            r["accepted"] = accept(r[f"base_map@{MAP_K}"], r[f"new_map@{MAP_K}"], r[f"base_recall@{k}"], r[f"new_recall@{k}"],
+                                   tolerance, recall_tolerance)
             if r["accepted"]:
                 dirs[source] = r["dir"]
     report.update(status="trained", out=str(out), sources=sources)
@@ -173,9 +201,10 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
         db.flush()
         for s in improved:
             r = sources[s]
-            for vid, key in ((base.id, f"base_recall@{k}"), (mv.id, f"new_recall@{k}")):
-                if r[key] is not None:
-                    db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/recall@{k}", value=r[key], n=r["eval_users"]))
+            for metric in (f"recall@{k}", f"map@{MAP_K}"):
+                for vid, key in ((base.id, f"base_{metric}"), (mv.id, f"new_{metric}")):
+                    if r[key] is not None:
+                        db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/{metric}", value=r[key], n=r["eval_users"]))
         db.commit()
         report["registered_version_id"] = mv.id
     out.mkdir(parents=True, exist_ok=True)
@@ -190,7 +219,8 @@ def main():
     ap.add_argument("--min-new-logs", type=int, default=10000, help="마지막 학습 이후 비 setup 이벤트가 이보다 적으면 건너뜀")
     ap.add_argument("--holdout", type=float, default=0.1, help="최근 비 setup 이벤트 중 평가용 비율")
     ap.add_argument("--k", type=int, default=20)
-    ap.add_argument("--tolerance", type=float, default=0.02, help="새 Recall이 기준의 (1 − tolerance) 이상이면 채택")
+    ap.add_argument("--tolerance", type=float, default=0.02, help="새 MAP@12가 기준의 (1 − tolerance) 이상이어야 채택 (주 지표)")
+    ap.add_argument("--recall-tolerance", type=float, default=0.10, help="새 Recall@k가 기준의 (1 − 이 값) 미만이면 거절 (보조 안전장치)")
     ap.add_argument("--no-register", action="store_true", help="가중치 저장 · 평가만 하고 버전 등록은 하지 않음")
     ap.add_argument("--device", default=None)
     a = ap.parse_args()
@@ -199,7 +229,8 @@ def main():
     from app.db import SessionLocal
     device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
     with SessionLocal() as db:
-        r = run(db, a.out, a.base, a.min_new_logs, a.holdout, a.k, device, tolerance=a.tolerance, register=not a.no_register)
+        r = run(db, a.out, a.base, a.min_new_logs, a.holdout, a.k, device, tolerance=a.tolerance, register=not a.no_register,
+                recall_tolerance=a.recall_tolerance)
     print(json.dumps(r, ensure_ascii=False, indent=2, default=str))
 
 
