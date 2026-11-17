@@ -1,4 +1,4 @@
-"""Streamlit model laboratory: read-only evaluation and local simulator reports."""
+"""Streamlit admin console: evaluation and simulator reports (read-only) and confirmed model swap."""
 from datetime import datetime, timezone
 import os
 from pathlib import Path
@@ -9,8 +9,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from dashboard.data import (KNOWN_METRICS, confidence_interval, delta, get_api, offline_report,
-                            parquet_inventory, simulator_summary)
+from dashboard.data import (KNOWN_METRICS, SNAPSHOTS, activate_model, candidate_comparison, confidence_interval, delta,
+                            get_api, offline_report, parquet_inventory, simulator_summary)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -76,8 +76,8 @@ def sidebar():
         st.caption("ADMIN CONSOLE / LOCAL")
         page = st.radio("관리 메뉴", PAGES, index=0, label_visibility="collapsed", key="page")
         st.divider()
-        st.caption("읽기 전용 v0.1 · 서버 변경 없음")
-        st.caption("합성 실험·저장 결과를 구분합니다. 서버 변경은 수행하지 않습니다.")
+        st.caption("v0.2 · 모델 교체 외 읽기 전용")
+        st.caption("합성 실험·저장 결과를 구분합니다. 서버 변경은 모니터링 페이지의 확인된 모델 교체뿐입니다.")
     return page
 
 
@@ -147,7 +147,7 @@ def lab():
         except ValueError as error:
             st.error(str(error))
         st.caption("서로 다른 데이터셋·분할·고객 집합·K의 지표를 같은 실험으로 합치지 않습니다. 문서 반올림값의 변화율은 근사값입니다.")
-        st.button("이 모델로 교체 · 후속 단계", disabled=True, help="평가 파일의 모델명과 서버 model_version_id의 매핑·확인 절차가 필요합니다.")
+        st.button("이 모델로 교체 · 모니터링 페이지에서", disabled=True, help="평가 파일의 모델명은 서버 모델 버전과 다릅니다. 교체는 모니터링 페이지 › 모델 버전 · 재학습 후보에서 합니다.")
     st.subheader("상세 결과")
     table = pd.DataFrame([{ "모델": n, **{LABELS[m]: source["models"][n].get(m) for m in available}} for n in selected])
     st.dataframe(table, hide_index=True, width="stretch")
@@ -330,7 +330,7 @@ def ab_page():
 def monitoring_page():
     st.title("모니터링 페이지")
     st.caption("닫힌 집계 구간의 CTR·HitRate, 임계값 알림, 재학습 요청과 후보 버전을 확인합니다.")
-    st.info("현재 파일 기반 모니터입니다. 서버 집계 생산자·실제 학습 작업 실행·모델 활성화 연동은 후속 작업입니다.")
+    st.info("지표 추이 · 알림은 파일 기반 모니터입니다. 아래 '모델 버전 · 재학습 후보'는 서버 API에서 읽고, 확인 후 운영 모델을 교체할 수 있습니다.")
     files=sorted(RUNS.glob('*/monitor_state.json')) if RUNS.is_dir() else []
     chosen=st.selectbox('모니터링 기록',files,format_func=lambda p:p.parent.name) if files else None
     upload=st.file_uploader('monitor_state.json',type=['json'],key='monitor_upload')
@@ -349,6 +349,50 @@ def monitoring_page():
             st.caption('requested는 재학습 요청 기록입니다. 학습 완료나 운영 교체를 뜻하지 않습니다.')
         except (ValueError,KeyError,TypeError,OSError) as error:st.error(str(error))
     else:st.info('아직 모니터링 집계 파일이 없습니다.')
+    model_section()
+
+
+def model_section():
+    """서버의 모델 버전 · 재학습 후보 비교 · 운영 모델 교체 (POST /models/{id}/activate)."""
+    st.subheader("모델 버전 · 재학습 후보")
+    try:
+        models = get_api(API, "/models")
+        snapshots = get_api(API, SNAPSHOTS)
+    except ValueError as error:
+        st.info(f"서버 API 미연결 · 모델 버전을 표시하지 않습니다. ({error})")
+        return
+    active = [m for m in models if m.get("status") == "active"]
+    st.caption(f"운영 중: {', '.join(f'{m['id']} · {m['name']} {m['version']}' for m in active) or '없음'}")
+    st.dataframe(pd.DataFrame([{"id": m["id"], "모델": m["name"], "버전": m["version"], "상태": m["status"],
+                                "재학습 기준 버전": str((m.get("params") or {}).get("warm_start_from_version_id") or "")} for m in models]),
+                 hide_index=True, width="stretch")
+    rows = candidate_comparison(models, snapshots)
+    if rows:
+        st.markdown("**재학습 후보 비교** · 같은 trainer 실행 · 같은 평가 고객(leave-last-out)에서 잰 기준 · 후보 지표")
+        table = pd.DataFrame(rows).drop(columns=["후보 id"])
+        st.dataframe(table, hide_index=True, width="stretch",
+                     column_config={"기준값": st.column_config.NumberColumn(format="%.4f"),
+                                    "후보값": st.column_config.NumberColumn(format="%.4f"),
+                                    "차이": st.column_config.NumberColumn(format="%+.4f"),
+                                    "상대 변화": st.column_config.NumberColumn(format="percent")})
+        st.caption("채택 규칙 (trainer와 같음): 새 MAP@12 ≥ 기준 × 0.98 그리고 새 Recall@20 ≥ 기준 × 0.90. "
+                   "평가 고객 5,000명 · 정답 1개 기준이라 작은 차이는 측정 오차일 수 있습니다. 교체는 관리자가 결정합니다.")
+    else:
+        st.caption("재학습 후보 지표가 아직 없습니다. `docker compose run --rm trainer` 실행 후 표시됩니다.")
+    choices = [m for m in models if m.get("status") != "active"]
+    if not choices:
+        return
+    with st.expander("운영 모델 교체", expanded=False):
+        target = st.selectbox("교체할 모델", choices, key="swap_target",
+                              format_func=lambda m: f"{m['id']} · {m['name']} {m['version']} ({m['status']})")
+        confirm = st.checkbox(f"운영 모델을 {target['id']}번으로 바꿉니다. 이후 추천 요청부터 이 모델이 쓰입니다 "
+                              "(진행 중인 A/B 실험이 있으면 실험 배정이 우선).", key="swap_confirm")
+        if st.button("교체 실행", disabled=not confirm, key="swap_run"):
+            try:
+                done = activate_model(API, int(target["id"]))
+                st.success(f"교체 완료: {done['id']} · {done['name']} {done['version']} → {done['status']}. 되돌리려면 이전 모델을 다시 선택하세요.")
+            except ValueError as error:
+                st.error(str(error))
 
 
 def main():

@@ -252,3 +252,101 @@ def test_pilot_with_mab_arm_shows_c_section(monkeypatch, tmp_path):
     tables = [df.value for df in at.dataframe if '비교' in df.value.columns]
     assert len(tables) == 1 and len(tables[0]) == 3
     assert any('신규 상품: 탐색 슬롯 40회' in m.value for m in at.markdown)
+
+
+# ───── 모델 버전 · 재학습 후보 비교 · 교체 (모니터링 페이지) ─────
+
+MODELS = [{"id": 3, "name": "ume", "version": "v1", "status": "active", "params": {}},
+          {"id": 4, "name": "ume", "version": "retrain-1", "status": "candidate", "params": {"warm_start_from_version_id": 3}},
+          {"id": 1, "name": "popularity", "version": "v1", "status": "candidate", "params": {}}]
+
+
+def snap(i, mv, metric, value, n=5000, t="2026-11-17T07:21:43"):
+    return {"id": i, "model_version_id": mv, "metric": metric, "value": value, "n": n, "created_at": t}
+
+
+SNAPS = [snap(8, 4, "amazon/holdout/map@12", 0.0041), snap(7, 3, "amazon/holdout/map@12", 0.0039),
+         snap(6, 4, "amazon/holdout/recall@20", 0.0192), snap(5, 3, "amazon/holdout/recall@20", 0.0198),
+         snap(4, 4, "hm/holdout/map@12", 0.0428), snap(3, 3, "hm/holdout/map@12", 0.0425),
+         snap(2, 4, "hm/holdout/recall@20", 0.1516), snap(1, 3, "hm/holdout/recall@20", 0.1530),
+         snap(0, 3, "hm/holdout/map@12", 0.0999, t="2026-11-10T00:00:00")]          # 다른 실행의 기준 기록 → 쓰지 않음
+
+
+def test_candidate_comparison_pairs_same_run_and_applies_trainer_rule():
+    from dashboard.data import candidate_comparison
+    rows = candidate_comparison(MODELS, SNAPS)
+    assert {(r["데이터셋"], r["지표"]) for r in rows} == {("amazon", "map@12"), ("amazon", "recall@20"),
+                                                         ("hm", "map@12"), ("hm", "recall@20")}
+    hm_map = next(r for r in rows if r["데이터셋"] == "hm" and r["지표"] == "map@12")
+    assert hm_map["기준값"] == 0.0425 and hm_map["후보값"] == 0.0428                 # 가장 가까운 시각의 기준 기록
+    assert all(r["채택 규칙"] == "통과" for r in rows)                                 # 11-17 실측: 둘 다 통과
+    worse = [dict(s, value=0.0400) if s["id"] == 4 else s for s in SNAPS]             # H&M MAP@12 −5.9%
+    assert {r["채택 규칙"] for r in candidate_comparison(MODELS, worse) if r["데이터셋"] == "hm"} == {"미통과"}
+
+
+def test_candidate_comparison_ignores_versions_without_retrain_base():
+    from dashboard.data import candidate_comparison
+    assert candidate_comparison([MODELS[0], MODELS[2]], SNAPS) == []
+
+
+def test_activate_model_posts_only_to_activate_endpoint():
+    from dashboard.data import activate_model
+    for bad in (0, -1, "4", True, 4.0):
+        with pytest.raises(ValueError): activate_model("http://unused", bad)
+    seen = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode({"id": 4, "name": "ume", "version": "retrain-1", "status": "active"})
+
+    def fake(request, timeout):
+        seen.append((request.get_method(), request.full_url)); return Resp()
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        assert activate_model("http://api:8000/", 4)["status"] == "active"
+    assert seen == [("POST", "http://api:8000/models/4/activate")]
+    with patch("dashboard.data.urlopen", side_effect=OSError("down")):
+        with pytest.raises(ValueError, match="교체 실패"): activate_model("http://unused", 4)
+
+
+def test_monitoring_page_shows_versions_comparison_and_guarded_swap(monkeypatch, tmp_path):
+    calls = []
+
+    class Resp:
+        def __init__(self, body): self.body = body
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode(self.body) if not isinstance(self.body, list) else json.dumps(self.body).encode()
+
+    def fake(request, timeout):
+        calls.append((request.get_method(), request.full_url))
+        if request.full_url.endswith("/models"): return Resp(MODELS)
+        if "/metrics/snapshots" in request.full_url: return Resp(SNAPS)
+        if request.full_url.endswith("/activate"): return Resp({**MODELS[1], "status": "active"})
+        raise OSError("unexpected")
+
+    monkeypatch.setenv("API_BASE_URL", "http://127.0.0.1:8000")
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        at = app(monkeypatch, tmp_path)
+        at.radio(key="page").set_value("모니터링 페이지").run()
+        assert not at.exception
+        assert any("운영 중: 3 · ume v1" in c.value for c in at.caption)
+        assert len(at.dataframe) >= 2                                              # 버전 표 + 후보 비교 표
+        assert at.button(key="swap_run").disabled                                  # 확인 전에는 교체 불가
+        assert not any(m == "POST" for m, _ in calls)
+        at.selectbox(key="swap_target").set_value(MODELS[1]).run()
+        at.checkbox(key="swap_confirm").check().run()
+        at.button(key="swap_run").click().run()
+        assert not at.exception
+        assert ("POST", "http://127.0.0.1:8000/models/4/activate") in calls
+        assert any("교체 완료" in s.value for s in at.success)
+
+
+def test_monitoring_page_without_api_shows_no_versions(monkeypatch, tmp_path):
+    with patch("dashboard.data.urlopen", side_effect=OSError("offline")):
+        at = app(monkeypatch, tmp_path)
+        at.radio(key="page").set_value("모니터링 페이지").run()
+        assert not at.exception
+        assert any("서버 API 미연결" in i.value for i in at.info)
+        assert not at.metric
