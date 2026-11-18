@@ -187,7 +187,7 @@ class UME(Recommender):
 
         sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id, session_id=self.session_id) if w > 0 else [], np.int64))
         self.session_clicks_used = len(sess_all)
-        scores, personal, groups, ids, cats, brands = [], [], [], [], [], []
+        scores, personal, groups, ids, cats, brands, variants = [], [], [], [], [], [], []
         for source, art in dirs.items():
             if tower_problem(art, dim):                             # 가중치가 없거나 불완전 → 이 데이터셋은 인기로 대체
                 continue
@@ -223,6 +223,7 @@ class UME(Recommender):
             ids.append(ix.ids[sel])
             cats.append(ix.cats[sel] if ix.cats is not None else np.full(len(sel), "", object))
             brands.append(ix.brands[sel])
+            variants.append(ix.variants[sel] if ix.variants is not None else np.full(len(sel), "", object))
         if not scores:
             self.fallback_reason = "popular"                        # 응답 reason: 개인화가 아니라 인기
             self.score_basis = "event_weight_sum"
@@ -240,11 +241,12 @@ class UME(Recommender):
         top = top[np.argsort(-s[top], kind="stable")]
         t_rank += time.perf_counter() - t
         t = time.perf_counter()
-        if rr is not None:                                          # 재정렬: 같은 소분류가 몰리지 않게
+        if rr is not None:                                          # 재정렬: 같은 소분류가 몰리지 않게 · 같은 옷은 한 번
             pers = np.concatenate(personal)
             if len(scores) > 1:
                 pers = rank_percentile(pers[None, :], g)[0]
-            top = diversify(top, k, np.concatenate(cats), np.concatenate(brands), rr, fill_scores=pers)
+            top = diversify(top, k, np.concatenate(cats), np.concatenate(brands), rr, fill_scores=pers,
+                            variants=np.concatenate(variants))
         self.timings = {"candidate_ms": t_cand * 1000, "ranking_ms": t_rank * 1000,
                         "reranking_ms": (time.perf_counter() - t) * 1000}
         return [(int(i), round(float(v), 4)) for i, v in zip(all_ids[top], s[top])]

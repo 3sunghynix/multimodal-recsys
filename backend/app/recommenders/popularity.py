@@ -3,14 +3,16 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Event, Item
+from ..services.variants import first_per_variant, variant_key
 from .base import Recommender, register
 
 WEIGHTS = {"purchase": 3.0, "add_to_cart": 2.0, "click": 1.0, "view": 0.2}   # 이벤트 종류별 인기도 가중치
 
 
-def _popular_scored(db: Session, k: int, brand_ids=None, exclude=()) -> list[tuple[int, float]]:
+def _popular_scored(db: Session, k: int, brand_ids=None, exclude=(), per_variant: int | None = 1) -> list[tuple[int, float]]:
     """공통 인기도 (id, score) 쌍. score 는 이벤트 가중치 합계(view 0.2 ~ purchase 3.0).
-    is_setup=True 는 초기 이력 적재 전용이므로 집계에서 제외 (개인화 경로는 포함)."""
+    is_setup=True 는 초기 이력 적재 전용이므로 집계에서 제외 (개인화 경로는 포함).
+    per_variant: 같은 옷(H&M product_code)은 이 개수까지만 (services/variants.py). None이면 묶지 않는다."""
     w = case(*[(Event.type == t, v) for t, v in WEIGHTS.items()], else_=0.0)
     q = (select(Event.item_id, func.sum(w).label("s"))
          .where(Event.item_id.is_not(None), Event.is_setup == False)                    # noqa: E712
@@ -18,10 +20,17 @@ def _popular_scored(db: Session, k: int, brand_ids=None, exclude=()) -> list[tup
     if brand_ids:
         q = q.join(Item, Item.id == Event.item_id).where(Item.brand_id.in_(brand_ids))
     excluded = set(exclude)
+    over = 4 if per_variant else 1                                  # 묶으면 빠지는 만큼 넉넉히 읽는다
     scored: list[tuple[int, float]] = [
-        (int(r.item_id), float(r.s)) for r in db.execute(q.limit(k + len(excluded)))
+        (int(r.item_id), float(r.s)) for r in db.execute(q.limit((k + len(excluded)) * over))
     ]
     scored = [(i, s) for i, s in scored if i not in excluded]
+    if per_variant and scored:
+        keys = {r.id: variant_key(r.source, r.source_item_id) for r in
+                db.execute(select(Item.id, Item.source, Item.source_item_id).where(Item.id.in_([i for i, _ in scored])))}
+        score_of = dict(scored)
+        keep = first_per_variant([i for i, _ in scored], [keys.get(i, "") for i, _ in scored], k, per_variant)
+        scored = [(i, score_of[i]) for i in keep]
     if len(scored) < k:   # 로그가 적으면 상품 id 순으로 채운다 (score=0 백필, 시작 단계용)
         seen = {i for i, _ in scored}
         fill = select(Item.id).order_by(Item.id)

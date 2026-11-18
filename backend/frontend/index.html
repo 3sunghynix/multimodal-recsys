@@ -139,6 +139,7 @@
     .card .brand { font-size: 11px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; }
     .card .title { font-size: 13px; color: var(--fg); line-height: 1.3; margin: 0 0 6px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; min-height: 2.6em; }
     .card .price { font-size: 14px; font-weight: 800; }
+    .card .variants { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
     /* ───── Empty + Debug ───── */
     .empty { padding: 48px 0; text-align: center; color: var(--muted); font-size: 14px; }
@@ -420,6 +421,7 @@
       const brandText = item.brand_name || (item.brand_id ? 'BRAND #' + item.brand_id : '');
       info.append(textElement('div', 'brand', brandText),
         textElement('div', 'title', item.title), priceEl);
+      if (item.variantCount) info.append(textElement('div', 'variants', `다른 색상 ${item.variantCount}개`));
       card.append(thumb, info);
       cards.append(card);
     });
@@ -519,6 +521,9 @@
       if (!current()) return;
       const items = rec.items.length ? await requestJson(`/items?ids=${rec.items.join(',')}`, {}, signal) : [];
       if (!current()) return;
+      // 같은 옷의 다른 색상은 목록에 한 번만 나오고 variant_ids 로 함께 온다 → 카드에 "다른 색상 N개"
+      const variantCount = Object.fromEntries((rec.recommendations || []).map((r) => [r.product_id, (r.variant_ids || []).length]));
+      items.forEach((item) => { item.variantCount = variantCount[String(item.id)] || 0; });
       const variant = rec.variant ? ` · A/B: ${rec.variant}` : '';
       render(items, `고객 #${userId} 추천`, `모델: ${rec.model}${variant} · ${items.length}개`);
       setStatus(`✓ 추천 완료 · ${items.length}개`, 'ok');
