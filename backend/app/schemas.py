@@ -144,6 +144,8 @@ class RecommendationOut(BaseModel):
     impression_id: str                # f"{request_id}:{position}" — 별도 저장 안함, 계산해서 돌려줌
     source: str                       # Item.source (amazon · hm · ...)  — 시뮬레이터의 상품 매핑 확인용
     source_item_id: str               # Item.source_item_id — 외부 상품 id (예: "B07XYZ")
+    # 같은 옷의 다른 색상 상품 id (H&M product_code가 같은 상품, 자기 자신 제외). 목록에는 한 번만 나온다 (services/variants.py)
+    variant_ids: list[str] = []
 
 
 class PipelineLatency(BaseModel):

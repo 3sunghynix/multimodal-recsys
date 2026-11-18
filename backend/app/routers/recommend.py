@@ -18,6 +18,7 @@ from ..db import get_db
 from ..models import Event, Experiment, Item, ModelVersion, RecommendRequest, User
 from ..schemas import PipelineLatency, RecommendationOut, RecommendOut, SessionContext
 from ..services import explore, feature_store
+from ..services.catalog_index import get_index
 from ..services.ab import assign_variant
 from ..services.session import session_click_ids, session_interest
 
@@ -71,6 +72,7 @@ def recommend(user_id: int, k: int | None = None,
     # 탐색 슬롯 상품은 모델 점수가 없으므로 순위 placeholder (score_kind="rank"), reason="mab_exploration".
     recs = [r for r in recs if r.item_id in items_by_id]
     items = [r.item_id for r in recs]
+    ix = get_index(db)                                       # 색상 변형 조회 (임베딩 색인과 같은 캐시)
     n = len(recs)
     recommendations = []
     for pos, r in enumerate(recs, start=1):
@@ -86,6 +88,7 @@ def recommend(user_id: int, k: int | None = None,
             impression_id=f"{request_id}:{pos}",
             source=it.source,
             source_item_id=it.source_item_id,
+            variant_ids=[str(i) for i in ix.variant_ids(r.item_id)],
         ))
 
     # 세션 컨텍스트: 해당 고객의 최근 클릭 상품 5개 (Feature Store 우선, 비면 DB 폴백).

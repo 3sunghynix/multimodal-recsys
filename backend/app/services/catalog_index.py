@@ -7,13 +7,14 @@ pgvector 상위 k 질의로는 계산할 수 없다. 상품 임베딩을 메모�
 상품이 추가되거나 재적재되면 카탈로그 지문(catalog_signature)이 바뀌므로 다음 요청에서 다시 읽는다.
 """
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..models import Item
+from .variants import variant_key
 
 
 @dataclass
@@ -24,9 +25,25 @@ class CatalogIndex:
     text: np.ndarray         # (N, d) text_embedding
     image: np.ndarray        # (N, d) image_embedding (없으면 0 벡터)
     cats: np.ndarray | None = None   # (N,) 소분류 (category "대 > 중 > 소"의 마지막, 없으면 "") — 추천 재정렬의 다양성 기준
+    variants: np.ndarray | None = None   # (N,) 색상 변형 묶음 키 (services/variants.py, 없으면 "")
+    _groups: dict | None = field(default=None, repr=False)
 
     def __len__(self):
         return len(self.ids)
+
+    def variant_ids(self, item_id: int) -> list[int]:
+        """같은 옷의 다른 색상 상품 id (자기 자신 제외, id 순). 묶음이 없으면 []."""
+        if self.variants is None:
+            return []
+        if self._groups is None:
+            groups, key_of = {}, {}
+            for i, key in zip(self.ids.tolist(), self.variants.tolist()):
+                if key:
+                    groups.setdefault(key, []).append(i)
+                    key_of[i] = key
+            self._groups = {"groups": groups, "key_of": key_of}
+        key = self._groups["key_of"].get(int(item_id))
+        return [i for i in self._groups["groups"].get(key, []) if i != int(item_id)] if key else []
 
 
 _cache: dict = {"key": None, "index": None}
@@ -57,11 +74,14 @@ def get_index(db: Session) -> CatalogIndex:
 
 
 def _build(db: Session, has_text) -> CatalogIndex:
-    rows = db.execute(select(Item.id, Item.source, Item.brand_id, Item.category, Item.text_embedding, Item.image_embedding)
+    rows = db.execute(select(Item.id, Item.source, Item.source_item_id, Item.brand_id, Item.category,
+                             Item.text_embedding, Item.image_embedding)
                       .where(has_text).order_by(Item.id)).all()
+    rows = [r for r in rows if r.text_embedding is not None]   # SQLite JSON 열은 null이 SQL NULL이 아니라 위 조건을 통과한다
     if not rows:
         z = np.zeros((0, 0), np.float32)
-        return CatalogIndex(np.zeros(0, np.int64), np.zeros(0, object), np.zeros(0, np.int64), z, z, np.zeros(0, object))
+        return CatalogIndex(np.zeros(0, np.int64), np.zeros(0, object), np.zeros(0, np.int64), z, z, np.zeros(0, object),
+                            np.zeros(0, object))
     text = np.asarray([r.text_embedding for r in rows], np.float32)
     image = np.zeros_like(text)
     for i, r in enumerate(rows):
@@ -71,4 +91,5 @@ def _build(db: Session, has_text) -> CatalogIndex:
                         sources=np.array([r.source for r in rows], object),
                         brands=np.array([r.brand_id if r.brand_id is not None else -1 for r in rows], np.int64),
                         text=text, image=image,
-                        cats=np.array([(r.category or "").split(">")[-1].strip() for r in rows], object))
+                        cats=np.array([(r.category or "").split(">")[-1].strip() for r in rows], object),
+                        variants=np.array([variant_key(r.source, r.source_item_id) for r in rows], object))
