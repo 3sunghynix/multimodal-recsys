@@ -1,4 +1,5 @@
-"""Read-only adapters. Display recorded metrics; do not recalculate model quality."""
+"""Adapters. Display recorded metrics; do not recalculate model quality.
+The only write is activate_model (operator-confirmed model swap)."""
 import json
 import math
 from pathlib import Path
@@ -132,9 +133,14 @@ def simulator_summary(raw):
     return obj
 
 
+SNAPSHOTS = "/metrics/snapshots?limit=1000"
+# 재학습 trainer(recsys/retrain.py accept)와 같은 채택 규칙: 주 지표 MAP@12, 보조 Recall@k
+MAP_TOLERANCE, RECALL_TOLERANCE = 0.02, 0.10
+
+
 def get_api(base_url, endpoint, timeout=3):
     """GET only; URL supplied by deployment environment, not an action form."""
-    if endpoint not in {"/health", "/models", "/experiments"}:
+    if endpoint not in {"/health", "/models", "/experiments", SNAPSHOTS}:
         raise ValueError("지원하지 않는 읽기 전용 endpoint")
     request = Request(base_url.rstrip("/") + endpoint, method="GET", headers={"Accept": "application/json"})
     try:
@@ -145,6 +151,72 @@ def get_api(base_url, endpoint, timeout=3):
         return json.loads(raw)
     except (URLError, OSError, ValueError) as error:
         raise ValueError("API에 연결할 수 없습니다. 서버 실행 상태와 API_BASE_URL을 확인하세요.") from error
+
+
+def activate_model(base_url, model_id, timeout=10):
+    """대시보드에서 유일한 쓰기 동작: 운영 모델 교체 (POST /models/{id}/activate).
+    화면에서 확인 체크 후에만 부른다. 기존 active는 서버가 candidate로 내린다."""
+    if isinstance(model_id, bool) or not isinstance(model_id, int) or model_id <= 0:
+        raise ValueError("모델 id는 양의 정수여야 합니다.")
+    request = Request(f"{base_url.rstrip('/')}/models/{model_id}/activate", method="POST",
+                      headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read(LIMIT + 1))
+    except (URLError, OSError, ValueError) as error:
+        raise ValueError(f"모델 교체 실패: {error}") from error
+
+
+def candidate_comparison(models, snapshots):
+    """재학습 후보(params.warm_start_from_version_id가 있는 버전)마다, 같은 trainer 실행에서 기록된
+    기준 · 후보의 holdout 지표(`<데이터셋>/holdout/<지표>`)를 짝지어 비교한다.
+
+    같은 실행의 기준 스냅샷은 후보 스냅샷과 지표 이름 · 평가 고객 수(n)가 같고 생성 시각이 가장 가까운 것이다
+    (trainer가 한 트랜잭션에서 두 줄을 함께 쓴다). 반환: 행 목록 (데이터셋 판정은 trainer와 같은 규칙)."""
+    by_id = {m["id"]: m for m in models}
+    snaps = [s for s in snapshots if isinstance(s.get("metric"), str) and "/holdout/" in s["metric"]]
+    rows = []
+    for cand in models:
+        base_id = (cand.get("params") or {}).get("warm_start_from_version_id")
+        if base_id is None:
+            continue
+        mine = {}
+        for s in snaps:
+            if s.get("model_version_id") == cand["id"]:
+                mine.setdefault(s["metric"], s)                    # 최신 먼저 (id 내림차순 응답)
+        per_source = {}
+        for metric, s in mine.items():
+            peers = [b for b in snaps if b.get("model_version_id") == base_id and b["metric"] == metric and b.get("n") == s.get("n")]
+            if not peers:
+                continue
+            base = min(peers, key=lambda b: abs(_ts(b["created_at"]) - _ts(s["created_at"])))
+            source, _, name = metric.split("/", 2)
+            per_source.setdefault(source, {})[name] = (base["value"], s["value"], s.get("n"))
+        for source, values in sorted(per_source.items()):
+            verdict = _verdict(values)
+            for name, (b, c, n) in sorted(values.items()):
+                rows.append({"후보": f"{cand['id']} · {cand.get('version')}", "후보 id": cand["id"],
+                             "기준": f"{base_id} · {by_id.get(base_id, {}).get('version', '?')}", "데이터셋": source,
+                             "지표": name, "기준값": b, "후보값": c, "차이": c - b,
+                             "상대 변화": (c - b) / b if b else None, "평가 고객": n, "채택 규칙": verdict})
+    return rows
+
+
+def _ts(value):
+    from datetime import datetime
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+
+
+def _verdict(values):
+    """values: {지표: (기준, 후보, n)}. MAP@12 ≥ 기준 × 0.98 그리고 Recall ≥ 기준 × 0.90."""
+    m = values.get("map@12")
+    if m is None:
+        return "판정 불가 (MAP@12 없음)"
+    ok = m[1] >= m[0] * (1 - MAP_TOLERANCE)
+    for name, (b, c, _) in values.items():
+        if name.startswith("recall@"):
+            ok = ok and c >= b * (1 - RECALL_TOLERANCE)
+    return "통과" if ok else "미통과"
 
 
 def parquet_inventory(directory):
