@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import insert, select
 
-from app.db import Base, SessionLocal, engine, init_db
+from app.db import SessionLocal, init_db, reset_db
 from app.models import Brand, Event, Item, ModelVersion, User
 
 # 한 INSERT 로 보낼 행 수. 10만 상품 · 100만 이벤트가 시판 적재 규모.
@@ -192,8 +192,9 @@ def main():
     ap.add_argument("--no-images", action="store_true", help="images.zip 압축 해제를 건너뛴다")
     a = ap.parse_args()
     if a.reset:
-        Base.metadata.drop_all(bind=engine)
-    init_db()
+        reset_db()
+    else:
+        init_db()
     with SessionLocal() as db:
         print("적재 완료:", load(db, a.data, a.embeddings, extract_images=not a.no_images))
 

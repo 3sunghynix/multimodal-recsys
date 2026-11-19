@@ -62,3 +62,16 @@ def init_db(bind=None):
         _run_alembic(bind)
     else:
         Base.metadata.create_all(bind=bind)
+
+
+def reset_db(bind=None):
+    """모든 테이블을 지우고 다시 만든다 (로컬 개발용 --reset).
+
+    alembic_version도 함께 지운다. 남겨 두면 init_db가 "이미 head"로 보고 upgrade를 건너뛰어
+    테이블이 하나도 없는 DB가 된다 (Postgres)."""
+    from . import models  # noqa: F401  테이블 등록
+    bind = bind or engine
+    Base.metadata.drop_all(bind=bind)
+    with bind.begin() as conn:
+        conn.execute(text("DROP TABLE IF EXISTS alembic_version"))
+    init_db(bind)

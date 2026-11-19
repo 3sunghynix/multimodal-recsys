@@ -40,7 +40,8 @@ docker compose up -d --build            # db · redis · api · dashboard (처�
 ```
 
 - DB 스키마는 api가 시작할 때 Alembic으로 자동으로 최신이 된다 (`docker compose down -v` 필요 없음).
-- 검색 모델은 첫 실행 때 내려받는다. 받은 뒤 `.env`의 `HF_HUB_OFFLINE=1`이면 인터넷 확인을 건너뛴다.
+- 검색 모델(약 900MB)은 첫 실행 때 내려받는다. **받지 못하면 api가 종료된다** (`docker compose ps -a`에서 `Exited (3)`, 로그에 `SSLError`) → 백신 HTTPS 검사를 끄고 `docker compose up -d api`. 받은 뒤 `.env`의 `HF_HUB_OFFLINE=1`로 바꾸면 인터넷 확인을 건너뛴다 (`0`이면 캐시가 있어도 확인하다 실패할 수 있다).
+- Windows Git Bash에서는 `/data/...` 경로가 `C:/Program Files/Git/data/...`로 바뀐다 → 명령 앞에 `MSYS_NO_PATHCONV=1`을 붙이거나 PowerShell에서 실행.
 
 ### 2. 데이터 넣기 (둘 중 하나)
 
@@ -49,7 +50,10 @@ docker compose up -d --build            # db · redis · api · dashboard (처�
 | **개발용** (상품 1,990 · 고객 6,000) | 드라이브 `msrs_project/dev_subset/` → `data/dev_subset/`, `embeddings/v2/` → `data/embeddings/v2/` 후<br>`docker compose exec api python -m scripts.load_dev_subset --data /data/dev_subset --embeddings /data/embeddings/v2 --reset` |
 | **전체 카탈로그** (상품 106,825 · 이벤트 107만) | [로컬실행.md 4절](docs/project/로컬실행.md): zip을 **OneDrive 밖**(예: `C:\msrs_data\full_catalog`)에 풀고 `docker-compose.override.yml`로 연결한 뒤 적재 |
 
+UME 가중치: 드라이브 `msrs_project/results/ume/`의 `hm_test_pca/` · `amazon_test_pca/` → `data/models/ume/` (없으면 등록이 거절되고 인기 모델로 대체된다).
+
 ```bash
+docker compose restart api                                          # 검색 PCA 파일은 api 시작 때 읽는다 (데이터를 넣은 뒤 한 번)
 docker compose exec api python -m scripts.register_ume --activate   # UME 모델 등록 · 운영 지정
 ```
 
