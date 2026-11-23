@@ -6,8 +6,9 @@
 - 시뮬레이터 고객(`users.source = "sim"`): 재학습 · A/B 실험용 가상 행동이다. 서비스 인기 통계에서는 뺀다
   (`settings.popularity_include_sim`으로 켤 수 있음). 시뮬레이터 구매는 현재 시각이라 H&M "최근 7일" 인기 창을
   통째로 차지하기 때문이다. 재학습 데이터 · 카운터에는 그대로 들어간다.
-- 재학습 카운터: 학습 정답으로 쓰는 종류(click · add_to_cart · purchase)만 센다 (recsys.retrain.WEIGHTS와 같음).
-  노출 view만으로 "새 로그 1만 건"이 차서 학습할 것 없는 재학습이 돌지 않게 한다.
+- 재학습 카운터: 학습 정답으로 쓰는 종류(TRAINING_TYPES = recsys.retrain.WEIGHTS)만 센다 — trainer는 new_log_count,
+  CT 루프는 /metrics/log-delta?types=click,add_to_cart,purchase (#70). 노출 view만으로 "새 로그 1만 건"이 차서
+  학습할 것 없는 재학습이 돌지 않게 한다.
 """
 from sqlalchemy import or_
 from sqlalchemy.sql import Select

@@ -57,7 +57,7 @@ def load_base(db, base_id: int | None):
 
 def new_log_count(db, since_event_id: int) -> tuple[int, int]:
     """(마지막 학습 이후 비 setup 학습용 이벤트 수, 현재 최대 이벤트 id). 학습 정답 종류(WEIGHTS)만 센다 —
-    노출 view · 검색만 쌓여서는 재학습하지 않는다. /metrics/log-delta와 같은 카운터 (app/services/event_scope.py)."""
+    노출 view · 검색만 쌓여서는 재학습하지 않는다. CT 루프의 /metrics/log-delta?types=click,add_to_cart,purchase(#70)와 같은 수."""
     from sqlalchemy import func, select
 
     from app.models import Event

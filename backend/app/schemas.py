@@ -290,9 +290,9 @@ class MetricWindowOut(BaseModel):
 
 
 class LogDeltaOut(BaseModel):
-    """since_event_id 이후로 쌓인 non-setup 학습용 이벤트(click · add_to_cart · purchase) 수. CT runner 가 "재학습 임계값(예: 10000)" 비교에 쓴다.
+    """since_event_id 이후로 쌓인 non-setup 이벤트 수. CT runner 가 "재학습 임계값(예: 10000)" 비교에 쓴다.
     서버는 수치만 제공하고 임계값 판단은 runner 가 한다 (policy 는 runner 책임)."""
     since_event_id: int
     max_event_id: int
-    delta: int                                    # 지정 id 초과 ~ max_event_id 구간의 non-setup 학습용 이벤트 수
+    delta: int                                    # 지정 id 초과 ~ max_event_id 구간의 non-setup 이벤트 수
     reset_detected: bool                          # max_event_id < since_event_id → --reset 재적재 가능성, runner 가 기준점 재설정

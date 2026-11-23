@@ -2,7 +2,8 @@
 
 - 추천 노출 view(request_id 있음)는 인기 추천에 안 들어간다 — 보여 준 만큼 인기가 오르는 되먹임 방지. 상세 조회 view는 들어간다.
 - 시뮬레이터 고객(source="sim") 이벤트는 인기 추천 · UME 인기 점수에서 빠진다 (설정으로 켤 수 있음).
-- 재학습 카운터(/metrics/log-delta · recsys.retrain.new_log_count)는 click · add_to_cart · purchase만 센다.
+- trainer 재학습 카운터(recsys.retrain.new_log_count)는 click · add_to_cart · purchase만 센다
+  (CT 루프는 /metrics/log-delta?types=click,add_to_cart,purchase로 같은 수를 본다, #70).
 """
 import uuid
 from datetime import datetime, timedelta
@@ -80,10 +81,7 @@ def test_sim_purchases_do_not_move_hm_recent_window(Session):
     assert z.argmax() == 0 and z[2] == z[3]          # sim 구매 상품 2는 구매 없는 상품 3과 같다
 
 
-def test_log_delta_and_trainer_count_training_types_only(Session):
-    from fastapi.testclient import TestClient
-
-    from app.main import app
+def test_trainer_counts_training_types_only(Session):
     from recsys.retrain import new_log_count
     ids, real, sim = _setup(Session)
     _add(Session, *[Event(user_id=sim, item_id=ids[0], type="view", request_id=uuid.uuid4()) for _ in range(10)],
@@ -91,19 +89,5 @@ def test_log_delta_and_trainer_count_training_types_only(Session):
          Event(user_id=sim, item_id=ids[0], type="click"), Event(user_id=real, item_id=ids[1], type="add_to_cart"),
          Event(user_id=real, item_id=ids[1], type="purchase"),
          Event(user_id=real, item_id=ids[2], type="purchase", is_setup=True))
-
-    def override():
-        s = Session()
-        try:
-            yield s
-        finally:
-            s.close()
-
-    app.dependency_overrides[app_db.get_db] = override
-    try:
-        body = TestClient(app).get("/metrics/log-delta", params={"since_event_id": 0}).json()
-    finally:
-        app.dependency_overrides.clear()
-    assert body["delta"] == 3 and body["max_event_id"] == 15     # sim 클릭은 학습 데이터라 센다, view · search · setup 제외
     with Session() as s:
-        assert new_log_count(s, 0) == (3, 15)
+        assert new_log_count(s, 0) == (3, 15)    # sim 클릭은 학습 데이터라 센다, view · search · setup 제외
