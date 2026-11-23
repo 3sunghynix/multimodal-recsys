@@ -17,6 +17,10 @@ from dashboard.data import (KNOWN_METRICS, SNAPSHOTS, activate_model, candidate_
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 API = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+# API_BASE_URL 은 대시보드 → 서버 내부망 호스트 (docker 환경에서 보통 http://api:8000).
+# HOST_API_URL 은 시뮬레이터 CLI 를 **사용자 터미널에서** 돌릴 때 쓸 주소 — 기본은 compose 표준 포트 8000.
+# 로컬 포트가 8001 로 매핑돼 있으면 (docker-compose.override.yml 참고) HOST_API_URL=http://localhost:8001.
+HOST_API_URL = os.getenv("HOST_API_URL", "http://localhost:8000")
 RESULTS = Path(os.getenv("OFFLINE_RESULTS_DIR", str(ROOT / "results/ume")))
 RUNS = Path(os.getenv("SIM_RUNS_DIR", str(ROOT / "simulator/runs")))
 DATA = Path(os.getenv("DEV_DATA_DIR", str(ROOT / "data/dev_subset")))
@@ -206,18 +210,18 @@ def simulator():
         n_sessions = c_sessions.number_input("세션/고객", min_value=1, max_value=50, value=3, step=1)
         n_k = c_k.number_input("세션당 추천 수", min_value=1, max_value=100, value=10, step=1)
         run_id = st.text_input("run-id (멱등 네임스페이스)", value=f"run-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
-        # 대시보드는 `http://api:8000` (docker 네트워크 내부 호스트명) 을 쓰지만 CLI 는 호스트 터미널에서 돌리므로
-        # localhost 주소가 필요하다 (PR #73 리뷰). docker 네트워크에서 돌리려면 docker compose run 형태를 쓴다.
-        host_url = "http://localhost:8001"                                # 로컬 compose override 기본
-        cmd = (f"python -m simulator.server_run --base-url {host_url} "
+        # 대시보드는 docker 네트워크 내부 호스트명 (보통 http://api:8000) 을 쓰지만 CLI 는 호스트 터미널에서
+        # 돌리므로 HOST_API_URL 주소를 쓴다 (기본 http://localhost:8000, PR #73 리뷰).
+        cmd = (f"python -m simulator.server_run --base-url {HOST_API_URL} "
                 f"--customers {int(n_customers)} --sessions {int(n_sessions)} --k {int(n_k)} "
                 f"--click-rate 0.10 --purchase-rate 0.02 --run-id {run_id} "
                 f"--out simulator/runs/{run_id}")
         st.code(cmd, language="bash")
         st.caption(f"예상 추천 호출: **{int(n_customers) * int(n_sessions):,}** 번. 재실행하려면 run-id 를 바꿔야 멱등 충돌이 없습니다. "
                     f"대시보드 컨테이너가 쓰는 주소(`{API}`) 는 docker 네트워크 내부라 호스트 터미널에서는 안 됩니다. "
-                    f"포트가 8000 이면 localhost:8000 으로, docker 네트워크 안에서 돌리려면 "
-                    f"`docker compose run --rm api python -m simulator.server_run --base-url http://api:8000 ...`.")
+                    f"포트가 8001 로 매핑돼 있으면 `HOST_API_URL=http://localhost:8001` 로 대시보드를 켜세요. "
+                    f"compose 네트워크 안에서 돌리고 싶으면 api 이미지에 simulator/ 가 없으므로 볼륨 마운트가 필요합니다: "
+                    f"`docker compose run --rm -v ./simulator:/app/simulator api python -m simulator.server_run --base-url http://api:8000 ...`.")
 
 
 def mab_section(pilot):
