@@ -178,7 +178,14 @@ def main():
     api = http_api(a.api)
     while True:
         state = json.loads(a.state.read_text(encoding='utf-8')) if a.state.exists() else {}
-        updated = tick(state, api, policy, datetime.now(timezone.utc), dry_run=a.dry_run)
+        try:
+            updated = tick(state, api, policy, datetime.now(timezone.utc), dry_run=a.dry_run)
+        except OSError as e:       # URLError · ConnectionResetError · timeout: api가 아직 뜨는 중이거나 꺼짐
+            print(f'api 연결 실패 ({a.api}): {e} — api가 준비됐는지 확인 (curl {a.api}/health)', flush=True)
+            if not a.watch:
+                raise SystemExit(1)
+            time.sleep(policy['interval_seconds'])
+            continue
         if updated != state:
             save(a.state, updated)
             print(json.dumps({'alerts': updated['alerts'][-3:], 'jobs': updated['jobs'][-1:],
