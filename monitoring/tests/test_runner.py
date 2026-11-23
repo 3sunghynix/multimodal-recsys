@@ -40,3 +40,30 @@ def test_rejected_and_reviewable_versions_do_not_activate(tmp_path):
     assert good['jobs'][0]['status']=='candidate_pending_review'
     assert good['jobs'][0]['active_model_unchanged'] and len(good['jobs'][0]['sha256'])==64
     with pytest.raises(ValueError):finish_training(good,'candidate-000001',artifact,.3,.2,'fixed')
+
+
+def test_acceptance_matches_trainer_tolerance(tmp_path):
+    state=observe({},window(0,cumulative_new_logs=10000),POLICY)
+    artifact=tmp_path/'model.npz';artifact.write_bytes(b'x')
+    # 2% 이내 하락은 통과 (예전 runner 규칙 candidate>=baseline 에서는 rejected)
+    assert finish_training(state,'candidate-000001',artifact,.197,.2,'k',policy=POLICY)['jobs'][0]['status']=='candidate_pending_review'
+    assert finish_training(state,'candidate-000001',artifact,.195,.2,'k',policy=POLICY)['jobs'][0]['status']=='rejected'
+    # Recall 보조 안전장치: 10% 넘게 하락하면 MAP@12가 좋아도 거절
+    assert finish_training(state,'candidate-000001',artifact,.3,.2,'k',.089,.1,POLICY)['jobs'][0]['status']=='rejected'
+    assert finish_training(state,'candidate-000001',artifact,.3,.2,'k',.091,.1,POLICY)['jobs'][0]['status']=='candidate_pending_review'
+
+
+def test_accept_rule_equals_trainer():
+    retrain=pytest.importorskip('recsys.retrain')
+    from monitoring.runner import accept
+    grid=[None,0.0,0.0039,0.0041,0.0425,0.0428,0.1,0.2]
+    for b in grid:
+        for n in grid:
+            for br,nr in [(None,None),(0.0198,0.0192),(0.153,0.12),(0.1,0.091)]:
+                assert accept(n,b,nr,br)==retrain.accept(b,n,br,nr)
+
+
+def test_window_jobs_can_be_disabled():
+    state={}
+    for i in range(3):state=observe(state,window(i),POLICY,request_jobs=False)
+    assert state.get('jobs')==[] and len(state['alerts'])==2
