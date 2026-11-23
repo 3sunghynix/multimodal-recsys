@@ -289,6 +289,145 @@ def test_candidate_comparison_ignores_versions_without_retrain_base():
     assert candidate_comparison([MODELS[0], MODELS[2]], SNAPS) == []
 
 
+# ─── A5: 서버 /experiments/{id}/stats · /metrics/window wrappers ──────
+
+def test_get_experiment_stats_validates_id_and_hits_endpoint():
+    from dashboard.data import get_experiment_stats
+    for bad in (0, -1, "3", True, 3.0):
+        with pytest.raises(ValueError):
+            get_experiment_stats("http://unused", bad)
+    stats = {"experiment_id": 3, "experiment_name": "pop vs ume",
+             "variants": [{"variant": "A", "users": 10, "impressions": 100, "clicks": 5,
+                           "purchases": 0, "ctr": 0.05, "ctr_ci_95": [0.02, 0.11]}],
+             "comparisons": []}
+    seen = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode(stats)
+
+    def fake(request, timeout):
+        seen.append(request.full_url); return Resp()
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        got = get_experiment_stats("http://api:8000", 3)
+    assert got == stats and seen == ["http://api:8000/experiments/3/stats"]
+
+
+def test_get_metrics_window_builds_query_with_url_encoded_timestamps():
+    """start · end 가 '+' 를 포함하면 '%2B' 로 인코딩돼야 한다 (PR #48 2차 리뷰: '+' 를 공백으로 디코딩 방지)."""
+    from dashboard.data import get_metrics_window
+    seen = []
+    body = {"window_id": "w1", "views": 10, "clicks": 1, "evaluated_users": 1, "hit_users": 1,
+            "cumulative_new_logs": 100}
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode(body)
+
+    def fake(request, timeout):
+        seen.append(request.full_url); return Resp()
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        got = get_metrics_window("http://api:8000/", "2026-11-23T00:00:00Z", "2026-11-23T01:00:00Z",
+                                  model_version="live", source="all", model_version_id=3)
+    assert got == body
+    assert seen == ["http://api:8000/metrics/window?start=2026-11-23T00%3A00%3A00Z"
+                     "&end=2026-11-23T01%3A00%3A00Z&model_version=live&source=all&model_version_id=3"]
+
+
+def test_get_metrics_timeseries_yields_oldest_to_newest_buckets():
+    """지난 N 시간 1시간 단위 = N 버킷. 반환은 **과거 → 최근** 순 (Altair 라인차트가 시간축 왼쪽부터 그리므로)."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+    bodies = iter([{"views": 10, "clicks": 1}, {"views": 20, "clicks": 2}, {"views": 30, "clicks": 6}])
+
+    class Resp:
+        def __init__(self, b): self._b = encode(b)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return self._b
+
+    def fake(request, timeout):
+        return Resp(next(bodies))
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        series = get_metrics_timeseries("http://api:8000", hours=3, step_hours=1,
+                                         now_utc=datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc))
+    assert len(series) == 3
+    # 과거 → 최근
+    assert series[0]["start"] < series[1]["start"] < series[2]["start"]
+    assert series[2]["end"] == datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+    # CTR 계산 — 시간 역순으로 응답이 왔으므로 가장 최근 (12:00) = 응답 1 (views 10, clicks 1)
+    assert series[2]["views"] == 10 and series[2]["clicks"] == 1 and abs(series[2]["ctr"] - 0.1) < 1e-9
+
+
+def test_get_metrics_timeseries_last_bucket_ends_at_now_not_floored_hour():
+    """마지막 bucket end 는 **현재 시각** 그대로 (정각 내림 금지). 시뮬레이터 돌리고 바로 대시보드에서
+    보여야 하므로 PR #73 리뷰 반영 — 이전엔 분 내림 때문에 다음 정각까지 비어 보였음."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode({"views": 0, "clicks": 0})
+
+    now = datetime(2026, 11, 23, 12, 37, 42, tzinfo=timezone.utc)                  # 분 · 초 모두 0 아님
+    with patch("dashboard.data.urlopen", side_effect=lambda req, timeout: Resp()):
+        series = get_metrics_timeseries("http://api:8000", hours=2, step_hours=1, now_utc=now)
+    assert series[-1]["end"] == now                                                # 정각 내림 X
+
+
+def test_get_metrics_timeseries_keeps_ctr_none_for_zero_view_buckets():
+    """노출 0 인 bucket 은 ctr=None 그대로 돌려줘서 Altair 차트가 선을 끊게 한다 (PR #73 리뷰).
+    이전엔 `ctr or 0` 치환 때문에 0% 로 선이 바닥에 그려지던 문제."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+    bodies = iter([{"views": 0, "clicks": 0}, {"views": 100, "clicks": 5}])
+
+    class Resp:
+        def __init__(self, b): self._b = encode(b)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return self._b
+
+    with patch("dashboard.data.urlopen", side_effect=lambda req, timeout: Resp(next(bodies))):
+        series = get_metrics_timeseries("http://api:8000", hours=2, step_hours=1,
+                                         now_utc=datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc))
+    ctrs = [b["ctr"] for b in series]
+    assert None in ctrs                                                             # 노출 0 bucket
+    assert any(abs(c - 0.05) < 1e-9 for c in ctrs if c is not None)                # 노출 있는 bucket
+
+
+def test_get_metrics_timeseries_skips_failed_buckets():
+    """한 bucket API 가 실패해도 나머지 bucket 은 반환돼야 (UI 끊김 방지)."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+    calls = {"n": 0}
+
+    def fake(request, timeout):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise OSError("timeout")
+        class Resp:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def read(self, _n): return encode({"views": 5, "clicks": 1})
+        return Resp()
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        series = get_metrics_timeseries("http://api:8000", hours=3, step_hours=1,
+                                         now_utc=datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc))
+    assert len(series) == 2                                # 3 bucket 중 2 성공
+
+
 def test_activate_model_posts_only_to_activate_endpoint():
     from dashboard.data import activate_model
     for bad in (0, -1, "4", True, 4.0):

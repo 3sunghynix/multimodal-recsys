@@ -10,12 +10,17 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.data import (KNOWN_METRICS, SNAPSHOTS, activate_model, candidate_comparison, confidence_interval, delta,
-                            get_api, offline_report, parquet_inventory, simulator_summary)
+                            get_api, get_experiment_stats, get_metrics_timeseries, offline_report,
+                            parquet_inventory, simulator_summary)
 
 
 ROOT = Path(__file__).resolve().parent.parent
 HERE = Path(__file__).resolve().parent
 API = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
+# API_BASE_URL 은 대시보드 → 서버 내부망 호스트 (docker 환경에서 보통 http://api:8000).
+# HOST_API_URL 은 시뮬레이터 CLI 를 **사용자 터미널에서** 돌릴 때 쓸 주소 — 기본은 compose 표준 포트 8000.
+# 로컬 포트가 8001 로 매핑돼 있으면 (docker-compose.override.yml 참고) HOST_API_URL=http://localhost:8001.
+HOST_API_URL = os.getenv("HOST_API_URL", "http://localhost:8000")
 RESULTS = Path(os.getenv("OFFLINE_RESULTS_DIR", str(ROOT / "results/ume")))
 RUNS = Path(os.getenv("SIM_RUNS_DIR", str(ROOT / "simulator/runs")))
 DATA = Path(os.getenv("DEV_DATA_DIR", str(ROOT / "data/dev_subset")))
@@ -197,7 +202,26 @@ def simulator():
         st.dataframe(counts.rename_axis("제외 사유").reset_index(name="고객 수"), hide_index=True)
         for note in report.get("notes", []):
             st.write(note)
-    st.button("시뮬레이터 실행 · 후속 단계", disabled=True, help="현재 화면은 결과를 읽으며 작업 실행 API를 호출하지 않습니다.")
+    with st.expander("시뮬레이터 서버 실행 (CLI)", expanded=False):
+        st.caption("`simulator/server_run.py` (A1) 는 실제 서버 API 로 고객 · 세션 · 이벤트 전부 보냅니다. "
+                    "대시보드에서 직접 실행하지 않고 **아래 명령을 복사해 터미널에서 실행**하세요.")
+        c_customers, c_sessions, c_k = st.columns(3)
+        n_customers = c_customers.number_input("고객 수", min_value=1, max_value=100000, value=100, step=1)
+        n_sessions = c_sessions.number_input("세션/고객", min_value=1, max_value=50, value=3, step=1)
+        n_k = c_k.number_input("세션당 추천 수", min_value=1, max_value=100, value=10, step=1)
+        run_id = st.text_input("run-id (멱등 네임스페이스)", value=f"run-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
+        # 대시보드는 docker 네트워크 내부 호스트명 (보통 http://api:8000) 을 쓰지만 CLI 는 호스트 터미널에서
+        # 돌리므로 HOST_API_URL 주소를 쓴다 (기본 http://localhost:8000, PR #73 리뷰).
+        cmd = (f"python -m simulator.server_run --base-url {HOST_API_URL} "
+                f"--customers {int(n_customers)} --sessions {int(n_sessions)} --k {int(n_k)} "
+                f"--click-rate 0.10 --purchase-rate 0.02 --run-id {run_id} "
+                f"--out simulator/runs/{run_id}")
+        st.code(cmd, language="bash")
+        st.caption(f"예상 추천 호출: **{int(n_customers) * int(n_sessions):,}** 번. 재실행하려면 run-id 를 바꿔야 멱등 충돌이 없습니다. "
+                    f"대시보드 컨테이너가 쓰는 주소(`{API}`) 는 docker 네트워크 내부라 호스트 터미널에서는 안 됩니다. "
+                    f"포트가 8001 로 매핑돼 있으면 `HOST_API_URL=http://localhost:8001` 로 대시보드를 켜세요. "
+                    f"compose 네트워크 안에서 돌리고 싶으면 api 이미지에 simulator/ 가 없으므로 볼륨 마운트가 필요합니다: "
+                    f"`docker compose run --rm -v ./simulator:/app/simulator api python -m simulator.server_run --base-url http://api:8000 ...`.")
 
 
 def mab_section(pilot):
@@ -226,11 +250,64 @@ def mab_section(pilot):
         st.caption("배치마다 앞 배치의 노출 · 클릭이 탐색 선택(UCB)에 반영됩니다. 모의 행동이며 실제 사용자 반응 추정이 아닙니다.")
 
 
+def server_ab_section():
+    """서버에서 집계한 실시간 A/B 통계 (A5). 변량별 노출 · 클릭 · CTR + Wilson CI, 두 비율 Z-test (명세 4.5)."""
+    st.caption("서버가 실 로그에서 계산한 A/B 통계입니다. 파일럿(아래 탭)과 달리 실제 사용자 · 시뮬레이터 행동이 전부 반영됩니다.")
+    try:
+        experiments = get_api(API, "/experiments")
+    except ValueError as error:
+        st.info(f"서버 API 미연결. ({error})")
+        return
+    if not experiments:
+        st.info("아직 등록된 실험이 없습니다. `POST /experiments` 로 실험을 만든 뒤 시뮬레이터/쇼핑 화면 로그가 쌓이면 여기 표시됩니다.")
+        return
+    # 진행 중 실험이 있으면 그걸 기본 선택 (PR #73 리뷰 — 기존 index 는 양쪽 모두 0 이라 의미 없었음).
+    default_idx = next((i for i, e in enumerate(experiments) if e.get("status") == "running"), 0)
+    chosen = st.selectbox("실험 선택", experiments, index=default_idx,
+                          format_func=lambda e: f"{e['id']} · {e['name']} ({e['status']})")
+    try:
+        stats = get_experiment_stats(API, int(chosen["id"]))
+    except ValueError as error:
+        st.error(str(error))
+        return
+    variants = stats.get("variants") or []
+    if not variants:
+        st.info("아직 집계할 노출 · 클릭이 없습니다 (is_setup=True 는 제외).")
+        return
+    table = pd.DataFrame([{
+        "그룹": v["variant"], "참여 고객": v["users"], "노출": v["impressions"], "클릭": v["clicks"], "구매": v["purchases"],
+        "CTR": v["ctr"], "CTR 95% CI": f"[{v['ctr_ci_95'][0]:.2%}, {v['ctr_ci_95'][1]:.2%}]",
+    } for v in variants])
+    st.dataframe(table, hide_index=True, width="stretch",
+                 column_config={"CTR": st.column_config.NumberColumn(format="percent")})
+    comps = stats.get("comparisons") or []
+    if comps:
+        st.markdown("**그룹 간 비교** · 두 비율 Z-test")
+        comp_table = pd.DataFrame([{
+            "지표": c["metric"].upper(), "기준": c["baseline"], "실험": c["treatment"],
+            "기준률": c["baseline_rate"], "실험률": c["treatment_rate"], "차이": c["diff"],
+            "lift": c.get("lift"), "차이 95% CI": f"[{c['diff_ci_95'][0]:+.2%}, {c['diff_ci_95'][1]:+.2%}]",
+            "p-value": c["p_value"], "유의": "✅" if c.get("significant") else "—",
+        } for c in comps])
+        st.dataframe(comp_table, hide_index=True, width="stretch",
+                     column_config={"기준률": st.column_config.NumberColumn(format="percent"),
+                                     "실험률": st.column_config.NumberColumn(format="percent"),
+                                     "차이": st.column_config.NumberColumn(format="%+.4f"),
+                                     "lift": st.column_config.NumberColumn(format="percent"),
+                                     "p-value": st.column_config.NumberColumn(format="%.4f")})
+        st.caption("유의 기준 p<0.05. 노출 0인 그룹은 비교에서 제외됩니다. is_setup=True 이벤트는 집계에 포함되지 않습니다.")
+    else:
+        st.caption("비교할 변량 쌍이 없거나 노출 0입니다.")
+
+
 def ab_page():
     st.title("A/B 테스트")
-    offline_tab, simulated_tab, search_tab = st.tabs(["추천 평가", "A/B 시뮬레이션", "검색 품질"])
+    offline_tab, server_tab, simulated_tab, search_tab = st.tabs(
+        ["추천 평가", "서버 A/B (라이브)", "A/B 시뮬레이션", "검색 품질"])
     with offline_tab:
         lab()
+    with server_tab:
+        server_ab_section()
     with simulated_tab:
         st.caption("첫 세션에서 한 번 이상 클릭한 고객 비율의 Z-test입니다. 전체 세션 CTR은 별도로 표시하며 검정에 사용하지 않습니다.")
         from dashboard.data import load_json
@@ -327,10 +404,61 @@ def ab_page():
         else:st.info("검색 평가 파일 미연결 · 수치를 임의로 채우지 않습니다.")
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_metrics_timeseries(base_url: str, hours: int, model_version_id: int | None) -> list[dict]:
+    """/metrics/window 는 bucket 당 1회 호출이라 기간 48 이면 48회. 화면 조작 때마다 다시 치지 않도록
+    60 초 캐시 (PR #73 리뷰). base_url · hours · model_version_id 가 캐시 키."""
+    return get_metrics_timeseries(base_url, hours=hours, step_hours=1, model_version_id=model_version_id)
+
+
+def server_metrics_timeseries_section():
+    """지난 N 시간 /metrics/window 를 1시간 단위로 호출 → 서버 집계 CTR 추이 (A5).
+    사용자 노출 (request_id 있는 view) 기준이라 상세페이지 조회는 제외됨."""
+    st.subheader("서버 지표 추이 (1시간 단위)")
+    col_hours, col_model = st.columns([1, 2])
+    hours = col_hours.selectbox("기간", [6, 12, 24, 48], index=2, key="ts_hours")
+    try:
+        models = get_api(API, "/models")
+    except ValueError as error:
+        st.info(f"서버 API 미연결 · 지표 추이를 표시하지 않습니다. ({error})")
+        return
+    options = [{"id": None, "label": "전체 모델"}] + [{"id": m["id"], "label": f"{m['id']} · {m['name']} {m['version']}"} for m in models]
+    picked = col_model.selectbox("모델 필터", options, format_func=lambda o: o["label"], key="ts_model")
+    try:
+        series = _cached_metrics_timeseries(API, int(hours), picked["id"])
+    except ValueError as error:
+        st.info(f"지표 추이 집계 실패 · ({error})")
+        return
+    if not series:
+        st.info("아직 집계할 노출 · 클릭이 없습니다. 쇼핑 화면 · 시뮬레이터가 이벤트를 보내야 표시됩니다.")
+        return
+    # 노출 0 인 bucket 은 CTR=None 그대로 유지 → Altair 가 선을 끊음 (PR #73 리뷰).
+    df = pd.DataFrame([{"시작": b["start"], "노출": b["views"], "클릭": b["clicks"], "CTR": b["ctr"]} for b in series])
+    k_views, k_clicks, k_avg_ctr = st.columns(3)
+    total_views = int(df["노출"].sum())
+    total_clicks = int(df["클릭"].sum())
+    k_views.metric(f"{hours}h 총 노출", f"{total_views:,}", border=True)
+    k_clicks.metric(f"{hours}h 총 클릭", f"{total_clicks:,}", border=True)
+    k_avg_ctr.metric("평균 CTR", f"{total_clicks / total_views:.2%}" if total_views else "—", border=True)
+    chart = alt.Chart(df).mark_line(point=True).encode(
+        x=alt.X("시작:T", title="시각 (UTC)"),
+        y=alt.Y("CTR:Q", title="CTR", axis=alt.Axis(format="%")),
+        tooltip=[alt.Tooltip("시작:T", title="시각"),
+                 alt.Tooltip("노출:Q", title="노출"),
+                 alt.Tooltip("클릭:Q", title="클릭"),
+                 alt.Tooltip("CTR:Q", format=".2%")],
+    ).properties(height=240)
+    st.altair_chart(chart, use_container_width=True)
+    st.caption("노출 view 는 추천 응답 `request_id` 가 있는 이벤트만 셈 (상세 페이지 조회 제외). "
+                "/metrics/window 의 `metric_definition_version=user_click_through_v1` 정의와 일치. "
+                "캐시 TTL 60초 — 지금 쌓은 로그가 안 보이면 잠깐 기다리거나 새로고침.")
+
+
 def monitoring_page():
     st.title("모니터링 페이지")
     st.caption("닫힌 집계 구간의 CTR·HitRate, 임계값 알림, 재학습 요청과 후보 버전을 확인합니다.")
-    st.info("지표 추이 · 알림은 파일 기반 모니터입니다. 아래 '모델 버전 · 재학습 후보'는 서버 API에서 읽고, 확인 후 운영 모델을 교체할 수 있습니다.")
+    st.info("'서버 지표 추이' 는 /metrics/window 를 실시간 집계합니다. 아래 '모델 버전 · 재학습 후보'는 서버 API에서 읽고, 확인 후 운영 모델을 교체할 수 있습니다.")
+    server_metrics_timeseries_section()
     files=sorted(RUNS.glob('*/monitor_state.json')) if RUNS.is_dir() else []
     chosen=st.selectbox('모니터링 기록',files,format_func=lambda p:p.parent.name) if files else None
     upload=st.file_uploader('monitor_state.json',type=['json'],key='monitor_upload')

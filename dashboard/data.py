@@ -153,6 +153,72 @@ def get_api(base_url, endpoint, timeout=3):
         raise ValueError("API에 연결할 수 없습니다. 서버 실행 상태와 API_BASE_URL을 확인하세요.") from error
 
 
+def _get_json(url: str, timeout: int = 3) -> dict | list:
+    """GET only — 공통 HTTP → JSON. 응답 크기 제한 · ValueError 로 통합."""
+    request = Request(url, method="GET", headers={"Accept": "application/json"})
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read(LIMIT + 1)
+        if len(raw) > LIMIT:
+            raise ValueError("API 응답이 너무 큽니다.")
+        return json.loads(raw)
+    except (URLError, OSError, ValueError) as error:
+        raise ValueError("API에 연결할 수 없습니다. 서버 실행 상태와 API_BASE_URL을 확인하세요.") from error
+
+
+def get_experiment_stats(base_url: str, exp_id: int, timeout: int = 3) -> dict:
+    """A/B 통계 검정 (서버 /experiments/{id}/stats) — 그룹별 집계 + 그룹 간 Wilson CI · Z-test (A5).
+
+    is_setup=True 이벤트는 집계 제외 (PR #30 규칙). 반환: {experiment_id, experiment_name, variants[], comparisons[]}."""
+    if isinstance(exp_id, bool) or not isinstance(exp_id, int) or exp_id <= 0:
+        raise ValueError("experiment id는 양의 정수여야 합니다.")
+    return _get_json(f"{base_url.rstrip('/')}/experiments/{exp_id}/stats", timeout=timeout)
+
+
+def get_metrics_window(base_url: str, start_iso: str, end_iso: str, *,
+                       model_version: str = "live", source: str = "all",
+                       model_version_id: int | None = None, timeout: int = 5) -> dict:
+    """지정 구간 CTR · views · clicks · evaluated_users · hit_users 집계 (서버 /metrics/window).
+
+    start_iso · end_iso: ISO 8601 with timezone (서버가 Z 또는 +00:00 요구). model_version_id 가 오면
+    해당 모델의 노출만 집계 — A/B 중 모델별 CTR 추이 그래프에 쓴다."""
+    from urllib.parse import quote
+    params = f"start={quote(start_iso, safe='')}&end={quote(end_iso, safe='')}" \
+             f"&model_version={quote(model_version, safe='')}&source={quote(source, safe='')}"
+    if model_version_id is not None:
+        if isinstance(model_version_id, bool) or not isinstance(model_version_id, int) or model_version_id <= 0:
+            raise ValueError("model_version_id는 양의 정수여야 합니다.")
+        params += f"&model_version_id={model_version_id}"
+    return _get_json(f"{base_url.rstrip('/')}/metrics/window?{params}", timeout=timeout)
+
+
+def get_metrics_timeseries(base_url: str, *, hours: int = 24, step_hours: int = 1,
+                           model_version_id: int | None = None, now_utc=None, timeout: int = 5) -> list[dict]:
+    """지난 `hours` 시간을 `step_hours` 단위로 쪼개 /metrics/window 를 여러 번 호출 → CTR 추이용 시계열.
+    각 bucket 의 {start, end, views, clicks, ctr} 를 돌려준다. 실패한 bucket 은 건너뜀 (None 대신 skip).
+
+    마지막 bucket 의 end 는 **현재 시각** (정각 내림 아님) — 시뮬레이터를 돌리고 바로 대시보드에서
+    보일 수 있도록 (PR #73 리뷰). 노출 0 인 bucket 은 ctr=None 그대로 돌려줘서 차트가 선을 끊는다."""
+    from datetime import datetime, timedelta, timezone
+    if hours < 1 or step_hours < 1 or step_hours > hours:
+        raise ValueError("hours · step_hours 는 1 이상, step_hours ≤ hours 이어야 합니다.")
+    end = now_utc or datetime.now(timezone.utc)
+    buckets: list[dict] = []
+    for i in range(hours // step_hours):
+        b_end = end - timedelta(hours=i * step_hours)
+        b_start = b_end - timedelta(hours=step_hours)
+        try:
+            w = get_metrics_window(base_url, b_start.isoformat().replace("+00:00", "Z"),
+                                    b_end.isoformat().replace("+00:00", "Z"),
+                                    model_version_id=model_version_id, timeout=timeout)
+        except ValueError:
+            continue                                            # 한 bucket 실패는 UI 전체를 막지 않는다
+        views, clicks = int(w.get("views", 0)), int(w.get("clicks", 0))
+        buckets.append({"start": b_start, "end": b_end, "views": views, "clicks": clicks,
+                         "ctr": (clicks / views) if views else None})
+    return list(reversed(buckets))                             # 과거 → 최근 순으로
+
+
 def activate_model(base_url, model_id, timeout=10):
     """대시보드에서 유일한 쓰기 동작: 운영 모델 교체 (POST /models/{id}/activate).
     화면에서 확인 체크 후에만 부른다. 기존 active는 서버가 candidate로 내린다."""
