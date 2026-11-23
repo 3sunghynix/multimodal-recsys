@@ -16,7 +16,7 @@
 
 model_versions.params 예 (드라이브 results/ume/{source}_test_pca = train + valid로 학습한 가중치):
   {"artifact_dirs": {"hm": "/data/models/ume/hm_test_pca", "amazon": "/data/models/ume/amazon_test_pca"},
-   "gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
+   "gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
    "session_weight": 0.3, "rerank": {"max_category_share": 0.3}}      # rerank: null 이면 재정렬 끔
 """
 import time
@@ -38,7 +38,7 @@ from .base import Recommender, register
 from .popularity import _popular_scored
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
-DEFAULTS = {"gamma": 2.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
+DEFAULTS = {"gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
             "session_weight": 0.3, "rerank": {}}
 
 
