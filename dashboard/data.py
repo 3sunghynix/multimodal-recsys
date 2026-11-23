@@ -195,11 +195,14 @@ def get_metrics_window(base_url: str, start_iso: str, end_iso: str, *,
 def get_metrics_timeseries(base_url: str, *, hours: int = 24, step_hours: int = 1,
                            model_version_id: int | None = None, now_utc=None, timeout: int = 5) -> list[dict]:
     """지난 `hours` 시간을 `step_hours` 단위로 쪼개 /metrics/window 를 여러 번 호출 → CTR 추이용 시계열.
-    각 bucket 의 {start, end, views, clicks, ctr} 를 돌려준다. 실패한 bucket 은 건너뜀 (None 대신 skip)."""
+    각 bucket 의 {start, end, views, clicks, ctr} 를 돌려준다. 실패한 bucket 은 건너뜀 (None 대신 skip).
+
+    마지막 bucket 의 end 는 **현재 시각** (정각 내림 아님) — 시뮬레이터를 돌리고 바로 대시보드에서
+    보일 수 있도록 (PR #73 리뷰). 노출 0 인 bucket 은 ctr=None 그대로 돌려줘서 차트가 선을 끊는다."""
     from datetime import datetime, timedelta, timezone
     if hours < 1 or step_hours < 1 or step_hours > hours:
         raise ValueError("hours · step_hours 는 1 이상, step_hours ≤ hours 이어야 합니다.")
-    end = (now_utc or datetime.now(timezone.utc)).replace(minute=0, second=0, microsecond=0)
+    end = now_utc or datetime.now(timezone.utc)
     buckets: list[dict] = []
     for i in range(hours // step_hours):
         b_end = end - timedelta(hours=i * step_hours)

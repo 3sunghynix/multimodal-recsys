@@ -365,6 +365,46 @@ def test_get_metrics_timeseries_yields_oldest_to_newest_buckets():
     assert series[2]["views"] == 10 and series[2]["clicks"] == 1 and abs(series[2]["ctr"] - 0.1) < 1e-9
 
 
+def test_get_metrics_timeseries_last_bucket_ends_at_now_not_floored_hour():
+    """마지막 bucket end 는 **현재 시각** 그대로 (정각 내림 금지). 시뮬레이터 돌리고 바로 대시보드에서
+    보여야 하므로 PR #73 리뷰 반영 — 이전엔 분 내림 때문에 다음 정각까지 비어 보였음."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode({"views": 0, "clicks": 0})
+
+    now = datetime(2026, 11, 23, 12, 37, 42, tzinfo=timezone.utc)                  # 분 · 초 모두 0 아님
+    with patch("dashboard.data.urlopen", side_effect=lambda req, timeout: Resp()):
+        series = get_metrics_timeseries("http://api:8000", hours=2, step_hours=1, now_utc=now)
+    assert series[-1]["end"] == now                                                # 정각 내림 X
+
+
+def test_get_metrics_timeseries_keeps_ctr_none_for_zero_view_buckets():
+    """노출 0 인 bucket 은 ctr=None 그대로 돌려줘서 Altair 차트가 선을 끊게 한다 (PR #73 리뷰).
+    이전엔 `ctr or 0` 치환 때문에 0% 로 선이 바닥에 그려지던 문제."""
+    from datetime import datetime, timezone
+
+    from dashboard.data import get_metrics_timeseries
+    bodies = iter([{"views": 0, "clicks": 0}, {"views": 100, "clicks": 5}])
+
+    class Resp:
+        def __init__(self, b): self._b = encode(b)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return self._b
+
+    with patch("dashboard.data.urlopen", side_effect=lambda req, timeout: Resp(next(bodies))):
+        series = get_metrics_timeseries("http://api:8000", hours=2, step_hours=1,
+                                         now_utc=datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc))
+    ctrs = [b["ctr"] for b in series]
+    assert None in ctrs                                                             # 노출 0 bucket
+    assert any(abs(c - 0.05) < 1e-9 for c in ctrs if c is not None)                # 노출 있는 bucket
+
+
 def test_get_metrics_timeseries_skips_failed_buckets():
     """한 bucket API 가 실패해도 나머지 bucket 은 반환돼야 (UI 끊김 방지)."""
     from datetime import datetime, timezone

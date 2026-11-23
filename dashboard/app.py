@@ -206,12 +206,18 @@ def simulator():
         n_sessions = c_sessions.number_input("세션/고객", min_value=1, max_value=50, value=3, step=1)
         n_k = c_k.number_input("세션당 추천 수", min_value=1, max_value=100, value=10, step=1)
         run_id = st.text_input("run-id (멱등 네임스페이스)", value=f"run-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}")
-        cmd = (f"python -m simulator.server_run --base-url {API} "
+        # 대시보드는 `http://api:8000` (docker 네트워크 내부 호스트명) 을 쓰지만 CLI 는 호스트 터미널에서 돌리므로
+        # localhost 주소가 필요하다 (PR #73 리뷰). docker 네트워크에서 돌리려면 docker compose run 형태를 쓴다.
+        host_url = "http://localhost:8001"                                # 로컬 compose override 기본
+        cmd = (f"python -m simulator.server_run --base-url {host_url} "
                 f"--customers {int(n_customers)} --sessions {int(n_sessions)} --k {int(n_k)} "
                 f"--click-rate 0.10 --purchase-rate 0.02 --run-id {run_id} "
                 f"--out simulator/runs/{run_id}")
         st.code(cmd, language="bash")
-        st.caption(f"예상 추천 호출: **{int(n_customers) * int(n_sessions):,}** 번. 재실행하려면 run-id 를 바꿔야 멱등 충돌이 없습니다.")
+        st.caption(f"예상 추천 호출: **{int(n_customers) * int(n_sessions):,}** 번. 재실행하려면 run-id 를 바꿔야 멱등 충돌이 없습니다. "
+                    f"대시보드 컨테이너가 쓰는 주소(`{API}`) 는 docker 네트워크 내부라 호스트 터미널에서는 안 됩니다. "
+                    f"포트가 8000 이면 localhost:8000 으로, docker 네트워크 안에서 돌리려면 "
+                    f"`docker compose run --rm api python -m simulator.server_run --base-url http://api:8000 ...`.")
 
 
 def mab_section(pilot):
@@ -251,8 +257,9 @@ def server_ab_section():
     if not experiments:
         st.info("아직 등록된 실험이 없습니다. `POST /experiments` 로 실험을 만든 뒤 시뮬레이터/쇼핑 화면 로그가 쌓이면 여기 표시됩니다.")
         return
-    running = [e for e in experiments if e.get("status") == "running"]
-    chosen = st.selectbox("실험 선택", experiments, index=0 if running else 0,
+    # 진행 중 실험이 있으면 그걸 기본 선택 (PR #73 리뷰 — 기존 index 는 양쪽 모두 0 이라 의미 없었음).
+    default_idx = next((i for i, e in enumerate(experiments) if e.get("status") == "running"), 0)
+    chosen = st.selectbox("실험 선택", experiments, index=default_idx,
                           format_func=lambda e: f"{e['id']} · {e['name']} ({e['status']})")
     try:
         stats = get_experiment_stats(API, int(chosen["id"]))
@@ -393,10 +400,17 @@ def ab_page():
         else:st.info("검색 평가 파일 미연결 · 수치를 임의로 채우지 않습니다.")
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_metrics_timeseries(base_url: str, hours: int, model_version_id: int | None) -> list[dict]:
+    """/metrics/window 는 bucket 당 1회 호출이라 기간 48 이면 48회. 화면 조작 때마다 다시 치지 않도록
+    60 초 캐시 (PR #73 리뷰). base_url · hours · model_version_id 가 캐시 키."""
+    return get_metrics_timeseries(base_url, hours=hours, step_hours=1, model_version_id=model_version_id)
+
+
 def server_metrics_timeseries_section():
-    """지난 24시간 /metrics/window 를 1시간 단위로 호출 → 서버 집계 CTR 추이 (A5).
+    """지난 N 시간 /metrics/window 를 1시간 단위로 호출 → 서버 집계 CTR 추이 (A5).
     사용자 노출 (request_id 있는 view) 기준이라 상세페이지 조회는 제외됨."""
-    st.subheader("서버 지표 추이 (지난 24시간, 1시간 단위)")
+    st.subheader("서버 지표 추이 (1시간 단위)")
     col_hours, col_model = st.columns([1, 2])
     hours = col_hours.selectbox("기간", [6, 12, 24, 48], index=2, key="ts_hours")
     try:
@@ -407,14 +421,15 @@ def server_metrics_timeseries_section():
     options = [{"id": None, "label": "전체 모델"}] + [{"id": m["id"], "label": f"{m['id']} · {m['name']} {m['version']}"} for m in models]
     picked = col_model.selectbox("모델 필터", options, format_func=lambda o: o["label"], key="ts_model")
     try:
-        series = get_metrics_timeseries(API, hours=hours, step_hours=1, model_version_id=picked["id"])
+        series = _cached_metrics_timeseries(API, int(hours), picked["id"])
     except ValueError as error:
         st.info(f"지표 추이 집계 실패 · ({error})")
         return
     if not series:
         st.info("아직 집계할 노출 · 클릭이 없습니다. 쇼핑 화면 · 시뮬레이터가 이벤트를 보내야 표시됩니다.")
         return
-    df = pd.DataFrame([{"시작": b["start"], "노출": b["views"], "클릭": b["clicks"], "CTR": b["ctr"] or 0} for b in series])
+    # 노출 0 인 bucket 은 CTR=None 그대로 유지 → Altair 가 선을 끊음 (PR #73 리뷰).
+    df = pd.DataFrame([{"시작": b["start"], "노출": b["views"], "클릭": b["clicks"], "CTR": b["ctr"]} for b in series])
     k_views, k_clicks, k_avg_ctr = st.columns(3)
     total_views = int(df["노출"].sum())
     total_clicks = int(df["클릭"].sum())
@@ -431,7 +446,8 @@ def server_metrics_timeseries_section():
     ).properties(height=240)
     st.altair_chart(chart, use_container_width=True)
     st.caption("노출 view 는 추천 응답 `request_id` 가 있는 이벤트만 셈 (상세 페이지 조회 제외). "
-                "/metrics/window 의 `metric_definition_version=user_click_through_v1` 정의와 일치.")
+                "/metrics/window 의 `metric_definition_version=user_click_through_v1` 정의와 일치. "
+                "캐시 TTL 60초 — 지금 쌓은 로그가 안 보이면 잠깐 기다리거나 새로고침.")
 
 
 def monitoring_page():
