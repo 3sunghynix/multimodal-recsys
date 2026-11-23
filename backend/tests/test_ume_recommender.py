@@ -64,7 +64,7 @@ def env(tmp_path, monkeypatch):
         for j, m in enumerate(("text", "image")):
             write_tower(tmp_path / "art" / src / m, seed=10 * j + len(src))
     params = {"artifact_dirs": {src: str(tmp_path / "art" / src) for src in ("amazon", "hm")}, "gamma": 0.0, "beta": {},
-              "exclude_purchased": {}}                                  # 기존 테스트는 산 상품도 후보에 둔다 (제외는 아래 따로)
+              "exclude_purchased": {}, "recency_decay": {}}             # 기존 테스트: 산 상품도 후보 · 이력은 단순 평균 (각각 아래 따로)
     return Session, ids, params, tmp_path
 
 
@@ -468,3 +468,27 @@ def test_exclude_purchased_with_rerank_fill_and_all_bought(env):
         s.commit()
         rec = recommenders.get("ume", {**params, "exclude_purchased": {"hm": True}}).recommend(s, u.id, 10)
         assert rec and not set(rec) & set(ids["hm"])                    # H&M은 다 샀으니 Amazon만
+
+
+def test_recency_decay_weights_recent_history(env):
+    """recency_decay λ: 최근 순위 i에 λ^i 가중 평균 (C4). 고객 0 이력 최근 순 = amazon 6 · 4 · 3 · 0 (구매일 6 · 4 · 3 · 0)."""
+    from app.recommenders.ume import _hist_mean
+    Session, ids, params, tmp = env
+    with Session() as s:
+        items = {it.id: it for it in s.query(Item).all()}
+        hist = [ids["amazon"][j] for j in (6, 4, 3, 0)]                # 최근 순
+        rec = recommenders.get("ume", {**params, "recency_decay": {"amazon": 0.5}}).recommend(s, ids["users"][0], 30)
+        lam = np.array([1, 0.5, 0.25, 0.125])
+        score = 0
+        for m, col in (("text", "text_embedding"), ("image", "image_embedding")):
+            w = dict(np.load(tmp / "art" / "amazon" / m / "weights.npz"))
+            x = np.array([getattr(items[i], col) for i in hist], np.float32)
+            u = mlp(w, "user", (lam[:, None] * x).sum(0) / lam.sum())
+            V = mlp(w, "item", np.array([getattr(items[i], col) for i in ids["amazon"]], np.float32))
+            score = score + _z(V @ u)
+        assert rec[:5] == [ids["amazon"][i] for i in np.argsort(-score, kind="stable")[:5]]
+        # 다른 데이터셋에만 켜면 그대로 (단순 평균)
+        assert recommenders.get("ume", {**params, "recency_decay": {"hm": 0.5}}).recommend(s, ids["users"][0], 30) ==             recommenders.get("ume", params).recommend(s, ids["users"][0], 30)
+    x = np.arange(6, dtype=np.float32).reshape(3, 2)
+    assert np.allclose(_hist_mean(x, np.array([2, 0]), 1.0), x[[2, 0]].mean(0))   # λ = 1 → 단순 평균
+    assert np.allclose(_hist_mean(x, np.array([1]), 0.5), x[1])                    # 이력 1개
