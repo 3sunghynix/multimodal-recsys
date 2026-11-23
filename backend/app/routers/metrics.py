@@ -6,7 +6,7 @@ MetricSnapshot CRUD
 
 CT runner 연결점 (광석 monitoring/runner.py 가 cron 으로 호출)
     GET  /metrics/window            지정 구간 집계 → observe() 가 요구하는 window JSON
-    GET  /metrics/log-delta         since_event_id 이후 쌓인 non-setup 이벤트 수 → training 트리거 판단
+    GET  /metrics/log-delta         since_event_id 이후 쌓인 non-setup 이벤트 수 (types로 타입 제한) → training 트리거 판단
 """
 from datetime import datetime, timezone
 
@@ -169,16 +169,29 @@ def metric_window(
 
 
 @router.get("/log-delta", response_model=LogDeltaOut)
-def log_delta(since_event_id: int = Query(0, ge=0), db: Session = Depends(get_db)):
+def log_delta(
+    since_event_id: int = Query(0, ge=0),
+    types: str | None = Query(
+        None,
+        description="쉼표로 구분한 이벤트 타입만 센다 (예: click,add_to_cart,purchase — trainer 학습 타입). "
+                    "없으면 비 setup 이벤트 전부 (기존 동작). 노출 view가 재학습 임계값을 채우지 않게 CT 루프가 쓴다 (#70 리뷰).",
+    ),
+    db: Session = Depends(get_db),
+):
     """since_event_id 초과 ~ max(Event.id) 구간의 non-setup 이벤트 수를 돌려준다.
     runner 가 정책(예: 10000건 이상 쌓이면 재학습) 판단에 쓴다 — 임계값/정책은 runner 책임.
 
     reset_detected: max_event_id < since_event_id 이면 --reset 재적재 가능성 — runner 가 기준점을
     다시 잡아야 한다 (PR #48 리뷰 반영)."""
     non_setup = Event.is_setup == False                                                   # noqa: E712
+    cond = and_(Event.id > since_event_id, non_setup)
+    if types is not None:
+        wanted = [t.strip() for t in types.split(",") if t.strip()]
+        if not wanted:
+            raise HTTPException(422, "types: 이벤트 타입을 하나 이상 지정 (예: click,add_to_cart,purchase)")
+        cond = and_(cond, Event.type.in_(wanted))
     max_id = int(db.scalar(select(func.max(Event.id))) or 0)
-    delta = int(db.scalar(select(func.count(Event.id))
-                          .where(and_(Event.id > since_event_id, non_setup))) or 0)
+    delta = int(db.scalar(select(func.count(Event.id)).where(cond)) or 0)
     return LogDeltaOut(
         since_event_id=since_event_id,
         max_event_id=max_id,

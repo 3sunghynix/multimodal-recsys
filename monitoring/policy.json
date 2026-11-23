@@ -1,5 +1,5 @@
 {
-  "version": "0.1-proposal",
+  "version": "0.3-proposal",
   "interval_seconds": 60,
   "minimum_views": 1000,
   "minimum_users": 100,
@@ -7,6 +7,34 @@
   "ctr_minimum": 0.02,
   "hitrate_minimum": 0.05,
   "training_log_threshold": 10000,
+  "training_event_types": [
+    "click",
+    "add_to_cart",
+    "purchase"
+  ],
   "training_acceptance_metric": "map@12",
-  "automatic_activation": false
+  "training_map_tolerance": 0.02,
+  "training_recall_tolerance": 0.1,
+  "automatic_activation": false,
+  "window_minutes": 60,
+  "max_windows_per_tick": 24,
+  "cohort": "all",
+  "trainer_command": [
+    "docker",
+    "compose",
+    "--profile",
+    "trainer",
+    "run",
+    "--rm",
+    "-T",
+    "trainer",
+    "python",
+    "-m",
+    "recsys.retrain"
+  ],
+  "trainer_max_attempts": 2,
+  "trainer_retry_cooldown_minutes": 60,
+  "trainer_path_map": {
+    "/data/": "data/"
+  }
 }
