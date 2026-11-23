@@ -4,6 +4,36 @@
 
 흐름: 시뮬레이션 고객(페르소나 부여) → `GET /recommend/{user_id}` → 노출 상품마다 `POST /events`(view) → 페르소나 규칙에 따라 click · add_to_cart · purchase 이벤트 전송. 이벤트에 `experiment_id`, `variant`, `model_version_id`를 함께 보내야 A/B 지표가 집계된다 (`GET /experiments/{id}/metrics`).
 
+## 서버 연결 2단계 (A1, v1) — `simulator.server_run`
+
+`python -m simulator.server_run` 은 **실제 서버 API** 를 돌아 시뮬레이터 → 추천 → 이벤트 → 서버 DB 한 바퀴를 완성한다. `catalog_pilot.py` (서비스 함수 직접 호출 · rollback) 과 달리 **서버 로그가 영구 저장**되므로 재학습 · 대시보드 · A/B 집계가 이 로그로 돈다.
+
+전제: 이벤트연결규약 (PR #54 ~ #59) 서버 구현 완료 — `POST /users` 멱등, `GET /recommend` 가 `request_id` · `position` 포함, `POST /events/batch` 가 `request_id` 자동 채움 · `event_id` 멱등.
+
+```bash
+# 소규모 end-to-end 확인 (약 1초)
+python -m simulator.server_run --base-url http://localhost:8001 --customers 10 --sessions 2 --k 5 --run-id dev
+
+# 대량 실행 (고객 1만 · 로그 100만 급)
+python -m simulator.server_run --base-url http://... --customers 10000 --sessions 10 --k 10 \
+                               --click-rate 0.10 --purchase-rate 0.02 --run-id prod-$(date +%s)
+```
+
+- **결정론**: `source_user_id` · `session_id` · `event_id` 모두 `uuid5(run_id, 인덱스...)` 로 생성. 같은 `--run-id` 로 재실행하면 같은 고객 · 같은 세션이 만들어진다.
+- **재실행은 지원 X**: 추천 호출 시 서버가 **새 `request_id`** 를 발급하므로, 같은 `event_id` + 다른 `request_id` → 톡방 결정 2 에 의해 **409 error**. 대량 데이터가 필요하면 **새 `--run-id`** 를 쓴다. 네트워크 재시도 중단 복구는 batch 안에서만 작동.
+- **A/B 참여**: 서버에 running 실험이 있으면 자동으로 세션 격리 + variant 배정. 시뮬레이터는 variant 선택 안 함.
+- **행동 모델**: 지금은 최소 랜덤 — `click_rate` · `purchase_rate` 파라미터. persona · 카테고리 선호 등 풍부한 행동은 `engine.py` 를 `server_run.py` 에 교체 삽입하는 후속 PR (김광석 담당).
+
+결과 `--out/summary.json`:
+```json
+{"customers": 10, "sessions": 2, "recommend_calls": 20, "events_created": 115, "events_error": 0, "elapsed_sec": 1.4}
+```
+`/metrics/window` 로 바로 집계 — views · clicks · CTR 이 노출 기준으로 나옴.
+
+테스트: `python -m pytest simulator/tests/test_server_adapter.py -v` → 8 passed (mocked HTTP).
+
+---
+
 ## 현재 구현 — 로컬 실행기 v0.1
 
 `python -m simulator`는 **서버에 요청하지 않고 로컬 파일로만 저장**한다. 위 API 흐름은 후속 단계다. `personas.yaml` v0.3의 7종(트렌드세터·실용주의자·가성비추구·브랜드충성·충동구매·신중탐색·눈팅형)을 실행한다. 기본 로컬 파일럿은 700명을 12:18:18:12:8:17:15 비율로 생성한다. 실제 A/B 테스트 완료로 보고하지 않는다.
