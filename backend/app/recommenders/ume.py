@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Event, Item
 from ..services.catalog_index import CatalogIndex, catalog_signature, get_index
+from ..services.event_scope import service_users
 from ..services.rerank import DEFAULT as RERANK_DEFAULT
 from ..services.rerank import diversify
 from ..services.search_core import rank_percentile
@@ -127,6 +128,7 @@ def _item_vectors(ix: CatalogIndex, sel: np.ndarray, art: str):
 def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | None) -> np.ndarray:
     """데이터셋 상품별 인기 점수 (len(item_ids),). 학습 때와 같은 정의: 구매 수(최근 days일) log1p 표준화.
     is_setup=True (초기 이력 적재) 는 공통 통계에서 제외 — 캐시 갱신 판단 · 최근 구매 기준 시각 · 집계 모두.
+    시뮬레이터 고객 구매도 제외 (services/event_scope.py) — 현재 시각 구매가 H&M 최근 7일 창을 차지하지 않게.
 
     캐시는 두 단계로 확인한다 (요청마다 실행되므로 가볍게):
     1) 가장 큰 id 이벤트 한 행(id · 고객 · 상품 · 시각)이 그대로면 바로 캐시 사용 — 기본 키 역순 한 행, 1ms 안팎.
@@ -143,18 +145,19 @@ def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | No
     cached = _pop_cache.get(source)
     if cached is not None and cached["scope"] == scope and cached["raw"] == raw:
         return cached["z"]
-    purchases = (select(Event.id, Event.user_id, Event.item_id, Event.created_at).join(Item, Item.id == Event.item_id)
-                 .where(Event.type == "purchase", Item.source == source, non_setup))
+    purchases = service_users(select(Event.id, Event.user_id, Event.item_id, Event.created_at)
+                              .join(Item, Item.id == Event.item_id)
+                              .where(Event.type == "purchase", Item.source == source, non_setup))
     sig = db.execute(purchases.order_by(Event.id.desc()).limit(1)).first()
     sig = tuple(sig) if sig is not None else None
     if cached is not None and cached["scope"] == scope and cached["sig"] == sig:
         cached["raw"] = raw                                     # 집계와 무관한 이벤트만 늘었음
         return cached["z"]
-    q = (select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
-         .where(Event.type == "purchase", Item.source == source, non_setup))
+    q = service_users(select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
+                      .where(Event.type == "purchase", Item.source == source, non_setup))
     if days is not None:
-        latest = db.scalar(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
-                           .where(Event.type == "purchase", Item.source == source, non_setup))
+        latest = db.scalar(service_users(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
+                                         .where(Event.type == "purchase", Item.source == source, non_setup)))
         if latest is not None:
             q = q.where(Event.created_at >= latest - timedelta(days=days))
     counts = dict(db.execute(q.group_by(Event.item_id)).all())

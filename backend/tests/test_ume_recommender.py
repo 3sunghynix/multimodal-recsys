@@ -49,7 +49,7 @@ def env(tmp_path, monkeypatch):
                 items.append(Item(source=src, source_item_id=str(i), brand_id=brands[i % 3].id if src == "amazon" else brands[0].id,
                                   title=f"{src}-{i}", text_embedding=(v / np.linalg.norm(v)).tolist(),
                                   image_embedding=(v[::-1] / np.linalg.norm(v)).tolist()))
-        users = [User(source="amazon"), User(source="sim"), User(source="sim")]
+        users = [User(source="amazon"), User(source="sim"), User(source="amazon")]   # 2: 인기 통계에 들어가는 데이터셋 고객
         s.add_all(items + users)
         s.flush()
         amz = [it for it in items if it.source == "amazon"]

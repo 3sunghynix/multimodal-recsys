@@ -3,6 +3,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from ..models import Event, Item
+from ..services.event_scope import not_impression, service_users
 from ..services.variants import first_per_variant, variant_key
 from .base import Recommender, register
 
@@ -12,11 +13,12 @@ WEIGHTS = {"purchase": 3.0, "add_to_cart": 2.0, "click": 1.0, "view": 0.2}   # �
 def _popular_scored(db: Session, k: int, brand_ids=None, exclude=(), per_variant: int | None = 1) -> list[tuple[int, float]]:
     """공통 인기도 (id, score) 쌍. score 는 이벤트 가중치 합계(view 0.2 ~ purchase 3.0).
     is_setup=True 는 초기 이력 적재 전용이므로 집계에서 제외 (개인화 경로는 포함).
+    추천 노출 view(request_id 있음)와 시뮬레이터 고객 이벤트도 제외 (services/event_scope.py).
     per_variant: 같은 옷(H&M product_code)은 이 개수까지만 (services/variants.py). None이면 묶지 않는다."""
     w = case(*[(Event.type == t, v) for t, v in WEIGHTS.items()], else_=0.0)
-    q = (select(Event.item_id, func.sum(w).label("s"))
-         .where(Event.item_id.is_not(None), Event.is_setup == False)                    # noqa: E712
-         .group_by(Event.item_id).order_by(func.sum(w).desc(), Event.item_id))
+    q = service_users(select(Event.item_id, func.sum(w).label("s"))
+                      .where(Event.item_id.is_not(None), Event.is_setup == False, not_impression())   # noqa: E712
+                      .group_by(Event.item_id).order_by(func.sum(w).desc(), Event.item_id))
     if brand_ids:
         q = q.join(Item, Item.id == Event.item_id).where(Item.brand_id.in_(brand_ids))
     excluded = set(exclude)
