@@ -337,6 +337,45 @@
   let activeRequest = null;
   let requestVersion = 0;
 
+  // ─── 행동 로깅 (이벤트연결규약) ───
+  // 추천 응답에 request_id/position 이 붙어 오면 그걸 각 상품에 매핑해 둔다 (노출 view · 클릭 모두 사용).
+  // 검색 결과는 추천 외라 request_id 없이 click/search 만 보낸다. 상세 모달 view 는 request_id 없음 (톡방 결정 3).
+  // 로깅 실패는 조용히 무시 (fire-and-forget) — 사용자 경험에 영향을 주지 않는다.
+  let recommendContext = { requestId: null, positionOf: new Map() };
+
+  function getSessionId() {
+    let sid = sessionStorage.getItem('msrs.session_id');
+    if (!sid) {
+      // crypto.randomUUID 는 Chrome 92+, Firefox 95+, Safari 15.4+ 에서 지원 (중간발표 데모는 최신 브라우저).
+      // 지원 안 하면 조악한 폴백 — 로깅은 fire-and-forget 이라 충돌해도 무방.
+      sid = (crypto.randomUUID ? crypto.randomUUID() : 'fallback-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+      sessionStorage.setItem('msrs.session_id', sid);
+    }
+    return sid;
+  }
+
+  function buildEvent(partial) {
+    const base = { user_id: Number($('#user-id').value) || 0, session_id: getSessionId() };
+    if (crypto.randomUUID) base.event_id = crypto.randomUUID();      // 클라이언트 생성 멱등 키 (네트워크 재시도 안전)
+    return { ...base, ...partial };
+  }
+
+  function logEvent(partial) {
+    // 서버 실패해도 사용자 모르게 넘어간다 — catch 는 아무것도 안 함.
+    fetch('/events', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildEvent(partial)),
+    }).catch(() => {});
+  }
+
+  function logEventsBatch(partials) {
+    if (!partials.length) return;
+    fetch('/events/batch', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ events: partials.map(buildEvent) }),
+    }).catch(() => {});
+  }
+
   // 검색어·상품명 등 외부 값은 HTML로 해석하지 않는다.
   function textElement(tag, className, text) {
     const el = document.createElement(tag);
@@ -491,6 +530,9 @@
       const title = query && file ? `“${query}” + 이미지 검색 결과` : query ? `“${query}” 검색 결과` : '이미지 유사 상품';
       render(result.items, title, `${result.items.length}개`);
       setStatus(`✓ 검색 완료 · ${result.items.length}개`, 'ok');
+      // 검색 결과는 추천 외라 request_id 없음 — 이후 카드 클릭도 request_id 없이 저장된다.
+      recommendContext = { requestId: null, positionOf: new Map() };
+      if (query) logEvent({ type: 'search', query });
     });
   });
 
@@ -517,7 +559,7 @@
       return;
     }
     await runRequest(`고객 ${userId} 추천 생성 중…`, async (signal, current) => {
-      const rec = await requestJson(`/recommend/${userId}?k=20`, {}, signal);
+      const rec = await requestJson(`/recommend/${userId}?k=20&session_id=${encodeURIComponent(getSessionId())}`, {}, signal);
       if (!current()) return;
       const items = rec.items.length ? await requestJson(`/items?ids=${rec.items.join(',')}`, {}, signal) : [];
       if (!current()) return;
@@ -527,6 +569,17 @@
       const variant = rec.variant ? ` · A/B: ${rec.variant}` : '';
       render(items, `고객 #${userId} 추천`, `모델: ${rec.model}${variant} · ${items.length}개`);
       setStatus(`✓ 추천 완료 · ${items.length}개`, 'ok');
+      // 이벤트연결규약 (톡방 결정 3): 추천 응답에 request_id/position 이 붙어 오면 그걸 각 상품에 매핑해
+      // 노출 view 를 /events/batch 로 1회 보낸다. 이후 카드 클릭도 같은 request_id/position 을 재사용.
+      recommendContext = { requestId: rec.request_id || null, positionOf: new Map() };
+      (rec.recommendations || []).forEach((r) => {
+        recommendContext.positionOf.set(String(r.product_id), r.position);
+      });
+      if (rec.request_id) {
+        logEventsBatch((rec.recommendations || []).map((r) => ({
+          type: 'view', item_id: Number(r.product_id), request_id: rec.request_id, position: r.position,
+        })));
+      }
     });
   }
   // 고객 ID 가 바뀌면 자동으로 그 고객 추천을 다시 가져온다.
@@ -612,6 +665,8 @@
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const item = await r.json();
       if (controller === activeDetail) renderDetail(item);
+      // 상세 페이지 view 로깅 (request_id 없음 — 톡방 결정 3: /metrics/window 의 노출 view 집계에서 제외됨).
+      logEvent({ type: 'view', item_id: itemId });
     } catch (error) {
       if (error.name === 'AbortError') return;
       $('#modal-title').textContent = '상품 상세를 불러오지 못했습니다.';
@@ -624,7 +679,15 @@
   cards.addEventListener('click', (event) => {
     const card = event.target.closest('.card');
     if (!card || !card.dataset.itemId) return;
-    openDetail(parseInt(card.dataset.itemId, 10));
+    const itemId = parseInt(card.dataset.itemId, 10);
+    // 추천 카드면 request_id/position 포함해 click 로깅 — /metrics/window 에서 노출 기반 CTR 집계가 가능.
+    // 검색 결과 카드면 request_id 없음 (검색 직행 클릭).
+    const position = recommendContext.positionOf.get(String(itemId));
+    logEvent({
+      type: 'click', item_id: itemId,
+      ...(recommendContext.requestId && position ? { request_id: recommendContext.requestId, position } : {}),
+    });
+    openDetail(itemId);
   });
   $('#modal-close').addEventListener('click', closeDetail);
   modal.addEventListener('click', (event) => {
