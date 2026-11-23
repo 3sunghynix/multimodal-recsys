@@ -9,11 +9,14 @@
     · 최소 행동 모델 (persona 미사용) — 광석의 풍부한 engine 을 붙이는 건 후속 PR
 
 소규모 end-to-end 확인:
-    python -m simulator.server_run --base-url http://localhost:8001 --customers 10 --sessions 2 --k 5
+    python -m simulator.server_run --base-url http://localhost:8000 --customers 10 --sessions 2 --k 5
 
 대량 실행 (고객 1만 · 로그 100만):
     python -m simulator.server_run --base-url http://... --customers 10000 --sessions 10 --k 10 \\
                                    --click-rate 0.10 --purchase-rate 0.02 --run-id prod-$(date +%s)
+
+중단 복구: 지원 X. 추천 호출마다 서버가 **새 request_id** 를 발급해서, 같은 --run-id 로 이어서
+돌리면 같은 event_id + 다른 request_id → 409. 중단되면 **새 --run-id** 로 처음부터 다시 돌린다.
 
 행동 모델 (간소):
     · 각 노출 → click_rate 확률로 click
@@ -31,9 +34,27 @@ from pathlib import Path
 from .server_adapter import RecommendResponse, ServerClient
 
 
+# 서버 session_id max_length=64 (schemas.EventBase · routers/recommend.py).
+# 이 값을 넘기면 /events 전송이 전부 422 로 실패 → 실행 시작 전에 확인한다 (PR #71 리뷰).
+_SESSION_ID_MAX = 64
+
+
 def _session_id(run_id: str, customer_idx: int, session_idx: int) -> str:
     """세션 ID — 서버의 세션 로직 (services/session.py) 이 이 값을 그대로 쓴다."""
     return f"{run_id}:c{customer_idx}:s{session_idx}"
+
+
+def _check_run_id_fits(run_id: str, customers: int, sessions: int) -> None:
+    """가장 긴 session_id ({run_id}:c{customers-1}:s{sessions-1}) 가 64자 이하인지 확인.
+    넘으면 서버가 이벤트를 전부 422 로 거절하므로 실행 시작 전에 막는다 (PR #71 리뷰)."""
+    longest = _session_id(run_id, customers - 1, sessions - 1)
+    if len(longest) > _SESSION_ID_MAX:
+        over = len(longest) - _SESSION_ID_MAX
+        raise ValueError(
+            f"--run-id 가 너무 깁니다 ({len(run_id)}자). 가장 긴 session_id={longest!r} "
+            f"가 {len(longest)}자로 서버 제한 {_SESSION_ID_MAX}자를 {over}자 초과합니다. "
+            f"--run-id 를 {len(run_id) - over}자 이하로 줄이세요."
+        )
 
 
 def _build_impression_events(client: ServerClient, rec: RecommendResponse, *,
@@ -86,6 +107,7 @@ def run(base_url: str, customers: int, sessions: int, k: int, run_id: str, *,
     """
     if customers < 1 or sessions < 1:
         raise ValueError("--customers 와 --sessions 는 1 이상")
+    _check_run_id_fits(run_id, customers, sessions)
 
     client = ServerClient(base_url, timeout=timeout)
     rng = random.Random(seed)

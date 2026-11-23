@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from simulator.server_adapter import RecommendResponse, ServerClient
-from simulator.server_run import _build_impression_events, run
+from simulator.server_run import _build_impression_events, _check_run_id_fits, run
 
 
 class _FakeResponse:
@@ -105,6 +105,21 @@ def test_send_events_batch_rejects_over_1000():
     c = ServerClient("http://x")
     with pytest.raises(ValueError, match="1,000건"):
         c.send_events_batch([{"user_id": 1}] * 1001)
+
+
+def test_check_run_id_fits_rejects_long_run_id_before_run_starts():
+    """session_id 가 서버 제한 64 자를 넘으면 /events 전부 422 → 시작 전에 막는다 (PR #71 리뷰)."""
+    # 가장 긴 session_id = "<run_id>:c9999:s9" = len(run_id) + 9. 64 자 안쪽이면 OK.
+    _check_run_id_fits("x" * 55, customers=10000, sessions=10)      # 55 + 9 = 64 → 통과
+    with pytest.raises(ValueError, match="run-id 가 너무 깁니다"):
+        _check_run_id_fits("x" * 56, customers=10000, sessions=10)   # 56 + 9 = 65 → 거절
+
+
+def test_run_rejects_oversized_run_id():
+    """run() 자체도 세션 접미사 길이를 포함해 run-id 검증 — mocked HTTP 호출 전에 raise."""
+    with pytest.raises(ValueError, match="run-id 가 너무 깁니다"):
+        run("http://fake", customers=10000, sessions=10, k=1,
+            run_id="x" * 56, click_rate=0.0, purchase_rate=0.0, seed=0)
 
 
 # ─── driver: 이벤트 구성 · 집계 ──────────────────────────────────────────

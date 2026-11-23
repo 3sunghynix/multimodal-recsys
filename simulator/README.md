@@ -11,16 +11,19 @@
 전제: 이벤트연결규약 (PR #54 ~ #59) 서버 구현 완료 — `POST /users` 멱등, `GET /recommend` 가 `request_id` · `position` 포함, `POST /events/batch` 가 `request_id` 자동 채움 · `event_id` 멱등.
 
 ```bash
-# 소규모 end-to-end 확인 (약 1초)
-python -m simulator.server_run --base-url http://localhost:8001 --customers 10 --sessions 2 --k 5 --run-id dev
+# 소규모 end-to-end 확인 (약 1초) — 기본 --base-url 은 http://localhost:8000
+python -m simulator.server_run --base-url http://localhost:8000 --customers 10 --sessions 2 --k 5 --run-id dev
 
 # 대량 실행 (고객 1만 · 로그 100만 급)
 python -m simulator.server_run --base-url http://... --customers 10000 --sessions 10 --k 10 \
                                --click-rate 0.10 --purchase-rate 0.02 --run-id prod-$(date +%s)
 ```
 
+로컬 포트가 8000 대신 8001 로 매핑돼 있으면 (`docker-compose.override.yml` 참고) `--base-url http://localhost:8001` 로.
+
 - **결정론**: `source_user_id` · `session_id` · `event_id` 모두 `uuid5(run_id, 인덱스...)` 로 생성. 같은 `--run-id` 로 재실행하면 같은 고객 · 같은 세션이 만들어진다.
-- **재실행은 지원 X**: 추천 호출 시 서버가 **새 `request_id`** 를 발급하므로, 같은 `event_id` + 다른 `request_id` → 톡방 결정 2 에 의해 **409 error**. 대량 데이터가 필요하면 **새 `--run-id`** 를 쓴다. 네트워크 재시도 중단 복구는 batch 안에서만 작동.
+- **`run_id` 길이 제한**: `session_id = {run_id}:c{customer_idx}:s{session_idx}` 가 서버 제한 **64자** 를 넘지 않아야 한다 (안 그러면 `/events` 전부 422). 시뮬레이터가 실행 시작 전에 미리 검증 — 넘으면 바로 에러로 멈춘다. 참고: 고객 1만 · 세션 10 이면 접미사 9자, `--run-id` 는 **55자 이하** 로.
+- **재실행은 지원 X**: 추천 호출 시 서버가 **새 `request_id`** 를 발급하므로, 같은 `event_id` + 다른 `request_id` → 톡방 결정 2 에 의해 **409 error**. 중간에 죽거나 대량 데이터가 더 필요하면 **새 `--run-id`** 로 처음부터 다시 돌린다 (이어서 돌리는 체크포인트 기능 없음). 네트워크 재시도 중단 복구는 batch 안에서만 작동.
 - **A/B 참여**: 서버에 running 실험이 있으면 자동으로 세션 격리 + variant 배정. 시뮬레이터는 variant 선택 안 함.
 - **행동 모델**: 지금은 최소 랜덤 — `click_rate` · `purchase_rate` 파라미터. persona · 카테고리 선호 등 풍부한 행동은 `engine.py` 를 `server_run.py` 에 교체 삽입하는 후속 PR (김광석 담당).
 

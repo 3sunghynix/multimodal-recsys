@@ -65,13 +65,14 @@ class ServerClient:
 
     # ───── 고객 생성 ─────
 
-    def ensure_customer(self, run_id: str, idx: int, persona: str | None = None) -> int:
+    def ensure_customer(self, run_id: str, idx: int) -> int:
         """`source_user_id = uuid5(run_id, "customer", idx)` 로 멱등 생성.
-        같은 run_id · idx 재호출 시 서버가 같은 user.id 돌려줌 (POST /users 는 (source, source_user_id) 멱등)."""
+        같은 run_id · idx 재호출 시 서버가 같은 user.id 돌려줌 (POST /users 는 (source, source_user_id) 멱등).
+
+        persona 는 드라이버가 아직 전달하지 않으므로 argument 에서도 뺐다 — 페르소나 엔진을 붙이는
+        후속 PR 에서 함께 추가한다 (PR #71 리뷰 반영)."""
         source_user_id = str(uuid.uuid5(_NS, f"{run_id}:customer:{idx}"))
         body = {"source": "sim", "source_user_id": source_user_id}
-        if persona is not None:
-            body["persona"] = persona
         row = self._request("POST", "/users", body)
         if "id" not in row:
             raise RuntimeError(f"POST /users returned no id: {row!r}")
