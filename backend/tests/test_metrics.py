@@ -241,6 +241,20 @@ def test_log_delta_detects_reset(empty_client):
     assert body["reset_detected"] is False               # max >= since 이면 정상
 
 
+def test_log_delta_types_filter(empty_client):
+    """types=click,add_to_cart,purchase — 노출 view는 재학습 카운터에서 뺀다 (#70 리뷰)."""
+    c, Session = empty_client
+    t = datetime(2026, 11, 1, tzinfo=timezone.utc)
+    for kind in ("view", "view", "view", "click", "add_to_cart", "purchase"):
+        _insert_event(Session, 1, 1, kind, t)
+    _insert_event(Session, 1, 1, "purchase", t, is_setup=True)
+
+    assert c.get("/metrics/log-delta?since_event_id=0").json()["delta"] == 6           # 기존 동작: 전부
+    body = c.get("/metrics/log-delta", params={"since_event_id": 0, "types": "click,add_to_cart,purchase"}).json()
+    assert body["delta"] == 3 and body["max_event_id"] == 7                             # view · setup 제외
+    assert c.get("/metrics/log-delta", params={"since_event_id": 0, "types": " , "}).status_code == 422
+
+
 # ─── PR #48 리뷰 반영: model_version_id 필터 · hit intersection · tz 정규화 ───
 
 def test_window_filters_by_model_version_id(client):

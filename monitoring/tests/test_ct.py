@@ -25,7 +25,7 @@ class FakeAPI:
                         model_version=params['model_version'],source='all',cohort='all',metric_definition_version='user_click_through_v1',
                         setup_excluded=True,views=self.views,clicks=self.clicks,evaluated_users=200,hit_users=5,cumulative_new_logs=self.max_event_id)
         if path=='/metrics/log-delta':
-            s=params['since_event_id']
+            s=params['since_event_id'];self.types=params.get('types')
             return dict(since_event_id=s,max_event_id=self.max_event_id,delta=self.delta if s<self.max_event_id else 0,
                         reset_detected=self.max_event_id<s)
         raise AssertionError(path)
@@ -76,7 +76,7 @@ def test_full_loop_requests_trains_and_records_candidate(tmp_path,policy):
     assert job['status']=='candidate_pending_review' and job['registered_version_id']==7 and job['active_model_unchanged']
     assert job['sources']['hm']['accepted'] and len(job['sources']['hm']['sha256']['text'])==64
     assert 'rule_mismatch' not in job['sources']['hm'] and job['sources']['amazon']['status']=='skipped'
-    assert ('/metrics/log-delta',{'since_event_id':8000}) in api.calls          # 운영 모델의 trained_until_event_id부터
+    assert ('/metrics/log-delta',{'since_event_id':8000,'types':'click,add_to_cart,purchase'}) in api.calls          # 운영 모델의 trained_until_event_id부터
     cmd=calls[0];assert cmd[:4]==['docker','compose','--profile','trainer'] and cmd[cmd.index('--base')+1]=='3'
     assert cmd[cmd.index('--tolerance')+1]=='0.02'
     assert s['since_event_id']==20000
@@ -98,18 +98,25 @@ def test_trained_but_rejected(tmp_path,policy):
     assert s['since_event_id']==20000                                           # 같은 로그로 다시 학습하지 않음
 
 
-def test_trainer_failure_retries_then_alerts(tmp_path,policy):
+def test_trainer_failure_retries_then_cools_down_and_retries(tmp_path,policy):
+    from datetime import timedelta
     api=FakeAPI();calls=[]
     s=tick({},api,policy,NOW,run=trainer('',code=1,calls=calls))
     assert s['jobs'][0]['status']=='failed' and s['jobs'][0]['attempts']==1 and not any(a.get('kind')=='trainer_failed' for a in s['alerts'])
     s=tick(s,api,policy,NOW,run=trainer('',code=1,calls=calls))
     assert s['jobs'][0]['attempts']==2 and any(a.get('kind')=='trainer_failed' for a in s['alerts'])
-    s=tick(s,api,policy,NOW,run=trainer('',code=1,calls=calls))
-    assert len(calls)==2 and len(s['jobs'])==1                                  # 최대 시도 후 같은 기준점으로 다시 요청하지 않음
-    out=json.dumps(report(tmp_path),indent=2)                                  # 새 로그가 더 쌓이고 운영 모델 기준점이 바뀌면 다시 요청
-    api.model['params']['trained_until_event_id']=9000
-    s=tick(s,api,policy,NOW,run=trainer(out,calls=calls))
-    assert len(s['jobs'])==2 and s['jobs'][1]['status']=='candidate_pending_review'
+    later=NOW+timedelta(minutes=30)                                            # 대기 시간(60분) 안: 새 요청 · 실행 없음
+    s=tick(s,api,policy,later,run=trainer('',code=1,calls=calls))
+    assert len(calls)==2 and len(s['jobs'])==1
+    out=json.dumps(report(tmp_path),indent=2)                                  # 대기 시간이 지나면 손대지 않아도 다시 요청 · 실행
+    s=tick(s,api,policy,NOW+timedelta(minutes=61),run=trainer(out,calls=calls))
+    assert len(calls)==3 and len(s['jobs'])==2 and s['jobs'][1]['status']=='candidate_pending_review'
+
+
+def test_log_delta_counts_training_types_only(policy):
+    api=FakeAPI(delta=0)
+    tick({},api,policy,NOW)
+    assert api.types=='click,add_to_cart,purchase'
 
 
 def test_skipped_report_and_non_ume_and_reset(tmp_path,policy):

@@ -4,11 +4,13 @@
   1. GET /models 로 운영 중(active) 모델을 찾는다.
   2. 닫힌 집계 구간마다 GET /metrics/window(model_version_id=운영 모델) → observe(): CTR · HitRate 알림만 기록.
      모델이 바뀌면 identity가 달라지므로 스트림(streams)을 따로 둔다.
-  3. GET /metrics/log-delta?since_event_id=<마지막 학습 이벤트> → 새 비 setup 로그가 임계값 이상이면 재학습 요청.
+  3. GET /metrics/log-delta?since_event_id=<마지막 학습 이벤트>&types=click,add_to_cart,purchase
+     → 학습에 쓰는 새 비 setup 로그가 임계값 이상이면 재학습 요청 (노출 view는 세지 않음).
      기준점 = max(상태에 저장된 값, 운영 모델 params.trained_until_event_id) — trainer와 같은 카운터.
   4. 요청이 있으면 trainer_command(기본 docker compose --profile trainer run --rm -T trainer python -m recsys.retrain)를
      실행하고, 마지막에 출력되는 보고 JSON을 finish_training_report()로 기록한다 (MAP@12 ×0.98 · Recall ×0.90 규칙).
-     실패하면 failed로 두고 trainer_max_attempts까지 다음 tick에 다시 시도한다.
+     실패하면 failed로 두고 trainer_max_attempts까지 다음 tick에 다시 시도하고, 그래도 실패하면
+     trainer_retry_cooldown_minutes 뒤에 새 요청을 만든다 (상태 파일을 손으로 고칠 필요 없음).
 
 python -m monitoring.ct --state simulator/runs/monitor_ct/monitor_state.json            # 한 번 (repo 루트에서)
 python -m monitoring.ct --state simulator/runs/monitor_ct/monitor_state.json --watch    # interval_seconds마다
@@ -83,6 +85,14 @@ def _open_job(state, max_attempts):
     return None
 
 
+def _cooling_down(state, policy, now) -> bool:
+    """최대 시도까지 실패한 요청 뒤에는 trainer_retry_cooldown_minutes(60분) 동안 새 요청을 만들지 않는다.
+    지나면 다시 요청한다 — 영구 정지하지 않음 (#70 리뷰)."""
+    cooldown = timedelta(minutes=policy.get('trainer_retry_cooldown_minutes', 60))
+    failed = [j for j in state.get('jobs', []) if j['status'] == 'failed' and j.get('failed_at')]
+    return bool(failed) and now - datetime.fromisoformat(failed[-1]['failed_at']) < cooldown
+
+
 def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run: bool = False) -> dict:
     state = json.loads(json.dumps(state))
     state.setdefault('alerts', []); state.setdefault('jobs', []); streams = state.setdefault('streams', {})
@@ -109,7 +119,10 @@ def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run
 
     # 3. 새 로그 → 재학습 요청 (trainer와 같은 기준점)
     since = max(int(state.get('since_event_id', 0)), int(model.get('params', {}).get('trained_until_event_id', 0)))
-    d = api('/metrics/log-delta', {'since_event_id': since})
+    params = {'since_event_id': since}
+    if policy.get('training_event_types'):        # 학습에 쓰는 타입만 센다 — 노출 view가 임계값을 채우지 않게
+        params['types'] = ','.join(policy['training_event_types'])
+    d = api('/metrics/log-delta', params)
     if d.get('reset_detected'):
         state['alerts'].append({'kind': 'log_counter_reset', 'since_event_id': since, 'max_event_id': d['max_event_id'],
                                 'at': _iso(now)})
@@ -120,8 +133,7 @@ def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run
     threshold = policy['training_log_threshold']
     if model['name'] != 'ume':
         state['last_note'] = f"active model {model['name']} is not ume — retraining not requested"
-    elif d['delta'] >= threshold and _open_job(state, max_attempts) is None \
-            and not any(j['status'] == 'failed' and j.get('since_event_id') == since for j in state['jobs']):
+    elif d['delta'] >= threshold and _open_job(state, max_attempts) is None and not _cooling_down(state, policy, now):
         state['jobs'].append({'version': f"candidate-{len(state['jobs']) + 1:06d}", 'status': 'requested',
                               'reason': 'new_nonsetup_log_threshold', 'since_event_id': since, 'logs_delta': d['delta'],
                               'max_event_id': d['max_event_id'], 'base_model_version_id': model['id'],
@@ -154,7 +166,7 @@ def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run
         elif report.get('since_event_id') is not None:
             state['since_event_id'] = max(state['since_event_id'], int(report['since_event_id']))
     except (RuntimeError, ValueError) as e:
-        job.update(status='failed', error=str(e), stderr_tail=(err or '')[-2000:])
+        job.update(status='failed', error=str(e), stderr_tail=(err or '')[-2000:], failed_at=_iso(now))
         if job['attempts'] >= max_attempts:
             state['alerts'].append({'kind': 'trainer_failed', 'version': job['version'], 'error': str(e), 'at': _iso(now)})
     return state
