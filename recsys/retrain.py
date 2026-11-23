@@ -56,12 +56,13 @@ def load_base(db, base_id: int | None):
 
 
 def new_log_count(db, since_event_id: int) -> tuple[int, int]:
-    """(마지막 학습 이후 비 setup 이벤트 수, 현재 최대 이벤트 id)."""
+    """(마지막 학습 이후 비 setup 학습용 이벤트 수, 현재 최대 이벤트 id). 학습 정답 종류(WEIGHTS)만 센다 —
+    노출 view · 검색만 쌓여서는 재학습하지 않는다. /metrics/log-delta와 같은 카운터 (app/services/event_scope.py)."""
     from sqlalchemy import func, select
 
     from app.models import Event
     last = int(db.scalar(select(func.max(Event.id))) or 0)
-    n = int(db.scalar(select(func.count(Event.id)).where(Event.id > since_event_id,
+    n = int(db.scalar(select(func.count(Event.id)).where(Event.id > since_event_id, Event.type.in_(list(WEIGHTS)),
                                                          Event.is_setup == False)) or 0)      # noqa: E712
     return n, last
 

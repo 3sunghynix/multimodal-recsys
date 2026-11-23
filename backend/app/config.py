@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     # 비어 있으면 feature_store 가 전체 no-op 로 돌아 서버는 계속 뜸 (로컬 pytest 등).
     redis_url: str | None = None
 
+    # 서비스 인기 통계(인기 추천 · UME 인기 점수)에 시뮬레이터 고객(users.source="sim") 이벤트를 넣을지.
+    # 기본 False: 가상 행동이 서비스 인기 · H&M 최근 7일 창을 덮지 않게 (services/event_scope.py)
+    popularity_include_sim: bool = False
+
 
 settings = Settings()

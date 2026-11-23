@@ -6,7 +6,7 @@ MetricSnapshot CRUD
 
 CT runner 연결점 (광석 monitoring/runner.py 가 cron 으로 호출)
     GET  /metrics/window            지정 구간 집계 → observe() 가 요구하는 window JSON
-    GET  /metrics/log-delta         since_event_id 이후 쌓인 non-setup 이벤트 수 → training 트리거 판단
+    GET  /metrics/log-delta         since_event_id 이후 쌓인 non-setup 학습용 이벤트(click · cart · purchase) 수 → training 트리거 판단
 """
 from datetime import datetime, timezone
 
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Event, MetricSnapshot, ModelVersion
 from ..schemas import LogDeltaOut, MetricSnapshotIn, MetricSnapshotOut, MetricWindowOut
+from ..services.event_scope import TRAINING_TYPES
 
 router = APIRouter(prefix="/metrics", tags=["metrics"])
 
@@ -170,15 +171,16 @@ def metric_window(
 
 @router.get("/log-delta", response_model=LogDeltaOut)
 def log_delta(since_event_id: int = Query(0, ge=0), db: Session = Depends(get_db)):
-    """since_event_id 초과 ~ max(Event.id) 구간의 non-setup 이벤트 수를 돌려준다.
+    """since_event_id 초과 ~ max(Event.id) 구간의 non-setup 학습용 이벤트(click · add_to_cart · purchase) 수.
     runner 가 정책(예: 10000건 이상 쌓이면 재학습) 판단에 쓴다 — 임계값/정책은 runner 책임.
+    trainer(recsys.retrain.new_log_count)와 같은 카운터. view · search는 학습에 안 쓰므로 세지 않는다 (event_scope).
 
     reset_detected: max_event_id < since_event_id 이면 --reset 재적재 가능성 — runner 가 기준점을
     다시 잡아야 한다 (PR #48 리뷰 반영)."""
     non_setup = Event.is_setup == False                                                   # noqa: E712
     max_id = int(db.scalar(select(func.max(Event.id))) or 0)
     delta = int(db.scalar(select(func.count(Event.id))
-                          .where(and_(Event.id > since_event_id, non_setup))) or 0)
+                          .where(and_(Event.id > since_event_id, non_setup, Event.type.in_(TRAINING_TYPES)))) or 0)
     return LogDeltaOut(
         since_event_id=since_event_id,
         max_event_id=max_id,

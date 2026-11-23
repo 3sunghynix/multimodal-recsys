@@ -21,7 +21,7 @@ def _load(engine, seed, buyer_item):
         items = [Item(source="amazon", source_item_id=f"s{seed}-{i}", title=f"t{i}",
                       text_embedding=rng.normal(size=D).tolist(), image_embedding=rng.normal(size=D).tolist())
                  for i in range(3)]
-        user = User(source="sim")
+        user = User(source="hm")                      # 데이터셋 고객 (sim 고객은 인기 통계에서 빠짐)
         s.add_all(items + [user])
         s.flush()
         s.add_all([Event(user_id=user.id, item_id=items[buyer_item].id, type="purchase") for _ in range(3)])
