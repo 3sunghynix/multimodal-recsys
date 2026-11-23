@@ -63,7 +63,8 @@ def env(tmp_path, monkeypatch):
     for src in ("amazon", "hm"):
         for j, m in enumerate(("text", "image")):
             write_tower(tmp_path / "art" / src / m, seed=10 * j + len(src))
-    params = {"artifact_dirs": {src: str(tmp_path / "art" / src) for src in ("amazon", "hm")}, "gamma": 0.0, "beta": {}}
+    params = {"artifact_dirs": {src: str(tmp_path / "art" / src) for src in ("amazon", "hm")}, "gamma": 0.0, "beta": {},
+              "exclude_purchased": {}}                                  # 기존 테스트는 산 상품도 후보에 둔다 (제외는 아래 따로)
     return Session, ids, params, tmp_path
 
 
@@ -437,3 +438,33 @@ def test_api_session_id_separates_sessions(env):
         assert interest(session_id="s3") is None            # 새 세션 — 아직 클릭 없음
     finally:
         app.dependency_overrides.clear()
+
+
+def test_exclude_purchased_per_source(env):
+    """exclude_purchased가 켜진 데이터셋만 산 상품을 뺀다. 클릭만 한 상품 · 꺼진 데이터셋은 그대로."""
+    Session, ids, params, _ = env
+    with Session() as s:
+        bought = {ids["amazon"][j] for j in (0, 3, 6, 4)}               # 고객 0의 Amazon 구매
+        rec = recommenders.get("ume", {**params, "exclude_purchased": {"amazon": True}}).recommend(s, ids["users"][0], 30)
+        assert len(rec) == 26 and not bought & set(rec)
+        assert bought <= set(recommenders.get("ume", params).recommend(s, ids["users"][0], 30))   # 끄면 그대로
+        # 고객 1은 클릭만 (amazon[1] · hm[2]) → 빠지지 않는다
+        rec = recommenders.get("ume", {**params, "exclude_purchased": {"amazon": True, "hm": True}}).recommend(s, ids["users"][1], 40)
+        assert ids["amazon"][1] in rec and ids["hm"][2] in rec
+
+
+def test_exclude_purchased_with_rerank_fill_and_all_bought(env):
+    """재정렬 빈 자리 채우기도 산 상품을 다시 넣지 않는다. 데이터셋 상품을 다 샀으면 그 데이터셋은 건너뛴다."""
+    Session, ids, params, _ = env
+    with Session() as s:
+        bought = {ids["amazon"][j] for j in (0, 3, 6, 4)}
+        p = {**params, "exclude_purchased": {"amazon": True}, "rerank": {"max_category_share": 0.1}}
+        assert not bought & set(recommenders.get("ume", p).recommend(s, ids["users"][0], 20))
+        u = User(source="sim")
+        s.add(u)
+        s.flush()
+        s.add_all([Event(user_id=u.id, item_id=i, type="purchase", created_at=T0) for i in ids["hm"]])
+        s.add(Event(user_id=u.id, item_id=ids["amazon"][2], type="click", created_at=T0))
+        s.commit()
+        rec = recommenders.get("ume", {**params, "exclude_purchased": {"hm": True}}).recommend(s, u.id, 10)
+        assert rec and not set(rec) & set(ids["hm"])                    # H&M은 다 샀으니 Amazon만

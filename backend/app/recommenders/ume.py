@@ -5,6 +5,7 @@
   2. 그 상품들의 콘텐츠 임베딩(DB, 검색 색인과 공유) 평균 → 고객 타워 MLP → 고객 벡터 (텍스트 · 이미지 각각)
   3. 그 데이터셋 전체 상품 벡터(상품 타워 MLP, 메모리 캐시)와 내적 → 고객별 z(텍스트) + z(이미지)
   4. + γ · 인기 점수(데이터셋별 구매 수 log1p 표준화, 최근 N일) + β · [상품 브랜드 = 고객 최다 브랜드]
+     exclude_purchased가 켜진 데이터셋은 고객이 이미 산 상품을 후보에서 뺀다 (Amazon만, H&M은 재구매가 많아 남긴다)
   5. 데이터셋이 여럿이면 데이터셋 안 순위 백분위로 합침 (검색과 같은 per_source_rank)
   6. 재정렬: 점수 상위 k × pool 후보에서 같은 소분류가 몰리지 않게 고른다 (services/rerank.py).
      빈 자리는 개인화 점수(인기 · 브랜드 보정 전) 순으로 채운다 — 인기 상품이 고객마다 겹치지 않게
@@ -17,7 +18,8 @@
 model_versions.params 예 (드라이브 results/ume/{source}_test_pca = train + valid로 학습한 가중치):
   {"artifact_dirs": {"hm": "/data/models/ume/hm_test_pca", "amazon": "/data/models/ume/amazon_test_pca"},
    "gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
-   "session_weight": 0.3, "rerank": {"max_category_share": 0.3}}      # rerank: null 이면 재정렬 끔
+   "session_weight": 0.3, "rerank": {"max_category_share": 0.3}, "exclude_purchased": {"amazon": true}}
+  rerank: null 이면 재정렬 끔. exclude_purchased: 근거는 docs/project/추천모델설계.md "재구매 정책" (11-23, 다음작업 C3)
 """
 import time
 from datetime import timedelta
@@ -40,7 +42,7 @@ from .popularity import _popular_scored
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
 DEFAULTS = {"gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
-            "session_weight": 0.3, "rerank": {}}
+            "session_weight": 0.3, "rerank": {}, "exclude_purchased": {"amazon": True}}
 
 
 def _user_input(mat: np.ndarray, hist: np.ndarray, sess: np.ndarray, w: float) -> np.ndarray:
@@ -220,6 +222,18 @@ class UME(Recommender):
                 if len(b):
                     top = np.bincount(b).argmax()
                     s = s + float(beta) * (ix.brands[sel] == top)
+            pers = personal[-1]
+            if (p["exclude_purchased"] or {}).get(source):          # 이미 산 상품은 후보에서 뺀다 (점수 계산 뒤라 표준화 · 캐시는 그대로)
+                bought = db.scalars(select(Event.item_id).join(Item, Item.id == Event.item_id).distinct()
+                                    .where(Event.user_id == user_id, Event.type == "purchase", Item.source == source)).all()
+                keep = ~np.isin(ix.ids[sel], np.asarray(bought, np.int64))
+                if not keep.any():                                  # 데이터셋 상품을 다 산 경우 (테스트용 작은 카탈로그)
+                    personal.pop()
+                    t_rank += time.perf_counter() - t
+                    continue
+                if not keep.all():
+                    sel, s, pers = sel[keep], s[keep], pers[keep]
+                    personal[-1] = pers
             t_rank += time.perf_counter() - t
             scores.append(s)
             groups.append(np.full(len(sel), source, object))

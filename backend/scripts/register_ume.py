@@ -28,7 +28,8 @@ def params_for(root: Path, gamma: float = 1.0, beta_amazon: float = 2.0, dim: in
             print(f"[제외] {src}: {problem}. 이 데이터셋 고객은 인기 모델로 대체된다")
         else:
             dirs[src] = d
-    return {"artifact_dirs": dirs, "gamma": gamma, "beta": {"amazon": beta_amazon}, "pop_recent_days": {"hm": 7}, "max_hist": 50}
+    return {"artifact_dirs": dirs, "gamma": gamma, "beta": {"amazon": beta_amazon}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
+            "exclude_purchased": {"amazon": True}}
 
 
 def register(db, root: Path, version: str = "v1", gamma: float = 1.0, beta_amazon: float = 2.0,
