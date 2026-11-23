@@ -138,6 +138,7 @@ def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run
     if dry_run:
         job['dry_run'] = True
         return state
+    job.pop('dry_run', None)                      # 앞선 --dry-run 표시가 실제 실행 기록에 남지 않도록
     job['attempts'] = job.get('attempts', 0) + 1
     job['started_at'] = _iso(now)
     code, out, err = run(cmd)

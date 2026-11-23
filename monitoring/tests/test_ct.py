@@ -139,3 +139,9 @@ def test_state_has_dashboard_keys(tmp_path,policy):
     assert s['identity'][0]=='ume-v1' and 'values' in s['latest'] and s['last_window_end']=='2026-11-23T10:00:00+00:00'
     flat=pd.json_normalize(s['jobs'])
     assert 'sources.hm.accepted' in flat.columns
+
+
+def test_real_run_after_dry_run_clears_flag(tmp_path,policy):
+    s=tick({},FakeAPI(),policy,NOW,run=trainer('x',code=1),dry_run=True)
+    s=tick(s,FakeAPI(),policy,NOW,run=trainer(json.dumps(report(tmp_path),indent=2)))
+    assert s['jobs'][0]['status']=='candidate_pending_review' and 'dry_run' not in s['jobs'][0]
