@@ -345,8 +345,8 @@ def monitoring_page():
                 col.metric(key.upper(), '계산 불가' if value is None else f"{number(value,key,1):.2%}")
             st.caption(f"집계 종료: {obj['last_window_end']} · 모델/source/고객집합/정의: {obj['identity']}")
             st.subheader('임계값 알림');st.dataframe(pd.DataFrame(obj.get('alerts',[])))
-            st.subheader('재학습 요청·후보 버전');st.dataframe(pd.DataFrame(obj.get('jobs',[])))
-            st.caption('requested는 재학습 요청 기록입니다. 학습 완료나 운영 교체를 뜻하지 않습니다.')
+            st.subheader('재학습 요청·후보 버전');st.dataframe(pd.json_normalize(obj.get('jobs',[])))   # CT 기록의 데이터셋별 결과(sources.*)를 열로 펼침
+            st.caption('requested = 재학습 요청 · failed = trainer 실패(재시도) · skipped = trainer가 조건 미달로 건너뜀 · rejected = 학습했지만 채택 규칙 미통과 · candidate_pending_review = 후보 등록(아래에서 확인 후 교체). 운영 교체는 자동으로 하지 않습니다.')
         except (ValueError,KeyError,TypeError,OSError) as error:st.error(str(error))
     else:st.info('아직 모니터링 집계 파일이 없습니다.')
     model_section()
