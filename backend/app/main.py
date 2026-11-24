@@ -19,6 +19,11 @@ from .routers import admin, events, features, items, metrics, recommend, search,
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    # B4: 관리자 쓰기 엔드포인트 (admin.py 의 POST) 는 settings.admin_api_key 로 보호된다.
+    # 비어 있으면 로컬 개발/테스트용으로 통과시키는데, 이 상태로 운영에 올라가는 사고를 막기 위해 한 번 경고한다.
+    if not settings.admin_api_key:
+        print("[WARN] ADMIN_API_KEY 미설정 — /models · /experiments 쓰기 엔드포인트가 공개 상태입니다 "
+              "(로컬 개발에서는 정상). 운영에서는 .env 또는 docker-compose에 반드시 설정하세요.")
     # 이미지 인코더 preload (Marqo-FashionSigLIP + PCA 256). 테스트에서는 settings.load_image_encoder=False 로 끈다.
     # PCA 파일이 없어도 encoder는 뜨고, /search/image 라우터가 호출 시 503으로 바꿔 응답한다.
     app.state.image_encoder = None

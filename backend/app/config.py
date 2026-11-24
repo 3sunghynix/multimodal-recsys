@@ -45,5 +45,10 @@ class Settings(BaseSettings):
     # 기본 False: 가상 행동이 서비스 인기 · H&M 최근 7일 창을 덮지 않게 (services/event_scope.py)
     popularity_include_sim: bool = False
 
+    # 관리자 API 인증 (B4). 모델 등록 · 교체 · 실험 생성 · 중지는 이 키가 설정되어 있으면
+    # X-Admin-Key 헤더가 일치해야 함. 비어 있으면 (로컬 개발 · 테스트) 통과시킨다 —
+    # 서버 시작 시 WARN 1회. 운영에서는 반드시 .env 또는 docker-compose에서 설정.
+    admin_api_key: str = ""
+
 
 settings = Settings()

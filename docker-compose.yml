@@ -42,6 +42,9 @@ services:
       # 받은 뒤 .env에 HF_HUB_OFFLINE=1 → 시작할 때 인터넷 확인 없이 저장된 모델 사용 (백신 HTTPS 검사가 켜져 있어도 됨)
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-0}
       TRANSFORMERS_OFFLINE: ${HF_HUB_OFFLINE:-0}
+      # 관리자 쓰기 엔드포인트 (POST /models · /experiments) 인증 키. .env 에서 가져온다.
+      # 비어 있으면 로컬 개발용으로 통과 (서버 시작 시 WARN). 대시보드도 같은 값을 받아야 교체 버튼이 통한다.
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     ports:
       - "8000:8000"
     volumes:
@@ -79,6 +82,9 @@ services:
       OFFLINE_RESULTS_DIR: /results
       SIM_RUNS_DIR: /runs
       DEV_DATA_DIR: /data/dev_subset
+      # 운영 모델 교체(POST /models/{id}/activate) 는 api 가 X-Admin-Key 를 요구할 수 있다.
+      # api 와 같은 .env 값으로 맞춘다 — 비어 있으면 헤더 없이 요청 (로컬 개발에서는 서버도 auth 비활성).
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
     ports:
       - "127.0.0.1:8501:8501"
     volumes:
