@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.db import SessionLocal, init_db
 from app.models import ModelVersion
 from app.recommenders.ume import tower_problem
+from app.services.ranker import ranker_problem
 from app.services.catalog_index import get_index
 
 
@@ -32,11 +33,29 @@ def params_for(root: Path, gamma: float = 1.0, beta_amazon: float = 2.0, dim: in
             "exclude_purchased": {"amazon": True}, "recency_decay": {"hm": 0.9}}
 
 
+def ranker_params(ranker_root: Path | None, sources) -> dict:
+    """학습형 랭커(B1)가 준비된 데이터셋만 {source: 폴더}. 없으면 그 데이터셋은 규칙 점수 그대로."""
+    out = {}
+    if ranker_root is None:
+        return out
+    for src in sources:
+        d = str(ranker_root / src)
+        problem = ranker_problem(d)
+        if problem:
+            print(f"[랭커 없음] {src}: {problem}. 규칙 점수로 순위를 매긴다")
+        else:
+            out[src] = d
+    return out
+
+
 def register(db, root: Path, version: str = "v1", gamma: float = 1.0, beta_amazon: float = 2.0,
-             activate: bool = False) -> ModelVersion:
+             activate: bool = False, ranker_root: Path | None = None) -> ModelVersion:
     """UME 모델 버전 등록. activate인데 준비된 데이터셋이 없으면 ValueError (아무것도 바꾸지 않음, 기존 운영 모델 유지)."""
     ix = get_index(db)
     params = params_for(root, gamma, beta_amazon, ix.text.shape[1] if len(ix) else None)
+    rk = ranker_params(ranker_root, params["artifact_dirs"])
+    if rk:
+        params["ranker"] = rk
     if activate and not params["artifact_dirs"]:
         raise ValueError("준비된 가중치가 없어 운영 모델 교체를 거절한다 (기존 운영 모델 유지)")
     mv = ModelVersion(name="ume", version=version, params=params)
@@ -57,11 +76,13 @@ def main():
     ap.add_argument("--gamma", type=float, default=1.0)
     ap.add_argument("--beta-amazon", type=float, default=2.0)
     ap.add_argument("--activate", action="store_true", help="등록 후 운영 모델로 교체 (기존 active → candidate)")
+    ap.add_argument("--ranker-root", type=Path, default=None,
+                    help="학습형 랭커 폴더 (예: /data/models/ranker → {hm}/model.joblib · meta.json). 주면 준비된 데이터셋에 켠다")
     a = ap.parse_args()
     init_db()
     with SessionLocal() as db:
         try:
-            mv = register(db, a.root, a.version, a.gamma, a.beta_amazon, a.activate)
+            mv = register(db, a.root, a.version, a.gamma, a.beta_amazon, a.activate, a.ranker_root)
         except ValueError as e:
             raise SystemExit(str(e))
         print(f"등록: id={mv.id} ume {a.version} status={mv.status} params={mv.params}")

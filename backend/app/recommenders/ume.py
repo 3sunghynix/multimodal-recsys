@@ -8,6 +8,7 @@
   4. + γ · 인기 점수(데이터셋별 구매 수 log1p 표준화, 최근 N일) + β · [상품 브랜드 = 고객 최다 브랜드]
      exclude_purchased가 켜진 데이터셋은 고객이 이미 산 상품을 후보에서 뺀다 (Amazon만, H&M은 재구매가 많아 남긴다)
   5. 데이터셋이 여럿이면 데이터셋 안 순위 백분위로 합침 (검색과 같은 per_source_rank)
+  5-1. ranker가 있는 데이터셋(H&M)은 규칙 점수 상위 300개를 학습형 랭커(GBDT) 확률 순으로 다시 매긴다 (services/ranker.py, B1)
   6. 재정렬: 점수 상위 k × pool 후보에서 같은 소분류가 몰리지 않게 고른다 (services/rerank.py).
      빈 자리는 개인화 점수(인기 · 브랜드 보정 전) 순으로 채운다 — 인기 상품이 고객마다 겹치지 않게
   이력이 없거나 모델이 없는 데이터셋뿐이면 인기 모델로 대체.
@@ -35,6 +36,7 @@ from sqlalchemy.orm import Session
 from ..models import Event, Item
 from ..services.catalog_index import CatalogIndex, catalog_signature, get_index
 from ..services.event_scope import service_users
+from ..services.ranker import CANDIDATES, candidate_features, log_price, predict, ranker_problem
 from ..services.rerank import DEFAULT as RERANK_DEFAULT
 from ..services.rerank import diversify
 from ..services.search_core import rank_percentile
@@ -171,15 +173,26 @@ def _popularity_z(db: Session, source: str, item_ids: np.ndarray, days: int | No
         return cached["z"]
     q = service_users(select(Event.item_id, func.count()).join(Item, Item.id == Event.item_id)
                       .where(Event.type == "purchase", Item.source == source, non_setup))
-    if days is not None:
-        latest = db.scalar(service_users(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
-                                         .where(Event.type == "purchase", Item.source == source, non_setup)))
-        if latest is not None:
-            q = q.where(Event.created_at >= latest - timedelta(days=days))
+    latest = db.scalar(service_users(select(func.max(Event.created_at)).join(Item, Item.id == Event.item_id)
+                                     .where(Event.type == "purchase", Item.source == source, non_setup)))
+    if days is not None and latest is not None:
+        q = q.where(Event.created_at >= latest - timedelta(days=days))
     counts = dict(db.execute(q.group_by(Event.item_id)).all())
     c = np.log1p(np.array([counts.get(int(i), 0) for i in item_ids], np.float32))
-    _pop_cache[source] = {"scope": scope, "raw": raw, "sig": sig, "z": (c - c.mean()) / (c.std() + 1e-6)}
+    _pop_cache[source] = {"scope": scope, "raw": raw, "sig": sig, "z": (c - c.mean()) / (c.std() + 1e-6), "latest": latest}
     return _pop_cache[source]["z"]
+
+
+_price_cache: dict = {}
+
+
+def _log_prices(db: Session, source: str, item_ids: np.ndarray) -> np.ndarray:
+    """데이터셋 상품 log(1 + 가격) (랭커 특성 price_gap). 카탈로그가 바뀌면 다시 읽는다."""
+    key = (str(db.bind.url), catalog_signature(db), len(item_ids), int(item_ids[0]) if len(item_ids) else None)
+    if _price_cache.get(source, {}).get("key") != key:
+        price = dict(db.execute(select(Item.id, Item.price).where(Item.source == source)).all())
+        _price_cache[source] = {"key": key, "lp": log_price([price.get(int(i)) for i in item_ids])}
+    return _price_cache[source]["lp"]
 
 
 @register
@@ -195,6 +208,33 @@ class UME(Recommender):
     def recommend(self, db: Session, user_id: int, k: int) -> list[int]:
         return [i for i, _ in self.recommend_scored(db, user_id, k)]
 
+    def _rerank_with_ranker(self, db, user_id, source, rk, s, kept, sel0, st, si, pz, ix, hist_len) -> np.ndarray:
+        """규칙 점수 s 상위 CANDIDATES개를 랭커 확률(0 ~ 1) 순으로. 나머지는 원래 순서대로 그 아래 (음수로 내림).
+        특성은 평가 · 학습과 같은 candidate_features (제외 전 데이터셋 순번 sel0 기준, 산 상품 통계도 제외와 무관)."""
+        n_c = min(CANDIDATES, len(s))
+        cand = np.argpartition(-s, n_c - 1)[:n_c]
+        cand = cand[np.argsort(-s[cand], kind="stable")]
+        cand0 = kept[cand] if kept is not None else cand
+        rows = db.execute(select(Event.item_id, Event.created_at).join(Item, Item.id == Event.item_id)
+                          .where(Event.user_id == user_id, Event.type == "purchase", Item.source == source)).all()
+        ids0 = ix.ids[sel0]
+        got = np.array([r[0] for r in rows], np.int64)
+        pos = np.searchsorted(ids0, got)
+        ok = (pos < len(ids0)) & (ids0[np.minimum(pos, len(ids0) - 1)] == got) if len(got) else np.zeros(0, bool)
+        bought, bought_ts = pos[ok], np.array([r[1] for r in rows], "datetime64[ns]")[ok]
+        t_ref = _pop_cache.get(source, {}).get("latest")           # 그 데이터셋 서비스 구매의 마지막 시각 (학습과 같은 기준)
+        if t_ref is None:
+            t_ref = bought_ts.max() if len(bought_ts) else np.datetime64("now")
+        empty = np.full(len(sel0), "", object)
+        feats = candidate_features(cand0, st, si, pz, ix.brands[sel0],
+                                   ix.cats[sel0] if ix.cats is not None else empty,
+                                   ix.variants[sel0] if ix.variants is not None else empty,
+                                   _log_prices(db, source, ids0), bought, bought_ts, t_ref, hist_len)
+        out = s - (s.max() + 10.0)
+        out[cand] = predict(rk, feats)
+        self.ranker_sources.append(source)
+        return out
+
     def recommend_scored(self, db: Session, user_id: int, k: int) -> list[tuple[int, float]]:
         p = {**DEFAULTS, **self.params}
         dirs: dict = p.get("artifact_dirs", {})
@@ -204,6 +244,7 @@ class UME(Recommender):
         dim = ix.text.shape[1] if len(ix) else None
         t_cand = t_rank = 0.0
 
+        self.ranker_sources = []
         sess_all = _rows_of(ix, np.asarray(session_click_ids(db, user_id, session_id=self.session_id) if w > 0 else [], np.int64))
         self.session_clicks_used = len(sess_all)
         scores, personal, groups, ids, cats, brands, variants = [], [], [], [], [], [], []
@@ -223,13 +264,17 @@ class UME(Recommender):
             decay = float((p["recency_decay"] or {}).get(source, 1.0))
             u_text = mlp(load_tower(f"{art}/text"), "user", _user_input(ix.text, hist, sess, w, decay))
             u_image = mlp(load_tower(f"{art}/image"), "user", _user_input(ix.image, hist, sess, w, decay))
-            s = _z(v_text @ u_text) + _z(v_image @ u_image)
+            st, si = _z(v_text @ u_text), _z(v_image @ u_image)
+            s = st + si
             personal.append(s)                                      # 재정렬 빈 자리 채우기용 (인기 · 브랜드 보정 전)
             t_cand += time.perf_counter() - t
             t = time.perf_counter()
             gamma = float(p["gamma"])
+            rk = (p.get("ranker") or {}).get(source)
+            rk = rk if rk and not ranker_problem(rk) else None     # 랭커 파일이 없거나 이상하면 규칙 점수 그대로
+            pz = _popularity_z(db, source, ix.ids[sel], (p["pop_recent_days"] or {}).get(source)) if (gamma or rk) else None
             if gamma:
-                s = s + gamma * _popularity_z(db, source, ix.ids[sel], (p["pop_recent_days"] or {}).get(source))
+                s = s + gamma * pz
             beta = (p["beta"] or {}).get(source, 0.0)
             if beta:
                 b = ix.brands[hist if len(hist) else sess]
@@ -238,6 +283,7 @@ class UME(Recommender):
                     top = np.bincount(b).argmax()
                     s = s + float(beta) * (ix.brands[sel] == top)
             pers = personal[-1]
+            sel0, kept = sel, None                                  # 제외 전 데이터셋 전체 (랭커 특성은 이 순번으로)
             if (p["exclude_purchased"] or {}).get(source):          # 이미 산 상품은 후보에서 뺀다 (점수 계산 뒤라 표준화 · 캐시는 그대로)
                 bought = db.scalars(select(Event.item_id).join(Item, Item.id == Event.item_id).distinct()
                                     .where(Event.user_id == user_id, Event.type == "purchase", Item.source == source)).all()
@@ -249,6 +295,9 @@ class UME(Recommender):
                 if not keep.all():
                     sel, s, pers = sel[keep], s[keep], pers[keep]
                     personal[-1] = pers
+                    kept = np.flatnonzero(keep)
+            if rk:
+                s = self._rerank_with_ranker(db, user_id, source, rk, s, kept, sel0, st, si, pz, ix, len(hist))
             t_rank += time.perf_counter() - t
             scores.append(s)
             groups.append(np.full(len(sel), source, object))
@@ -262,7 +311,7 @@ class UME(Recommender):
             return _popular_scored(db, k)                           # 신규 고객 · 모델 없는 데이터셋
         t = time.perf_counter()
         s, g, all_ids = np.concatenate(scores), np.concatenate(groups), np.concatenate(ids)
-        self.score_basis = "ume_zscore"
+        self.score_basis = "ranker_probability" if self.ranker_sources else "ume_zscore"
         if len(scores) > 1:                                         # 여러 데이터셋: 카탈로그 비율대로 섞기
             s = rank_percentile(s[None, :], g)[0]
             self.score_basis = "rank_percentile"
