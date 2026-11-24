@@ -21,8 +21,8 @@ from app.db import SessionLocal  # noqa: E402
 from app.services.catalog_index import get_index  # noqa: E402
 from recsys.eval.metrics import accuracy_at_k  # noqa: E402
 from recsys.eval.stats import paired_bootstrap  # noqa: E402
-from recsys.pop_eval import BETA, CHUNK, K, POP_DAYS, pop_z, split, zrows  # noqa: E402
-from recsys.retrain import _tower_from_npz, load_events  # noqa: E402
+from recsys.pop_eval import BETA, CHUNK, K, POP_DAYS, pop_z, service_purchases, split, zrows  # noqa: E402
+from recsys.retrain import _tower_from_npz  # noqa: E402
 from recsys.ume import DEFAULT, build_sequences, tower_vectors  # noqa: E402
 
 GAMMA = 1.0
@@ -63,9 +63,7 @@ def user_vectors(model, X: np.ndarray, items, uidx, w, n_users) -> np.ndarray:
 def evaluate(db, ix, source: str, how: str) -> dict:
     rows = np.flatnonzero(ix.sources == source)
     ids, n = ix.ids[rows], len(rows)
-    ev = load_events(db, 2**31 - 1)
-    ev = ev[(ev.type == "purchase") & ~ev.is_setup & ev.item_id.isin(ids)].copy()
-    ev["item_id"] = np.searchsorted(ids, ev.item_id.values)
+    ev = service_purchases(db, ids)
     train, users, truth = split(ev, how)
 
     base = Path(f"/data/models/ume/{source}_test_pca")

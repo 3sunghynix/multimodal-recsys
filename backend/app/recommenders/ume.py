@@ -48,15 +48,19 @@ DEFAULTS = {"gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7},
 
 
 def _hist_mean(mat: np.ndarray, hist: np.ndarray, decay: float = 1.0) -> np.ndarray:
-    """이력 평균. hist는 최근 순(가장 최근이 0번). decay < 1이면 λ^순위 가중 평균 (C4 최근성 반영)."""
-    if decay >= 1.0 or len(hist) < 2:
+    """이력 평균. hist는 최근 순(가장 최근이 0번). decay < 1이면 λ^순위 가중 평균 (C4 최근성 반영).
+    decay는 (0, 1]: 1이면 단순 평균, 0에 가까울수록 가장 최근 이력만. 범위 밖(0 이하 · 1 초과 · nan)은 설정 오류로 막는다."""
+    if not 0.0 < decay <= 1.0:                                  # nan도 여기서 걸린다
+        raise ValueError(f"recency_decay는 0 초과 1 이하여야 합니다: {decay}")
+    if decay == 1.0 or len(hist) < 2:
         return mat[hist].mean(0)
     wts = np.power(float(decay), np.arange(len(hist)), dtype=np.float32)
     return (wts[:, None] * mat[hist]).sum(0) / wts.sum()
 
 
 def _user_input(mat: np.ndarray, hist: np.ndarray, sess: np.ndarray, w: float, decay: float = 1.0) -> np.ndarray:
-    """고객 타워 입력: 이력 평균과 세션 클릭 평균을 w로 섞는다. 한쪽만 있으면 그쪽 평균. 이력은 decay로 최근 가중."""
+    """고객 타워 입력: 이력 평균과 세션 클릭 평균을 w로 섞는다. 한쪽만 있으면 그쪽 평균.
+    이력은 decay로 최근 가중하고, 세션 클릭은 단순 평균이다 (30분 창이라 안에서 감쇠해도 차이가 작다)."""
     if len(hist) and len(sess) and w > 0:
         return (1 - w) * _hist_mean(mat, hist, decay) + w * mat[sess].mean(0)
     return _hist_mean(mat, hist, decay) if len(hist) else mat[sess].mean(0)

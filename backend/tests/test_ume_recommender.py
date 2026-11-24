@@ -492,3 +492,6 @@ def test_recency_decay_weights_recent_history(env):
     x = np.arange(6, dtype=np.float32).reshape(3, 2)
     assert np.allclose(_hist_mean(x, np.array([2, 0]), 1.0), x[[2, 0]].mean(0))   # λ = 1 → 단순 평균
     assert np.allclose(_hist_mean(x, np.array([1]), 0.5), x[1])                    # 이력 1개
+    for bad in (0.0, -0.5, 1.5, float("nan")):                                     # 범위 밖은 설정 오류
+        with pytest.raises(ValueError):
+            _hist_mean(x, np.array([2, 0]), bad)
