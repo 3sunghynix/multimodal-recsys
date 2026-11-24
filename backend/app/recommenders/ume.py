@@ -3,6 +3,7 @@
 요청 1건
   1. 고객 최근 행동(purchase · add_to_cart · click) 중 데이터셋마다 최근 max_hist개
   2. 그 상품들의 콘텐츠 임베딩(DB, 검색 색인과 공유) 평균 → 고객 타워 MLP → 고객 벡터 (텍스트 · 이미지 각각)
+     recency_decay가 있는 데이터셋은 최근 순위 i(가장 최근 = 0)에 λ^i 가중 평균 (H&M 0.9, Amazon은 단순 평균)
   3. 그 데이터셋 전체 상품 벡터(상품 타워 MLP, 메모리 캐시)와 내적 → 고객별 z(텍스트) + z(이미지)
   4. + γ · 인기 점수(데이터셋별 구매 수 log1p 표준화, 최근 N일) + β · [상품 브랜드 = 고객 최다 브랜드]
      exclude_purchased가 켜진 데이터셋은 고객이 이미 산 상품을 후보에서 뺀다 (Amazon만, H&M은 재구매가 많아 남긴다)
@@ -20,6 +21,7 @@ model_versions.params 예 (드라이브 results/ume/{source}_test_pca = train + 
    "gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
    "session_weight": 0.3, "rerank": {"max_category_share": 0.3}, "exclude_purchased": {"amazon": true}}
   rerank: null 이면 재정렬 끔. exclude_purchased: 근거는 docs/project/추천모델설계.md "재구매 정책" (11-23, 다음작업 C3)
+  recency_decay: {"hm": 0.9} — 근거는 같은 문서 "최근성 반영" (11-23, 다음작업 C4). 없거나 1이면 단순 평균
 """
 import time
 from datetime import timedelta
@@ -42,14 +44,26 @@ from .popularity import _popular_scored
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
 DEFAULTS = {"gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
-            "session_weight": 0.3, "rerank": {}, "exclude_purchased": {"amazon": True}}
+            "session_weight": 0.3, "rerank": {}, "exclude_purchased": {"amazon": True}, "recency_decay": {"hm": 0.9}}
 
 
-def _user_input(mat: np.ndarray, hist: np.ndarray, sess: np.ndarray, w: float) -> np.ndarray:
-    """고객 타워 입력: 이력 평균과 세션 클릭 평균을 w로 섞는다. 한쪽만 있으면 그쪽 평균."""
+def _hist_mean(mat: np.ndarray, hist: np.ndarray, decay: float = 1.0) -> np.ndarray:
+    """이력 평균. hist는 최근 순(가장 최근이 0번). decay < 1이면 λ^순위 가중 평균 (C4 최근성 반영).
+    decay는 (0, 1]: 1이면 단순 평균, 0에 가까울수록 가장 최근 이력만. 범위 밖(0 이하 · 1 초과 · nan)은 설정 오류로 막는다."""
+    if not 0.0 < decay <= 1.0:                                  # nan도 여기서 걸린다
+        raise ValueError(f"recency_decay는 0 초과 1 이하여야 합니다: {decay}")
+    if decay == 1.0 or len(hist) < 2:
+        return mat[hist].mean(0)
+    wts = np.power(float(decay), np.arange(len(hist)), dtype=np.float32)
+    return (wts[:, None] * mat[hist]).sum(0) / wts.sum()
+
+
+def _user_input(mat: np.ndarray, hist: np.ndarray, sess: np.ndarray, w: float, decay: float = 1.0) -> np.ndarray:
+    """고객 타워 입력: 이력 평균과 세션 클릭 평균을 w로 섞는다. 한쪽만 있으면 그쪽 평균.
+    이력은 decay로 최근 가중하고, 세션 클릭은 단순 평균이다 (30분 창이라 안에서 감쇠해도 차이가 작다)."""
     if len(hist) and len(sess) and w > 0:
-        return (1 - w) * mat[hist].mean(0) + w * mat[sess].mean(0)
-    return mat[hist].mean(0) if len(hist) else mat[sess].mean(0)
+        return (1 - w) * _hist_mean(mat, hist, decay) + w * mat[sess].mean(0)
+    return _hist_mean(mat, hist, decay) if len(hist) else mat[sess].mean(0)
 
 
 @lru_cache(maxsize=16)
@@ -206,8 +220,9 @@ class UME(Recommender):
             t = time.perf_counter()
             sel = np.flatnonzero(ix.sources == source)
             v_text, v_image = _item_vectors(ix, sel, art)
-            u_text = mlp(load_tower(f"{art}/text"), "user", _user_input(ix.text, hist, sess, w))
-            u_image = mlp(load_tower(f"{art}/image"), "user", _user_input(ix.image, hist, sess, w))
+            decay = float((p["recency_decay"] or {}).get(source, 1.0))
+            u_text = mlp(load_tower(f"{art}/text"), "user", _user_input(ix.text, hist, sess, w, decay))
+            u_image = mlp(load_tower(f"{art}/image"), "user", _user_input(ix.image, hist, sess, w, decay))
             s = _z(v_text @ u_text) + _z(v_image @ u_image)
             personal.append(s)                                      # 재정렬 빈 자리 채우기용 (인기 · 브랜드 보정 전)
             t_cand += time.perf_counter() - t

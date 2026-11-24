@@ -29,7 +29,7 @@ def params_for(root: Path, gamma: float = 1.0, beta_amazon: float = 2.0, dim: in
         else:
             dirs[src] = d
     return {"artifact_dirs": dirs, "gamma": gamma, "beta": {"amazon": beta_amazon}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
-            "exclude_purchased": {"amazon": True}}
+            "exclude_purchased": {"amazon": True}, "recency_decay": {"hm": 0.9}}
 
 
 def register(db, root: Path, version: str = "v1", gamma: float = 1.0, beta_amazon: float = 2.0,

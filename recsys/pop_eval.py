@@ -26,6 +26,9 @@ from app.services.catalog_index import get_index  # noqa: E402
 from recsys.eval.metrics import accuracy_at_k  # noqa: E402
 from recsys.eval.stats import paired_bootstrap  # noqa: E402
 from recsys.retrain import _tower_from_npz, load_events, split_holdout  # noqa: E402
+from sqlalchemy import select  # noqa: E402
+
+from app.models import User  # noqa: E402
 from recsys.ume import DEFAULT, build_sequences, tower_vectors  # noqa: E402
 
 K, MAXU, HOLD, CHUNK, SEED = 12, 5000, 0.1, 500, 42
@@ -61,12 +64,20 @@ def split(ev: pd.DataFrame, how: str):
     return train, users, truth
 
 
+def service_purchases(db, ids: np.ndarray) -> pd.DataFrame:
+    """평가용 구매 로그: 비 setup 구매, 이 데이터셋 상품, 시뮬레이터 고객 제외 (서비스 인기 통계와 같은 범위,
+    app/services/event_scope.py · #74). item_id는 ids 안의 순번으로 바꾼다. C2 · C3 · C4 평가가 함께 쓴다."""
+    ev = load_events(db, 2**31 - 1)
+    sim = np.array(db.scalars(select(User.id).where(User.source == "sim")).all(), np.int64)
+    ev = ev[(ev.type == "purchase") & ~ev.is_setup & ev.item_id.isin(ids) & ~ev.user_id.isin(sim)].copy()
+    ev["item_id"] = np.searchsorted(ids, ev.item_id.values)
+    return ev
+
+
 def evaluate(db, ix, source: str, how: str) -> dict:
     rows = np.flatnonzero(ix.sources == source)
     ids, n = ix.ids[rows], len(rows)
-    ev = load_events(db, 2**31 - 1)
-    ev = ev[(ev.type == "purchase") & ~ev.is_setup & ev.item_id.isin(ids)].copy()   # 시연 클릭 제외
-    ev["item_id"] = np.searchsorted(ids, ev.item_id.values)
+    ev = service_purchases(db, ids)
     train, users, truth = split(ev, how)
 
     base = Path(f"/data/models/ume/{source}_test_pca")
