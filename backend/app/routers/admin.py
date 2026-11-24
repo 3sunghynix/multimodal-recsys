@@ -1,4 +1,7 @@
-"""관리자 기능: 모델 레지스트리(등록 · 교체 버튼), A/B 실험(생성 · 중지 · 그룹별 지표 · 통계 검정)."""
+"""관리자 기능: 모델 레지스트리(등록 · 교체 버튼), A/B 실험(생성 · 중지 · 그룹별 지표 · 통계 검정).
+
+쓰기 엔드포인트 4개 (POST /models · /models/{id}/activate · /experiments · /experiments/{id}/stop) 는
+`require_admin` 로 보호 — `settings.admin_api_key` 가 설정되어 있으면 `X-Admin-Key` 헤더 필수 (B4)."""
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -8,6 +11,7 @@ from ..db import get_db
 from ..models import Event, Experiment, ModelVersion
 from ..schemas import (ABComparison, ExperimentIn, ExperimentOut, ExperimentStats,
                        ModelVersionIn, ModelVersionOut, VariantMetrics)
+from ..services.admin_auth import require_admin
 from ..services.stats import two_proportion_z, wilson_ci_95
 
 SIG_LEVEL = 0.05                            # 유의수준 (양측). significant = p_value < SIG_LEVEL
@@ -25,7 +29,8 @@ def available_models():
     return sorted(recommenders.REGISTRY)
 
 
-@router.post("/models", response_model=ModelVersionOut, status_code=201)
+@router.post("/models", response_model=ModelVersionOut, status_code=201,
+             dependencies=[Depends(require_admin)])
 def create_model(m: ModelVersionIn, db: Session = Depends(get_db)):
     if m.name not in recommenders.REGISTRY:
         raise HTTPException(422, f"등록되지 않은 모델: {m.name} (가능: {sorted(recommenders.REGISTRY)})")
@@ -36,7 +41,8 @@ def create_model(m: ModelVersionIn, db: Session = Depends(get_db)):
     return mv
 
 
-@router.post("/models/{model_id}/activate", response_model=ModelVersionOut)
+@router.post("/models/{model_id}/activate", response_model=ModelVersionOut,
+             dependencies=[Depends(require_admin)])
 def activate_model(model_id: int, db: Session = Depends(get_db)):
     """대시보드 '이 모델로 교체' 버튼. 기존 active는 candidate로 내린다."""
     mv = db.get(ModelVersion, model_id)
@@ -50,7 +56,8 @@ def activate_model(model_id: int, db: Session = Depends(get_db)):
     return mv
 
 
-@router.post("/experiments", response_model=ExperimentOut, status_code=201)
+@router.post("/experiments", response_model=ExperimentOut, status_code=201,
+             dependencies=[Depends(require_admin)])
 def create_experiment(e: ExperimentIn, db: Session = Depends(get_db)):
     for v in e.variants:
         if db.get(ModelVersion, v.model_version_id) is None:
@@ -69,7 +76,8 @@ def list_experiments(db: Session = Depends(get_db)):
     return db.scalars(select(Experiment).order_by(Experiment.id.desc())).all()
 
 
-@router.post("/experiments/{exp_id}/stop", response_model=ExperimentOut)
+@router.post("/experiments/{exp_id}/stop", response_model=ExperimentOut,
+             dependencies=[Depends(require_admin)])
 def stop_experiment(exp_id: int, db: Session = Depends(get_db)):
     exp = db.get(Experiment, exp_id)
     if exp is None:

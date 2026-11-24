@@ -2,9 +2,10 @@
 The only write is activate_model (operator-confirmed model swap)."""
 import json
 import math
+import os
 from pathlib import Path
 from urllib.request import urlopen, Request
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 
 LIMIT = 8 * 1024 * 1024
@@ -219,16 +220,27 @@ def get_metrics_timeseries(base_url: str, *, hours: int = 24, step_hours: int = 
     return list(reversed(buckets))                             # 과거 → 최근 순으로
 
 
-def activate_model(base_url, model_id, timeout=10):
+def activate_model(base_url, model_id, timeout=10, *, admin_key: str | None = None):
     """대시보드에서 유일한 쓰기 동작: 운영 모델 교체 (POST /models/{id}/activate).
-    화면에서 확인 체크 후에만 부른다. 기존 active는 서버가 candidate로 내린다."""
+    화면에서 확인 체크 후에만 부른다. 기존 active는 서버가 candidate로 내린다.
+
+    B4: 서버가 admin_api_key 를 요구하면 `X-Admin-Key` 헤더를 보낸다.
+    admin_key 가 None 이면 환경변수 `ADMIN_API_KEY` 를 읽는다 — 설정 안 돼 있으면 헤더 안 붙임 (서버가 auth 비활성이어야 성공).
+    401 은 "관리자 키 확인" 메시지로 구분해서 올려준다."""
     if isinstance(model_id, bool) or not isinstance(model_id, int) or model_id <= 0:
         raise ValueError("모델 id는 양의 정수여야 합니다.")
-    request = Request(f"{base_url.rstrip('/')}/models/{model_id}/activate", method="POST",
-                      headers={"Accept": "application/json"})
+    headers = {"Accept": "application/json"}
+    key = admin_key if admin_key is not None else os.getenv("ADMIN_API_KEY", "")
+    if key:
+        headers["X-Admin-Key"] = key
+    request = Request(f"{base_url.rstrip('/')}/models/{model_id}/activate", method="POST", headers=headers)
     try:
         with urlopen(request, timeout=timeout) as response:
             return json.loads(response.read(LIMIT + 1))
+    except HTTPError as error:
+        if error.code == 401:
+            raise ValueError("모델 교체 실패: 관리자 키 확인 필요 (ADMIN_API_KEY 환경변수)") from error
+        raise ValueError(f"모델 교체 실패: {error}") from error
     except (URLError, OSError, ValueError) as error:
         raise ValueError(f"모델 교체 실패: {error}") from error
 

@@ -440,13 +440,51 @@ def test_activate_model_posts_only_to_activate_endpoint():
         def read(self, _n): return encode({"id": 4, "name": "ume", "version": "retrain-1", "status": "active"})
 
     def fake(request, timeout):
-        seen.append((request.get_method(), request.full_url)); return Resp()
+        seen.append((request.get_method(), request.full_url, dict(request.header_items())))
+        return Resp()
 
     with patch("dashboard.data.urlopen", side_effect=fake):
-        assert activate_model("http://api:8000/", 4)["status"] == "active"
-    assert seen == [("POST", "http://api:8000/models/4/activate")]
+        assert activate_model("http://api:8000/", 4, admin_key="")["status"] == "active"           # 키 없음
+    assert seen[-1][0] == "POST" and seen[-1][1] == "http://api:8000/models/4/activate"
+    assert "X-admin-key" not in seen[-1][2] and "X-Admin-Key" not in seen[-1][2]                   # 헤더 미부착
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        assert activate_model("http://api:8000/", 4, admin_key="shhh")["status"] == "active"       # 키 설정
+    assert seen[-1][2].get("X-admin-key") == "shhh" or seen[-1][2].get("X-Admin-Key") == "shhh"    # 헤더 부착 (urllib은 Title-Case로 보냄)
+
     with patch("dashboard.data.urlopen", side_effect=OSError("down")):
         with pytest.raises(ValueError, match="교체 실패"): activate_model("http://unused", 4)
+
+
+def test_activate_model_reports_401_as_key_problem():
+    """서버가 401 로 거절하면 '관리자 키 확인' 안내로 바꿔서 올려준다 (B4)."""
+    from dashboard.data import activate_model
+    from urllib.error import HTTPError
+
+    def fake(request, timeout):
+        raise HTTPError(request.full_url, 401, "Unauthorized", {}, None)
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        with pytest.raises(ValueError, match="관리자 키"): activate_model("http://api:8000", 4, admin_key="wrong")
+
+
+def test_activate_model_reads_env_when_admin_key_not_passed(monkeypatch):
+    """ADMIN_API_KEY 환경변수를 자동으로 읽어서 헤더로 보낸다 (dashboard CLI 실행 호환)."""
+    from dashboard.data import activate_model
+    monkeypatch.setenv("ADMIN_API_KEY", "env-key-xyz")
+    seen = []
+
+    class Resp:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def read(self, _n): return encode({"id": 4, "name": "ume", "version": "v", "status": "active"})
+
+    def fake(request, timeout):
+        seen.append(dict(request.header_items())); return Resp()
+
+    with patch("dashboard.data.urlopen", side_effect=fake):
+        activate_model("http://api:8000", 4)                                                     # admin_key 생략 → 환경변수
+    assert seen[0].get("X-admin-key") == "env-key-xyz" or seen[0].get("X-Admin-Key") == "env-key-xyz"
 
 
 def test_monitoring_page_shows_versions_comparison_and_guarded_swap(monkeypatch, tmp_path):
