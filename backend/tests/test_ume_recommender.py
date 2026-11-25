@@ -495,3 +495,67 @@ def test_recency_decay_weights_recent_history(env):
     for bad in (0.0, -0.5, 1.5, float("nan")):                                     # 범위 밖은 설정 오류
         with pytest.raises(ValueError):
             _hist_mean(x, np.array([2, 0]), bad)
+
+
+def _write_ranker(path, prefer_low_rule: bool):
+    """가짜 랭커: rule_rank만 보고, prefer_low_rule이면 규칙 하위(순위 5 ~ 9) 확률이 높게 학습한 GBDT + meta (services/ranker.py 형식)."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    from app.services.ranker import FEATURES, save_ranker
+    rng = np.random.default_rng(0)
+    X = np.zeros((2000, len(FEATURES)), np.float32)
+    X[:, 2] = rng.integers(0, 10, 2000)
+    y = (X[:, 2] >= 5) if prefer_low_rule else (X[:, 2] < 5)
+    model = HistGradientBoostingClassifier(max_iter=50, random_state=0).fit(X, y.astype(int))
+    save_ranker(str(path), model, FEATURES, {"source": "hm"})
+
+
+def test_ranker_reorders_candidates_and_falls_back_when_missing(env):
+    """ranker가 켜진 데이터셋은 후보를 랭커 확률 순으로. 랭커가 '규칙 하위'를 고르게 학습됐으면 규칙 순서가 뒤집힌다.
+    랭커 폴더가 없으면 규칙 점수 그대로 (오류 없이)."""
+    Session, ids, params, tmp = env
+    with Session() as s:
+        u = User(source="hm")
+        s.add(u)
+        s.flush()
+        s.add_all([Event(user_id=u.id, item_id=ids["hm"][j], type="purchase", created_at=T0 + timedelta(days=j)) for j in (0, 1)])
+        s.commit()
+        rule = recommenders.get("ume", params).recommend(s, u.id, 10)
+        assert len(rule) == 10                                          # H&M 10개 전부 (재정렬 없음 · 산 상품 남김)
+        _write_ranker(tmp / "rk_low" / "hm", prefer_low_rule=True)
+        m = recommenders.get("ume", {**params, "rerank": None, "ranker": {"hm": str(tmp / "rk_low" / "hm")}})
+        rec = m.recommend(s, u.id, 10)
+        plain = recommenders.get("ume", {**params, "rerank": None}).recommend(s, u.id, 10)   # 재정렬 없는 규칙 순서
+        assert m.ranker_sources == ["hm"] and m.score_basis == "ranker_probability"
+        assert sorted(rec) == sorted(plain) and rec[:3] != plain[:3]    # 같은 후보, 다른 순서
+        assert set(rec[:3]) <= set(plain[-5:])                          # 규칙 하위가 위로
+        _write_ranker(tmp / "rk_high" / "hm", prefer_low_rule=False)
+        high = recommenders.get("ume", {**params, "rerank": None, "ranker": {"hm": str(tmp / "rk_high" / "hm")}}).recommend(s, u.id, 3)
+        assert set(high) <= set(plain[:5])                              # 규칙 상위를 고르게 학습하면 규칙 상위 그대로
+        m = recommenders.get("ume", {**params, "ranker": {"hm": str(tmp / "없음")}})
+        assert m.recommend(s, u.id, 10) == rule and m.ranker_sources == []
+
+
+def test_candidate_features_definitions():
+    from app.services.ranker import FEATURES, candidate_features
+    n = 6
+    st, si, pz = np.arange(n, dtype=float), -np.arange(n, dtype=float), np.ones(n)
+    brands = np.array([1, 1, 2, 2, -1, 1])
+    cats = np.array(["a", "a", "b", "", "b", "c"], object)
+    variants = np.array(["v1", "v1", "", "v2", "", ""], object)
+    lp = np.log1p(np.array([10, 10, 20, np.nan, 40, 10.0]))
+    t = np.datetime64("2020-09-01")
+    bought, bought_ts = np.array([0, 0, 2]), np.array([t - np.timedelta64(3, "D"), t - np.timedelta64(1, "D"), t], "datetime64[ns]")
+    f = candidate_features(np.array([0, 1, 2, 3]), st, si, pz, brands, cats, variants, lp, bought, bought_ts, t, 7)
+    col = {k: f[:, i] for i, k in enumerate(FEATURES)}
+    assert col["rule_rank"].tolist() == [0, 1, 2, 3] and col["hist_len"].tolist() == [7] * 4
+    assert col["bought_n"].tolist() == [2, 0, 1, 0]
+    assert col["days_since_bought"][0] == 1 and col["days_since_bought"][2] == 0 and np.isnan(col["days_since_bought"][1])
+    assert col["variant_bought"].tolist() == [1, 1, 0, 0]                # 상품 1은 상품 0과 같은 옷(v1)
+    assert np.allclose(col["cat_share"], [2 / 3, 2 / 3, 1 / 3, 0])
+    assert col["brand_match"].tolist() == [1, 1, 0, 0]                  # 구매 브랜드: 1, 1, 2 → 최다 1
+    mean_lp = np.mean(np.log1p([10, 10, 20]))
+    assert np.allclose(col["price_gap"][:3], np.log1p([10, 10, 20]) - mean_lp) and np.isnan(col["price_gap"][3])
+    g = candidate_features(np.array([0]), st, si, pz, brands, cats, variants, lp, np.array([], np.int64),
+                           np.array([], "datetime64[ns]"), t, 0)                            # 구매 없는 고객
+    assert g[0, FEATURES.index("bought_n")] == 0 and np.isnan(g[0, FEATURES.index("price_gap")])

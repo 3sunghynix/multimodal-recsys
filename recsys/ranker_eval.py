@@ -35,52 +35,42 @@ from recsys.pop_eval import BETA, K, POP_DAYS, pop_z, service_purchases, split, 
 from recsys.recency_eval import history_rows, user_vectors, weights  # noqa: E402
 from recsys.retrain import _tower_from_npz  # noqa: E402
 from recsys.ume import DEFAULT  # noqa: E402
+from app.services.ranker import CANDIDATES as C, FEATURES, candidate_features, log_price  # noqa: E402
 
-C, CHUNK, NEG_PER_USER, SEED = 300, 250, 50, 42
+CHUNK, NEG_PER_USER, SEED = 250, 50, 42
 GAMMA = 1.0
 EXCLUDE = {"amazon"}
 DECAY = {"hm": 0.9}
-FEATURES = ["s_text", "s_image", "rule_rank", "pop_z", "brand_match", "bought_n", "days_since_bought",
-            "variant_bought", "cat_share", "price_gap", "hist_len"]
-
-
-def _codes(values: np.ndarray) -> np.ndarray:
-    """문자열 배열 → 정수 코드 ("" · None은 −1)."""
-    v = pd.Series(values).fillna("").astype(str)
-    codes, _ = pd.factorize(v)
-    codes = codes.astype(np.int64)
-    codes[v.values == ""] = -1
-    return codes
 
 
 class Catalog:
-    """데이터셋 하나의 상품 쪽 고정 값 (순번 = ids 안 위치)."""
+    """데이터셋 하나의 상품 쪽 고정 값 (순번 = ids 안 위치). 서빙과 같은 배열 (색인 · DB 가격)."""
 
     def __init__(self, db, ix, source: str):
+        import torch
+        import torch.nn.functional as F
         rows = np.flatnonzero(ix.sources == source)
         self.source, self.ids, self.n = source, ix.ids[rows], len(rows)
         self.X = {"text": ix.text[rows], "image": ix.image[rows]}
         self.brands = ix.brands[rows]
-        self.cats = _codes(ix.cats[rows]) if ix.cats is not None else np.full(self.n, -1)
-        self.variants = _codes(ix.variants[rows]) if ix.variants is not None else np.full(self.n, -1)
+        self.cats = ix.cats[rows] if ix.cats is not None else np.full(self.n, "", object)
+        self.variants = ix.variants[rows] if ix.variants is not None else np.full(self.n, "", object)
         price = dict(db.execute(select(Item.id, Item.price).where(Item.source == source)).all())
-        p = np.array([price.get(int(i)) for i in self.ids], dtype=float)
-        self.log_price = np.log1p(np.where(p > 0, p, np.nan))
+        self.log_price = log_price([price.get(int(i)) for i in self.ids])
         base = Path(f"/data/models/ume/{source}_test_pca")
         cfg = json.loads((base / "text/config.json").read_text())
         self.p = {**DEFAULT, **{k: v for k, v in cfg.items() if k in DEFAULT}}
         self.models = {m: _tower_from_npz(dict(np.load(base / m / "weights.npz")), self.p, "cpu") for m in ("text", "image")}
-        import torch
-        import torch.nn.functional as F
         with torch.no_grad():
             self.V = {m: F.normalize(self.models[m]["item"](torch.from_numpy(self.X[m])), dim=1).numpy() for m in self.X}
 
 
 def _pair_lookup(keys_sorted: np.ndarray, values: np.ndarray, query: np.ndarray, missing):
-    pos = np.searchsorted(keys_sorted, query)
-    pos = np.minimum(pos, len(keys_sorted) - 1) if len(keys_sorted) else pos
-    hit = (len(keys_sorted) > 0) & (keys_sorted[pos] == query) if len(keys_sorted) else np.zeros(query.shape, bool)
     out = np.full(query.shape, missing, dtype=float)
+    if len(keys_sorted) == 0:
+        return out
+    pos = np.minimum(np.searchsorted(keys_sorted, query), len(keys_sorted) - 1)
+    hit = keys_sorted[pos] == query
     out[hit] = values[pos[hit]]
     return out
 
@@ -89,71 +79,42 @@ class Users:
     """고객 쪽 상태: 이력(train)만으로 만든다."""
 
     def __init__(self, cat: Catalog, train: pd.DataFrame, users: np.ndarray):
-        self.users, n_u, n = users, len(users), cat.n
+        self.users, n_u = users, len(users)
         items, ts, uidx = history_rows(train, users, cat.p["max_hist"])
         decay = DECAY.get(cat.source)
         w = weights("pos", decay, ts, uidx, n_u) if decay else np.ones(len(items), np.float32)
         self.U = {m: user_vectors(cat.models[m], cat.X[m], items, uidx, w, n_u) for m in ("text", "image")}
-        self.pz = pop_z(train, n, POP_DAYS[cat.source])
-        self.hist_len = np.bincount(uidx, minlength=n_u).astype(float)
+        self.pz = pop_z(train, cat.n, POP_DAYS[cat.source])
+        self.hist_len = np.bincount(uidx, minlength=n_u)
+        self.t_ref = train.ts.max()                                # 서빙: 그 데이터셋 서비스 구매의 마지막 시각
         order = pd.Series(np.arange(n_u), index=users)
         tu = train[train.user_id.isin(users)]
-        ur = order[tu.user_id.values].values
-        t_ref = train.ts.max()
-        # 같은 상품 구매 수 · 마지막 구매 후 경과일
-        g = pd.DataFrame({"k": ur * n + tu.item_id.values, "ts": tu.ts.values}).groupby("k").ts.agg(["size", "max"])
-        self.bought_keys, self.bought_n = g.index.values, g["size"].values.astype(float)
-        self.bought_days = ((t_ref - g["max"]).dt.total_seconds() / 86400).values
-        # 같은 옷(색상 변형) 구매
-        v = cat.variants[tu.item_id.values]
-        vk = np.unique(ur[v >= 0] * (cat.variants.max() + 1) + v[v >= 0])
-        self.variant_keys, self.nv = vk, cat.variants.max() + 1
-        # 소분류 비율
-        nc = max(cat.cats.max() + 1, 1)
-        cc = cat.cats[tu.item_id.values]
-        M = np.zeros((n_u, nc), np.float32)
-        np.add.at(M, (ur[cc >= 0], cc[cc >= 0]), 1.0)
-        self.cat_share = M / np.maximum(M.sum(1, keepdims=True), 1.0)
-        # 고객 평균 log 가격
-        lp = cat.log_price[tu.item_id.values]
-        s = pd.Series(lp).groupby(ur).mean()
-        self.mean_lp = np.full(n_u, np.nan)
-        self.mean_lp[s.index.values] = s.values
-        # 선호 브랜드 · 산 상품 (Amazon 제외용)
-        b = cat.brands[tu.item_id.values]
-        fav = pd.Series(b[b >= 0]).groupby(ur[b >= 0]).agg(lambda x: x.value_counts().idxmax())
+        g = pd.DataFrame({"r": order[tu.user_id.values].values, "i": tu.item_id.values, "t": tu.ts.values}).groupby("r")
+        self.bought = {r: (d.i.values, d.t.values) for r, d in g}
+        b = cat.brands[tu.item_id.values]                          # 선호 브랜드 = 구매 중 최다 (서빙 bincount와 같은 동점 처리)
+        rr = order[tu.user_id.values].values
         self.fav = np.full(n_u, -2)
-        self.fav[fav.index.values] = fav.values
-        self.bought_by_user = pd.Series(tu.item_id.values).groupby(ur).apply(lambda x: np.unique(x.values))
+        for r in np.unique(rr[b >= 0]):
+            self.fav[r] = np.bincount(b[(rr == r) & (b >= 0)]).argmax()
 
 
 def candidates(cat: Catalog, us: Users, sl: slice):
-    """규칙 점수 상위 C개 (규칙 순) + 특성 행렬 (rows × C × F)."""
+    """규칙 점수 상위 C개 (규칙 순) + 특성 (rows × C × F) — 특성은 서빙과 같은 app.services.ranker.candidate_features."""
     st = zrows(us.U["text"][sl] @ cat.V["text"].T)
     si = zrows(us.U["image"][sl] @ cat.V["image"].T)
-    bm = (cat.brands[None, :] == us.fav[sl, None]).astype(np.float32)
-    rule = st + si + GAMMA * us.pz[None, :] + BETA.get(cat.source, 0.0) * bm
+    rule = st + si + GAMMA * us.pz[None, :]
+    if cat.source in BETA:
+        rule = rule + BETA[cat.source] * (cat.brands[None, :] == us.fav[sl, None])
     rows = np.arange(sl.start, min(sl.stop, len(us.users)))
+    empty = (np.array([], np.int64), np.array([], "datetime64[ns]"))
     if cat.source in EXCLUDE:
-        empty = np.array([], np.int64)
         for r, u in enumerate(rows):
-            rule[r, us.bought_by_user.get(u, empty)] = -np.inf
+            rule[r, us.bought.get(u, empty)[0]] = -np.inf
     top = np.argpartition(-rule, C, axis=1)[:, :C]
     top = np.take_along_axis(top, np.argsort(-np.take_along_axis(rule, top, 1), 1, kind="stable"), 1)
-    R = rows[:, None]
-    f = {
-        "s_text": np.take_along_axis(st, top, 1), "s_image": np.take_along_axis(si, top, 1),
-        "rule_rank": np.broadcast_to(np.arange(C, dtype=float), top.shape),
-        "pop_z": us.pz[top], "brand_match": np.take_along_axis(bm, top, 1),
-        "bought_n": _pair_lookup(us.bought_keys, us.bought_n, R * cat.n + top, 0.0),
-        "days_since_bought": _pair_lookup(us.bought_keys, us.bought_days, R * cat.n + top, np.nan),
-        "variant_bought": np.where(cat.variants[top] >= 0,
-                                   _pair_lookup(us.variant_keys, np.ones(len(us.variant_keys)), R * us.nv + cat.variants[top], 0.0), 0.0),
-        "cat_share": np.where(cat.cats[top] >= 0, us.cat_share[R, np.maximum(cat.cats[top], 0)], 0.0),
-        "price_gap": cat.log_price[top] - us.mean_lp[R],
-        "hist_len": np.broadcast_to(us.hist_len[R], top.shape),
-    }
-    return top, np.stack([np.asarray(f[k], dtype=np.float32) for k in FEATURES], axis=-1)
+    F = np.stack([candidate_features(top[r], st[r], si[r], us.pz, cat.brands, cat.cats, cat.variants, cat.log_price,
+                                     *us.bought.get(u, empty), us.t_ref, int(us.hist_len[u])) for r, u in enumerate(rows)])
+    return top, F
 
 
 def label_matrix(top: np.ndarray, users: np.ndarray, rows: np.ndarray, truth: pd.DataFrame, n: int) -> np.ndarray:
@@ -184,29 +145,33 @@ def build_training(cat: Catalog, train: pd.DataFrame, how: str, rng):
     return np.concatenate(Xs), np.concatenate(ys).astype(int), recall, len(users)
 
 
-def evaluate(db, ix, source: str, how: str) -> dict:
+def fit(Xtr: np.ndarray, ytr: np.ndarray, rng):
+    """GBDT 학습 (검증 20%는 AUC용으로 떼어 둠). 이 데이터셋에서 값이 하나뿐인 특성은 뺀다
+    (예: Amazon은 산 상품을 후보에서 빼므로 구매 특성이 전부 0 · 결측). 반환: (모델, 열 번호, 특성 이름, 검증 AUC, 검증 표본)."""
     from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.inspection import permutation_importance
     from sklearn.metrics import roc_auc_score
+    keep = [j for j in range(len(FEATURES)) if np.unique(Xtr[~np.isnan(Xtr[:, j]), j]).size > 1]
+    X = Xtr[:, keep]
+    perm = rng.permutation(len(ytr))
+    va, tr = perm[:len(ytr) // 5], perm[len(ytr) // 5:]
+    model = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_leaf_nodes=31, l2_regularization=1.0,
+                                           early_stopping=True, validation_fraction=0.1, random_state=SEED)
+    model.fit(X[tr], ytr[tr])
+    auc = float(roc_auc_score(ytr[va], model.predict_proba(X[va])[:, 1]))
+    return model, keep, [FEATURES[j] for j in keep], auc, (X[va], ytr[va])
+
+
+def evaluate(db, ix, source: str, how: str) -> dict:
+    from sklearn.inspection import permutation_importance
     rng = np.random.default_rng(SEED)
     cat = Catalog(db, ix, source)
     ev = service_purchases(db, cat.ids)
     train, users, truth = split(ev, how)
 
     Xtr, ytr, recall_tr, n_tr_users = build_training(cat, train, how, rng)
-    # 이 데이터셋에서 값이 하나뿐인 특성은 뺀다 (예: Amazon은 산 상품을 후보에서 빼므로 구매 특성이 전부 0 · 결측)
-    keep = [j for j in range(len(FEATURES)) if np.unique(Xtr[~np.isnan(Xtr[:, j]), j]).size > 1]
-    used = [FEATURES[j] for j in keep]
-    Xtr = Xtr[:, keep]
-    perm = rng.permutation(len(ytr))
-    n_val = len(ytr) // 5
-    va, tr = perm[:n_val], perm[n_val:]
-    model = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.05, max_leaf_nodes=31, l2_regularization=1.0,
-                                           early_stopping=True, validation_fraction=0.1, random_state=SEED)
-    model.fit(Xtr[tr], ytr[tr])
-    auc = float(roc_auc_score(ytr[va], model.predict_proba(Xtr[va])[:, 1]))
-    sub = va[:min(len(va), 40000)]
-    pi = permutation_importance(model, Xtr[sub], ytr[sub], scoring="roc_auc", n_repeats=3, random_state=SEED)
+    model, keep, used, auc, (Xva, yva) = fit(Xtr, ytr, rng)
+    sub = slice(0, min(len(yva), 40000))
+    pi = permutation_importance(model, Xva[sub], yva[sub], scoring="roc_auc", n_repeats=3, random_state=SEED)
     importance = {k: round(float(v), 4) for k, v in sorted(zip(used, pi.importances_mean), key=lambda t: -t[1])}
 
     us = Users(cat, train, users)
