@@ -24,6 +24,7 @@ model_versions.params 예 (드라이브 results/ume/{source}_test_pca = train + 
   rerank: null 이면 재정렬 끔. exclude_purchased: 근거는 docs/project/추천모델설계.md "재구매 정책" (11-23, 다음작업 C3)
   recency_decay: {"hm": 0.9} — 근거는 같은 문서 "최근성 반영" (11-23, 다음작업 C4). 없거나 1이면 단순 평균
 """
+import logging
 import time
 from datetime import timedelta
 from functools import lru_cache
@@ -43,6 +44,8 @@ from ..services.search_core import rank_percentile
 from ..services.session import session_click_ids
 from .base import Recommender, register
 from .popularity import _popular_scored
+
+log = logging.getLogger(__name__)
 
 HISTORY_TYPES = ("purchase", "add_to_cart", "click")
 DEFAULTS = {"gamma": 1.0, "beta": {"amazon": 2.0}, "pop_recent_days": {"hm": 7}, "max_hist": 50,
@@ -230,8 +233,13 @@ class UME(Recommender):
                                    ix.cats[sel0] if ix.cats is not None else empty,
                                    ix.variants[sel0] if ix.variants is not None else empty,
                                    _log_prices(db, source, ids0), bought, bought_ts, t_ref, hist_len)
+        try:
+            prob = predict(rk, feats)
+        except Exception as e:                                      # 파일이 깨졌거나 사라짐 → 그 데이터셋은 규칙 점수 (요청은 성공)
+            log.warning("랭커 예측 실패 (%s, %s): %s — 규칙 점수로 대체", source, rk, e)
+            return s
         out = s - (s.max() + 10.0)
-        out[cand] = predict(rk, feats)
+        out[cand] = prob
         self.ranker_sources.append(source)
         return out
 
@@ -297,7 +305,10 @@ class UME(Recommender):
                     personal[-1] = pers
                     kept = np.flatnonzero(keep)
             if rk:
+                n_rk = len(self.ranker_sources)
                 s = self._rerank_with_ranker(db, user_id, source, rk, s, kept, sel0, st, si, pz, ix, len(hist))
+                if len(self.ranker_sources) > n_rk:                 # 랭커가 순위를 정한 데이터셋은 재정렬 빈 자리도 랭커 순으로
+                    personal[-1] = s                                # (개인화 점수로 채우면 랭커가 뒤로 보낸 상품이 다시 올라온다, #78 리뷰)
             t_rank += time.perf_counter() - t
             scores.append(s)
             groups.append(np.full(len(sel), source, object))
