@@ -140,3 +140,137 @@ def test_holdout_leaves_history_for_every_eval_user():
     train, test = split_holdout(ev, 1.0)
     assert sorted(test.event_id) == [3, 5, 8]                                  # 이벤트 2개 이상인 고객 1 · 2 · 4의 마지막
     assert set(test.user_id) <= set(train.user_id)                             # 평가 고객은 모두 학습 이력이 있음
+
+
+# ---------------------------------------------------------------- 학습형 랭커 재학습 (B1 자동화)
+
+def _fake_ranker(path, **meta):
+    """규칙 순위를 그대로 따르는 GBDT + meta (app.services.ranker 형식)."""
+    from sklearn.ensemble import HistGradientBoostingClassifier
+
+    from app.services.ranker import FEATURES, save_ranker
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(500, len(FEATURES))).astype(np.float32)
+    X[:, 2] = rng.integers(0, 20, 500)
+    model = HistGradientBoostingClassifier(max_iter=20, random_state=0).fit(X, (X[:, 2] < 3).astype(int))
+    save_ranker(str(path), model, FEATURES, {"source": "hm", **meta})
+
+
+@pytest.fixture()
+def rk_env(tmp_path, monkeypatch):
+    """H&M 고객 60명(시뮬레이터 아님 — 랭커 학습 범위)이 32일 동안 4개 묶음을 반복 구매. 기준 버전에 랭커가 켜져 있음."""
+    import recsys.ranker_eval as re_
+    import recsys.ranker_train as rt_
+    monkeypatch.setattr(re_, "C", 20)                    # 상품 40개 카탈로그: 후보 20개 (≥ MAP@12)
+    monkeypatch.setattr(rt_, "MIN_LABEL_USERS", 5)
+    engine = app_db.make_engine(f"sqlite:///{tmp_path / 'rk.db'}")
+    Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    app_db.init_db(engine)
+    rng = np.random.default_rng(2)
+    with Session() as s:
+        items = []
+        for i in range(40):
+            v = rng.normal(size=D)
+            items.append(Item(source="hm", source_item_id=str(i), title=f"i{i}", price=float(10 + i),
+                              text_embedding=(v / np.linalg.norm(v)).tolist(), image_embedding=(v[::-1] / np.linalg.norm(v)).tolist()))
+        users = [User(source="hm") for _ in range(60)]
+        s.add_all(items + users)
+        s.flush()
+        for u, user in enumerate(users):
+            group = [items[(u % 10) * 4 + j] for j in range(4)]
+            for t in range(8):                            # 4일 간격 → 마지막 7일 · 그 전 7일 모두 구매가 있음
+                s.add(Event(user_id=user.id, item_id=group[t % 4].id, type="purchase",
+                            created_at=T0 + timedelta(days=t * 4 + u % 4)))
+        base_dir = tmp_path / "models" / "base" / "hm"
+        for j, m in enumerate(("text", "image")):
+            _base_tower(base_dir / m, seed=j)
+        _fake_ranker(tmp_path / "ranker" / "hm")
+        s.add(ModelVersion(name="ume", version="base-rk", status="active",
+                           params={"artifact_dirs": {"hm": str(base_dir)}, "gamma": 1.0, "beta": {},
+                                   "ranker": {"hm": str(tmp_path / "ranker" / "hm")}}))
+        s.commit()
+    catalog_index._cache["key"] = None
+    return Session, tmp_path
+
+
+def _run(db, tmp, **kw):
+    return run(db, tmp / "models", min_new_logs=10, holdout=0.2, k=5, min_samples=10, log=lambda *_: None, **kw)
+
+
+def test_ranker_retrained_on_candidate_towers_and_registered(rk_env):
+    """기준 버전에 랭커가 있으면 후보 타워로 랭커도 다시 학습 → 새 폴더로 후보에 넣고, 운영 랭커 폴더는 그대로."""
+    from app.services.ranker import ranker_problem
+    Session, tmp = rk_env
+    base_model = (tmp / "ranker" / "hm" / "model.joblib").stat().st_mtime
+    with Session() as db:
+        r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
+        rr = r["rankers"]["hm"]
+        assert rr["status"] == "trained", rr
+        assert rr["accepted"] and rr["compared_with"] == "base"
+        assert {"rule_map@12", "new_map@12", "base_map@12"} <= set(rr) and rr["evaluation_key"].startswith("ranker:time_week:")
+        new = db.get(ModelVersion, r["registered_version_id"])
+        path = new.params["ranker"]["hm"]
+        assert path == rr["path"] and path.startswith(r["out"]) and ranker_problem(path) is None
+        meta = json.loads(open(f"{path}/meta.json", encoding="utf-8").read())
+        assert meta["tower_dir"] == new.params["artifact_dirs"]["hm"]                  # 후보 타워로 학습
+        assert (tmp / "ranker" / "hm" / "model.joblib").stat().st_mtime == base_model  # 운영 랭커 덮어쓰지 않음
+        m = recommenders.get("ume", new.params)
+        assert len(m.recommend(db, 1, 5)) == 5 and m.ranker_sources == ["hm"]          # 서빙이 새 랭커로 추천
+        assert {"hm/ranker/map@12"} <= {x.metric for x in db.query(MetricSnapshot).all()}
+
+
+def test_ranker_kept_when_new_one_is_worse(rk_env, monkeypatch):
+    import recsys.ranker_train as rt_
+    Session, tmp = rk_env
+    maps = iter([0.10, 0.10, 0.50])                                                   # 규칙 · 새 랭커 · 기준 랭커
+    monkeypatch.setattr(rt_, "accuracy_at_k", lambda rec, users, truth, ks: ({f"map@{ks[0]}": next(maps)}, {}))
+    import recsys.retrain as retrain_mod
+    monkeypatch.setattr(retrain_mod, "accept", lambda *a, **k: True)                  # 타워는 통과
+    with Session() as db:
+        r = _run(db, tmp, tolerance=0.02)
+        assert r["rankers"]["hm"]["accepted"] is False and "path" not in r["rankers"]["hm"]
+        new = db.get(ModelVersion, r["registered_version_id"])
+        assert new.params["ranker"]["hm"] == str(tmp / "ranker" / "hm")              # 기준 랭커 유지
+
+
+def test_ranker_failure_does_not_block_tower_candidate(rk_env, monkeypatch):
+    import recsys.ranker_train as rt_
+    Session, tmp = rk_env
+
+    def boom(*a, **k):
+        raise RuntimeError("x")
+    monkeypatch.setattr(rt_, "retrain_ranker", boom)
+    with Session() as db:
+        r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
+        assert r["rankers"]["hm"]["status"] == "failed" and r["registered_version_id"]
+        assert db.get(ModelVersion, r["registered_version_id"]).params["ranker"]["hm"] == str(tmp / "ranker" / "hm")
+
+
+def test_ranker_skipped_without_service_purchases(env, tmp_path):
+    """시뮬레이터 고객 구매만 있으면 랭커는 다시 학습하지 않는다 (서비스 범위 = 인기 통계와 같음)."""
+    Session, tmp = env
+    _fake_ranker(tmp / "ranker" / "hm")
+    with Session() as db:
+        base = db.query(ModelVersion).one()
+        base.params = {**base.params, "ranker": {"hm": str(tmp / "ranker" / "hm")}}
+        db.commit()
+        r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
+        assert r["rankers"]["hm"]["status"] == "skipped"
+        assert db.get(ModelVersion, r["registered_version_id"]).params["ranker"]["hm"] == str(tmp / "ranker" / "hm")
+
+
+def test_no_ranker_flag_skips(rk_env):
+    Session, tmp = rk_env
+    with Session() as db:
+        r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0, ranker=False)
+        assert "rankers" not in r
+
+
+def test_ranker_compared_with_rule_when_base_saw_eval_window(rk_env):
+    """기준 랭커가 평가 구간을 라벨로 학습했으면(label_end ≥ 평가 구간 시작) 정답을 본 모델이라 규칙과 비교한다."""
+    Session, tmp = rk_env
+    _fake_ranker(tmp / "ranker" / "hm", label_end="2026-02-01 00:00:00")             # 마지막 구매(1월 말) 이후
+    with Session() as db:
+        r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
+        rr = r["rankers"]["hm"]
+        assert rr["compared_with"] == "rule" and rr["base_seen_eval_window"].startswith("2026-02-01")

@@ -6,6 +6,9 @@
   3. 최근 비 setup 이벤트 --holdout 비율을 평가용으로 떼고, 나머지로 기준 가중치에서 이어서 학습 (warm start)
   4. 평가용 이벤트를 맞히는지 MAP@12 · Recall@k를 기준 모델과 새 모델로 같은 방식(타워 점수 z 합)으로 비교
   5. 새 가중치 저장 → 채택 규칙(accept)을 통과하면 model_versions에 status="candidate"로 등록 + metric_snapshots에 두 모델 지표
+  6. 기준 버전에 학습형 랭커(params "ranker", B1)가 있으면: 후보 타워 기준으로 랭커도 다시 학습해 기준 랭커와 비교
+     (recsys.ranker_train.retrain_ranker). 통과하면 후보의 ranker를 새 폴더(retrain_{시각}/ranker/{source})로, 아니면 기준 랭커 유지.
+     랭커 특성(텍스트 · 이미지 점수 · 규칙 순위)이 타워 점수라 타워만 바꾸면 랭커가 옛 타워 기준으로 남기 때문.
   운영 교체(activate)는 하지 않는다 — 관리자가 대시보드 · POST /models/{id}/activate로 결정.
 
 데이터셋 하나라도 표본이 모자라면 그 데이터셋은 기준 가중치를 그대로 쓴다 (artifact_dirs 유지).
@@ -161,7 +164,7 @@ def retrain_source(X: dict, ev: pd.DataFrame, base_dir: Path, out_dir: Path, hol
 
 def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 10000, holdout: float = 0.1, k: int = 20,
         device: str = "cpu", max_eval_users: int = 5000, min_samples: int = 100, tolerance: float = 0.02,
-        register: bool = True, log=print, recall_tolerance: float = 0.10) -> dict:
+        register: bool = True, log=print, recall_tolerance: float = 0.10, ranker: bool = True) -> dict:
     from app.models import MetricSnapshot, ModelVersion
     from app.services.catalog_index import get_index
 
@@ -194,10 +197,27 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
                 dirs[source] = r["dir"]
     report.update(status="trained", out=str(out), sources=sources)
     improved = [s for s, r in sources.items() if r.get("accepted")]
-    if register and improved:
-        mv = ModelVersion(name="ume", version=f"retrain-{stamp}", status="candidate",
-                          params={**base.params, "artifact_dirs": dirs, "trained_until_event_id": last_id,
-                                  "warm_start_from_version_id": base.id})
+    rk_dirs, rankers = dict(base.params.get("ranker") or {}), {}
+    if ranker and rk_dirs:
+        from recsys.ranker_train import retrain_ranker                  # ranker_eval이 이 모듈을 import → 순환 방지
+        for source, base_rk in sorted(rk_dirs.items()):
+            if source not in dirs:
+                continue
+            log(f"[{source}] 랭커 재학습 (타워 {dirs[source]})")
+            try:
+                rr = retrain_ranker(db, ix, source, dirs[source], base_rk, out / "ranker", tolerance)
+            except Exception as e:                                         # 랭커 실패가 타워 재학습 결과를 막지 않게
+                rr = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
+            rankers[source] = rr
+            if rr.get("accepted"):
+                rk_dirs[source] = rr["path"]
+        report["rankers"] = rankers
+    improved_rk = [s for s, r in rankers.items() if r.get("accepted")]
+    if register and (improved or improved_rk):
+        params = {**base.params, "artifact_dirs": dirs, "trained_until_event_id": last_id, "warm_start_from_version_id": base.id}
+        if rk_dirs:
+            params["ranker"] = rk_dirs
+        mv = ModelVersion(name="ume", version=f"retrain-{stamp}", status="candidate", params=params)
         db.add(mv)
         db.flush()
         for s in improved:
@@ -206,6 +226,10 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
                 for vid, key in ((base.id, f"base_{metric}"), (mv.id, f"new_{metric}")):
                     if r[key] is not None:
                         db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/{metric}", value=r[key], n=r["eval_users"]))
+        for s in improved_rk:
+            r = rankers[s]
+            for vid, key in ((base.id, f"{r['compared_with']}_map@{MAP_K}"), (mv.id, f"new_map@{MAP_K}")):
+                db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/ranker/map@{MAP_K}", value=r[key], n=r["eval_users"]))
         db.commit()
         report["registered_version_id"] = mv.id
     out.mkdir(parents=True, exist_ok=True)
@@ -223,6 +247,7 @@ def main():
     ap.add_argument("--tolerance", type=float, default=0.02, help="새 MAP@12가 기준의 (1 − tolerance) 이상이어야 채택 (주 지표)")
     ap.add_argument("--recall-tolerance", type=float, default=0.10, help="새 Recall@k가 기준의 (1 − 이 값) 미만이면 거절 (보조 안전장치)")
     ap.add_argument("--no-register", action="store_true", help="가중치 저장 · 평가만 하고 버전 등록은 하지 않음")
+    ap.add_argument("--no-ranker", action="store_true", help="기준 버전에 학습형 랭커가 있어도 다시 학습하지 않음 (기준 랭커 유지)")
     ap.add_argument("--device", default=None)
     a = ap.parse_args()
     import torch
@@ -231,7 +256,7 @@ def main():
     device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
     with SessionLocal() as db:
         r = run(db, a.out, a.base, a.min_new_logs, a.holdout, a.k, device, tolerance=a.tolerance, register=not a.no_register,
-                recall_tolerance=a.recall_tolerance)
+                recall_tolerance=a.recall_tolerance, ranker=not a.no_ranker)
     print(json.dumps(r, ensure_ascii=False, indent=2, default=str))
 
 
