@@ -559,3 +559,50 @@ def test_candidate_features_definitions():
     g = candidate_features(np.array([0]), st, si, pz, brands, cats, variants, lp, np.array([], np.int64),
                            np.array([], "datetime64[ns]"), t, 0)                            # 구매 없는 고객
     assert g[0, FEATURES.index("bought_n")] == 0 and np.isnan(g[0, FEATURES.index("price_gap")])
+
+
+def test_ranker_broken_file_falls_back_without_error(env):
+    """랭커 폴더 검사는 통과했지만 model.joblib이 깨졌으면 그 데이터셋은 규칙 점수 (요청은 500 없이 성공, #78 리뷰)."""
+    Session, ids, params, tmp = env
+    with Session() as s:
+        u = User(source="hm")
+        s.add(u)
+        s.flush()
+        s.add_all([Event(user_id=u.id, item_id=ids["hm"][j], type="purchase", created_at=T0 + timedelta(days=j)) for j in (0, 1)])
+        s.commit()
+        _write_ranker(tmp / "rk_bad" / "hm", prefer_low_rule=True)
+        (tmp / "rk_bad" / "hm" / "model.joblib").write_bytes(b"not a model")
+        plain = recommenders.get("ume", {**params, "rerank": None}).recommend(s, u.id, 10)
+        m = recommenders.get("ume", {**params, "rerank": None, "ranker": {"hm": str(tmp / "rk_bad" / "hm")}})
+        assert m.recommend(s, u.id, 10) == plain and m.ranker_sources == [] and m.score_basis == "ume_zscore"
+
+
+def test_rerank_fills_by_ranker_order_when_ranker_on(env, monkeypatch):
+    """랭커가 순위를 정한 데이터셋은 재정렬 빈 자리 점수(fill_scores)도 랭커 점수 — 개인화 점수로 채우면 랭커가 뒤로 보낸
+    상품이 다시 올라온다 (#78 리뷰)."""
+    from app.recommenders import ume as ume_mod
+    Session, ids, params, tmp = env
+    seen = {}
+    real = ume_mod.diversify
+
+    def spy(top, k, cats, brands, rr, fill_scores=None, variants=None):
+        seen["fill"] = fill_scores
+        return real(top, k, cats, brands, rr, fill_scores=fill_scores, variants=variants)
+    monkeypatch.setattr(ume_mod, "diversify", spy)
+    with Session() as s:
+        u = User(source="hm")
+        s.add(u)
+        s.flush()
+        s.add_all([Event(user_id=u.id, item_id=ids["hm"][j], type="purchase", created_at=T0 + timedelta(days=j)) for j in (0, 1)])
+        s.commit()
+        _write_ranker(tmp / "rk_low" / "hm", prefer_low_rule=True)
+        no_rerank = recommenders.get("ume", {**params, "rerank": None, "ranker": {"hm": str(tmp / "rk_low" / "hm")}})
+        order = no_rerank.recommend(s, u.id, 10)                                       # 랭커 순서
+        m = recommenders.get("ume", {**params, "ranker": {"hm": str(tmp / "rk_low" / "hm")}})
+        m.recommend(s, u.id, 10)
+        assert m.ranker_sources == ["hm"]
+        ix_ids = ume_mod.get_index(s).ids
+        hm_ids = np.array(sorted(ids["hm"]))
+        fill = seen["fill"]
+        by_fill = [int(hm_ids[i]) for i in np.argsort(-fill, kind="stable")]           # 빈 자리 채우는 순서 = 랭커 순서
+        assert by_fill[:10] == order and len(ix_ids)
