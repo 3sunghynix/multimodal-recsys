@@ -129,7 +129,9 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
     """Record a recsys.retrain report (stdout JSON / report.json) for one requested job.
 
     Per dataset: re-check the trainer's decision with the same rule, hash text/image weights of accepted
-    datasets. Job status: candidate_pending_review if the trainer registered a candidate version,
+    datasets. Learned rankers (report["rankers"], B1): same MAP@12 rule against the trainer's comparison target
+    (base ranker, or rule scores when the base ranker had seen the evaluation window), hash model.joblib/meta.json
+    of accepted rankers. Job status: candidate_pending_review if the trainer registered a candidate version,
     rejected if it trained but accepted nothing, skipped if it did not train. Never activates.
     path_map maps trainer container paths to local ones, e.g. {"/data/": "data/"}.
     """
@@ -164,7 +166,27 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
         else:
             entry['reason']=r.get('reason')
         sources[name]=entry
+    rankers={}
+    for name,r in sorted(report.get('rankers',{}).items()):
+        entry={'status':r.get('status')}
+        if r.get('status')=='trained':
+            ref=r.get('compared_with')
+            vals={'candidate_map12':_score(r.get('new_map@12'),'MAP@12',True),'baseline_map12':_score(r.get(f'{ref}_map@12'),'MAP@12',True)}
+            ok=accept(vals['candidate_map12'],vals['baseline_map12'],None,None,map_tol,recall_tol)
+            entry.update(vals,compared_with=ref,evaluation_key=r.get('evaluation_key'),eval_users=r.get('eval_users'),
+                         accepted=ok,trainer_accepted=r.get('accepted'))
+            if r.get('base_seen_eval_window'):entry['base_seen_eval_window']=r['base_seen_eval_window']
+            if r.get('accepted') is not None and bool(r['accepted'])!=ok:entry['rule_mismatch']=True
+            if r.get('accepted'):
+                files={f:Path(local(r['path']))/f for f in ('model.joblib','meta.json')}
+                missing=[str(f) for f in files.values() if not f.is_file()]
+                if missing:raise ValueError(f'Completed ranker artifact required: {missing}')
+                entry.update(artifact=local(r['path']),sha256={f:_digest(p) for f,p in files.items()})
+        else:
+            entry['reason']=r.get('reason') or r.get('error')
+        rankers[name]=entry
     registered=report.get('registered_version_id')
+    if rankers:job['rankers']=rankers
     job.update(status='candidate_pending_review' if registered else 'rejected',registered_version_id=registered,
                trainer_out=local(report.get('out','')),trained_through_event_id=report.get('max_event_id'),
                sources=sources,map_tolerance=map_tol,recall_tolerance=recall_tol,active_model_unchanged=True)

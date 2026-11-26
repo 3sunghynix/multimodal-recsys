@@ -152,3 +152,37 @@ def test_real_run_after_dry_run_clears_flag(tmp_path,policy):
     s=tick({},FakeAPI(),policy,NOW,run=trainer('x',code=1),dry_run=True)
     s=tick(s,FakeAPI(),policy,NOW,run=trainer(json.dumps(report(tmp_path),indent=2)))
     assert s['jobs'][0]['status']=='candidate_pending_review' and 'dry_run' not in s['jobs'][0]
+
+
+def ranker_report(tmp_path,accepted=True,new_map=0.0495,ref='rule'):
+    r=report(tmp_path)
+    d=tmp_path/'data/models/ume/retrain_x/ranker/hm'
+    if accepted:
+        d.mkdir(parents=True,exist_ok=True);(d/'model.joblib').write_bytes(b'm');(d/'meta.json').write_text('{}')
+    rk={'status':'trained','accepted':accepted,'compared_with':ref,'eval_users':5000,'rule_map@12':0.0430,'new_map@12':new_map,
+        'base_map@12':0.0560,'evaluation_key':'ranker:time_week:until=2020-09-08:users=5000'}
+    if ref=='rule':rk['base_seen_eval_window']='2020-09-08 00:00:00'
+    if accepted:rk['path']='/data/models/ume/retrain_x/ranker/hm'
+    r['rankers']={'hm':rk,'amazon':{'status':'failed','error':'RuntimeError: x'}}
+    return r
+
+
+def test_ranker_entries_rechecked_and_hashed(tmp_path,policy):
+    """B1 랭커 재학습: runner도 같은 MAP@12 규칙으로 다시 판정 (trainer의 비교 대상 기준), 채택된 랭커 파일 sha256."""
+    s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(ranker_report(tmp_path),indent=2)))
+    rk=s['jobs'][0]['rankers']
+    assert rk['hm']['accepted'] and rk['hm']['compared_with']=='rule' and rk['hm']['baseline_map12']==0.0430
+    assert len(rk['hm']['sha256']['model.joblib'])==64 and 'rule_mismatch' not in rk['hm'] and rk['hm']['base_seen_eval_window']
+    assert rk['amazon']=={'status':'failed','reason':'RuntimeError: x'}
+
+
+def test_ranker_rule_mismatch_flagged(tmp_path,policy):
+    """trainer는 채택했는데 같은 규칙으로는 거절(기준 랭커 0.0560 대비 0.0495)이면 rule_mismatch."""
+    s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(ranker_report(tmp_path,ref='base'),indent=2)))
+    rk=s['jobs'][0]['rankers']['hm']
+    assert rk['accepted'] is False and rk['trainer_accepted'] and rk['rule_mismatch']
+
+
+def test_report_without_rankers_has_no_key(tmp_path,policy):
+    s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(report(tmp_path),indent=2)))
+    assert 'rankers' not in s['jobs'][0]
