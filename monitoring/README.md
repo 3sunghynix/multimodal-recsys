@@ -23,6 +23,7 @@ python -m monitoring.ct --state simulator/runs/monitor_ct/monitor_state.json --w
 | 학습 | `trainer_command` + `--base <운영 모델 id> --min-new-logs <임계값> --tolerance 0.02 --recall-tolerance 0.10`. 출력 마지막의 보고 JSON을 `finish_training_report()`로 기록 |
 | 결과 | `candidate_pending_review`(trainer가 후보 등록, `registered_version_id`) · `rejected`(학습했지만 채택 데이터셋 없음) · `skipped`(trainer가 조건 미달로 건너뜀) · `failed`(종료 코드 ≠ 0 또는 보고 없음 → 다음 tick에 재시도, `trainer_max_attempts`(2)회 후 `trainer_failed` 알림, `trainer_retry_cooldown_minutes`(60분) 뒤 새 요청). 학습했으면 기준점을 `max_event_id`로 올려 같은 로그로 다시 학습하지 않는다 |
 | 산출물 | 채택된 데이터셋마다 `text/weights.npz` · `image/weights.npz` sha256. trainer 컨테이너 경로 `/data/...`는 `trainer_path_map`으로 호스트 `data/...`로 바꾼다 |
+| 학습형 랭커 (B1) | 보고에 `rankers`가 있으면(기준 버전에 랭커가 켜진 경우) job의 `rankers.<데이터셋>`에 기록: 같은 MAP@12 규칙으로 다시 판정(비교 대상 = trainer의 `compared_with`, 기준 랭커 또는 규칙), 채택된 랭커의 `model.joblib` · `meta.json` sha256, 다르면 `rule_mismatch`. 실패 · 건너뜀은 `reason` |
 
 **카운터와 trainer의 관계.** trainer는 운영 모델의 `trained_until_event_id`부터 센다. CT 루프는 후보가 거절돼도 기준점을 `max_event_id`로 올리므로(같은 로그로 반복 학습 방지), 첫 거절 이후에는 CT 카운트 ≤ trainer 카운트다. trainer의 `--min-new-logs` 확인은 항상 통과하므로 동작에는 문제가 없다. 후보를 교체하면 운영 모델의 `trained_until_event_id`가 커져 두 값이 다시 맞는다. trainer가 학습 타입만 세도록 바뀌기 전까지는 trainer 쪽 숫자가 view를 포함해 더 크다.
 

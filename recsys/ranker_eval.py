@@ -46,7 +46,9 @@ DECAY = {"hm": 0.9}
 class Catalog:
     """데이터셋 하나의 상품 쪽 고정 값 (순번 = ids 안 위치). 서빙과 같은 배열 (색인 · DB 가격)."""
 
-    def __init__(self, db, ix, source: str):
+    def __init__(self, db, ix, source: str, tower_dir: str | Path | None = None):
+        """tower_dir: UME 타워 폴더 ({text,image}/weights.npz). 기본 = 처음 배포한 {source}_test_pca (평가 기준선).
+        재학습(recsys.retrain → ranker_train.retrain_ranker)은 후보 버전의 타워를 넘긴다 — 랭커 특성이 그 타워 점수라서."""
         import torch
         import torch.nn.functional as F
         rows = np.flatnonzero(ix.sources == source)
@@ -57,7 +59,7 @@ class Catalog:
         self.variants = ix.variants[rows] if ix.variants is not None else np.full(self.n, "", object)
         price = dict(db.execute(select(Item.id, Item.price).where(Item.source == source)).all())
         self.log_price = log_price([price.get(int(i)) for i in self.ids])
-        base = Path(f"/data/models/ume/{source}_test_pca")
+        base = Path(tower_dir) if tower_dir else Path(f"/data/models/ume/{source}_test_pca")
         cfg = json.loads((base / "text/config.json").read_text())
         self.p = {**DEFAULT, **{k: v for k, v in cfg.items() if k in DEFAULT}}
         self.models = {m: _tower_from_npz(dict(np.load(base / m / "weights.npz")), self.p, "cpu") for m in ("text", "image")}
