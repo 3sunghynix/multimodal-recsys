@@ -85,7 +85,7 @@ docker compose run --rm trainer python -m recsys.retrain --min-new-logs 0 --no-r
 curl -X POST localhost:8000/models/<id>/activate -H "X-Admin-Key: $ADMIN_API_KEY"   # 후보를 운영 모델로 (관리자 결정, 키를 비워 뒀으면 헤더 생략)
 ```
 
-랭커는 CT 루프 밖이다 — 로그가 많이 쌓이면 위 `ranker_train`을 다시 실행한다 (같은 폴더를 덮어쓰면 api가 다음 요청에서 다시 읽는다).
+랭커 재학습은 trainer(CT 루프)가 후보로 만든다 (#82): 기준 버전에 랭커가 있으면 타워를 이어 학습한 뒤 그 타워로 랭커도 다시 학습 · 비교해 새 폴더(`retrain_<시각>/ranker/hm`)로 후보 버전에 넣는다. 수동 `ranker_train`은 **처음 한 번만** — 운영 중인 랭커 폴더를 덮어쓰면 버전 id는 그대로인데 서빙 모델이 바뀌어 A/B · 지표 구분이 깨진다.
 
 채택 규칙 · 모니터링 runner 연결: [재학습.md](docs/project/재학습.md)
 
