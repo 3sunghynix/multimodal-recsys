@@ -5,15 +5,17 @@
 - 논문: [docs/논문_최종본.pdf](docs/논문_최종본.pdf) · 가설 대응표: [docs/가설대응표.md](docs/가설대응표.md)
 - 진행 상황 · 남은 일: [docs/project/다음작업.md](docs/project/다음작업.md)
 
-## 주요 결과 (2026-11-16)
+## 주요 결과 (2026-11-26)
 
 | 영역 | 결과 | 문서 |
 |---|---|---|
 | 검색 | 영어 정확도 0.933 · 한국어 0.909, 응답 p95 **146ms** (상품 10만 개, 목표 ≤ 200ms) | [검색.md](docs/project/검색.md) |
 | 추천 (오프라인) | 서비스 모델(UME + 인기 + 브랜드)이 인기 추천 대비 H&M MAP@12 **2.7배**, Amazon Recall@12 +46% · 브랜드 일치도 0.2% → 10.7% | [오프라인결과.md](docs/project/오프라인결과.md) |
-| 추천 (서빙) | 세션 반영 · 소분류 다양성 재정렬(추천 상품 종류 +19%) · MAB 탐색 슬롯, 응답 p95 **46 ~ 59ms** | [추천모델설계.md](docs/project/추천모델설계.md), [MAB_탐색.md](docs/project/MAB_탐색.md) |
+| 추천 (서비스 로그 재평가) | 인기 가중치 γ 2 → 1, Amazon 산 상품 제외(MAP +22 ~ 24%), H&M 최근성 λ = 0.9(MAP +7% · +4%). 같은 조건 비교에서 UME가 ItemKNN보다 네 칸 모두 정확 | [추천모델설계.md](docs/project/추천모델설계.md) |
+| 학습형 랭커 (H&M) | 규칙 상위 300개를 GBDT로 재정렬: MAP@12 **+36% · +18%** (두 분할 유의). 새 버전 `v1-g1-rk`로 등록 · 교체 | [추천모델설계.md](docs/project/추천모델설계.md) "학습형 랭커" |
+| 추천 (서빙) | 세션 반영 · 소분류 다양성 재정렬(추천 상품 종류 +19%) · MAB 탐색 슬롯 · 색상 변형 묶기, 응답 p95 **46 ~ 59ms** (랭커 버전 H&M p95 111ms) | [추천모델설계.md](docs/project/추천모델설계.md), [MAB_탐색.md](docs/project/MAB_탐색.md) |
 | A/B (모의 고객 1만 명) | UME +1.6%p (p = 0.086), 브랜드충성 +13.2%p · 실용주의자 +6.0%p 유의 | [실제카탈로그_AB_파일럿.md](docs/project/실제카탈로그_AB_파일럿.md) |
-| 지속 학습 | 서비스 로그로 이어 학습 → 기존 모델과 MAP@12 · Recall@20 비교 → 후보 등록 (교체는 관리자) | [재학습.md](docs/project/재학습.md) |
+| 지속 학습 | 서버 지표 → runner → trainer → 후보 등록 자동 연결(CT 루프), 기존 모델과 MAP@12 · Recall@20 비교 (교체는 관리자) | [재학습.md](docs/project/재학습.md) |
 
 ## 구조
 
@@ -41,6 +43,7 @@ docker compose up -d --build            # db · redis · api · dashboard (처�
 
 - DB 스키마는 api가 시작할 때 Alembic으로 자동으로 최신이 된다 (`docker compose down -v` 필요 없음).
 - 검색 모델(약 900MB)은 첫 실행 때 내려받는다. **받지 못하면 api가 종료된다** (`docker compose ps -a`에서 `Exited (3)`, 로그에 `SSLError`) → 백신 HTTPS 검사를 끄고 `docker compose up -d api`. 받은 뒤 `.env`의 `HF_HUB_OFFLINE=1`로 바꾸면 인터넷 확인을 건너뛴다 (`0`이면 캐시가 있어도 확인하다 실패할 수 있다).
+- 관리자 키: `.env`의 `ADMIN_API_KEY`를 길고 무작위한 값으로 채우면 모델 등록 · 교체 · 실험 API(`POST /models` · `/models/{id}/activate` · `/experiments`)가 `X-Admin-Key` 헤더를 요구한다. 대시보드는 같은 값을 받아 자동으로 붙인다. 비워 두면 로컬 개발용으로 통과(시작 로그에 WARN).
 - Windows Git Bash에서는 `/data/...` 경로가 `C:/Program Files/Git/data/...`로 바뀐다 → 명령 앞에 `MSYS_NO_PATHCONV=1`을 붙이거나 PowerShell에서 실행.
 
 ### 2. 데이터 넣기 (둘 중 하나)
@@ -54,7 +57,14 @@ UME 가중치: 드라이브 `msrs_project/results/ume/`의 `hm_test_pca/` · `am
 
 ```bash
 docker compose restart api                                          # 검색 PCA 파일은 api 시작 때 읽는다 (데이터를 넣은 뒤 한 번)
-docker compose exec api python -m scripts.register_ume --activate   # UME 모델 등록 · 운영 지정
+docker compose exec api python -m scripts.register_ume --version v1-g1 --activate   # UME 모델 등록 · 운영 지정 (γ = 1)
+```
+
+H&M 학습형 랭커 (선택, 전체 카탈로그에서 약 2분) — 랭커를 켠 버전을 **후보로** 등록하고 대시보드에서 비교 · 교체한다:
+
+```bash
+docker compose --profile trainer run --rm trainer python -m recsys.ranker_train                  # → data/models/ranker/hm/
+docker compose exec api python -m scripts.register_ume --version v1-g1-rk --ranker-root /data/models/ranker
 ```
 
 데모 데이터만 필요하면 `docker compose exec api python -m scripts.seed_sample` (브랜드 3 · 상품 30 · 고객 10).
@@ -64,7 +74,7 @@ docker compose exec api python -m scripts.register_ume --activate   # UME 모델
 | 화면 | 주소 |
 |---|---|
 | 사용자 쇼핑 화면 (검색 · 추천 · 상품 상세) | http://localhost:8000/app/ |
-| 관리자 대시보드 | http://localhost:8501 |
+| 관리자 대시보드 | http://localhost:8501 (시뮬레이터 CLI 안내의 API 주소는 `HOST_API_URL`, 기본 `http://localhost:8000`) |
 | API 문서 | http://localhost:8000/docs |
 
 ### 4. 재학습 (지속 학습)
@@ -72,8 +82,10 @@ docker compose exec api python -m scripts.register_ume --activate   # UME 모델
 ```bash
 docker compose run --rm trainer                                                     # 새 로그 1만 건 이상이면 학습 · 후보 등록
 docker compose run --rm trainer python -m recsys.retrain --min-new-logs 0 --no-register   # 조건 무시 · 평가만
-curl -X POST localhost:8000/models/<id>/activate                                     # 후보를 운영 모델로 (관리자 결정)
+curl -X POST localhost:8000/models/<id>/activate -H "X-Admin-Key: $ADMIN_API_KEY"   # 후보를 운영 모델로 (관리자 결정, 키를 비워 뒀으면 헤더 생략)
 ```
+
+랭커 재학습은 trainer(CT 루프)가 후보로 만든다 (#82): 기준 버전에 랭커가 있으면 타워를 이어 학습한 뒤 그 타워로 랭커도 다시 학습 · 비교해 새 폴더(`retrain_<시각>/ranker/hm`)로 후보 버전에 넣는다. 수동 `ranker_train`은 **처음 한 번만** — 운영 중인 랭커 폴더를 덮어쓰면 버전 id는 그대로인데 서빙 모델이 바뀌어 A/B · 지표 구분이 깨진다.
 
 채택 규칙 · 모니터링 runner 연결: [재학습.md](docs/project/재학습.md)
 
