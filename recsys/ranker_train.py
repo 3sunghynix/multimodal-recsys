@@ -47,50 +47,80 @@ def train(db, source: str, out: Path, tower_dir=None, ix=None, cat=None, ev=None
     return {**meta, "features": used, "path": str(out / source)}
 
 
-def retrain_ranker(db, ix, source: str, tower_dir, base_ranker: str | None, out: Path, tolerance: float = 0.02) -> dict:
-    """후보 타워(tower_dir) 기준으로 랭커를 다시 학습하고, 기준 랭커와 같은 평가 구간에서 비교한다.
+def _ranked(cat, us, users, truth, scorers) -> dict:
+    """같은 후보(이 타워의 규칙 상위 300개)를 scorers {이름: f(flat 특성) → 확률 | None(규칙 순)} 순으로 매긴 MAP@12."""
+    recs = {name: [] for name in scorers}
+    for s in range(0, len(users), CHUNK):
+        sl = slice(s, s + CHUNK)
+        top, F = candidates(cat, us, sl)
+        flat = F.reshape(-1, len(FEATURES))
+        for name, f in scorers.items():
+            if f is None:
+                recs[name].append(top[:, :K])
+            else:
+                recs[name].append(np.take_along_axis(top, np.argsort(-f(flat).reshape(top.shape), 1, kind="stable")[:, :K], 1))
+    return {name: round(float(accuracy_at_k(np.concatenate(r), users, truth, ks=(K,))[0][f"map@{K}"]), 5)
+            for name, r in recs.items()}
 
-    평가: 서비스 구매의 마지막 7일을 정답으로 떼고(고객 최대 5,000명), 그 전 이력으로 새 랭커를 학습(ranker_eval과 같은 중첩 분할) →
-          같은 후보 300개(후보 타워 · 규칙 점수)를 새 랭커 / 기준 랭커 / 규칙 순으로 매겨 MAP@12 비교.
-          두 랭커가 같은 타워 · 같은 후보에서 비교되므로, 타워가 바뀌어도 "이 타워에는 어느 랭커가 나은가"를 잰다.
-    채택: 새 MAP@12 ≥ 비교 대상 × (1 − tolerance) (UME 재학습과 같은 허용 폭). 비교 대상 = 기준 랭커, 단
-          기준 랭커가 평가 구간을 이미 학습에 썼으면(meta label_end ≥ 평가 구간 시작 — 새 구매 없이 다시 돌린 경우) 정답을 본 모델이라
-          비교가 공정하지 않으므로 규칙 점수와 비교한다 (11-26 실측: 같은 로그로 기준 0.0560 vs 새 0.0495 — 기준은 평가 구간을 라벨로 학습).
-          기준 랭커가 없거나 읽을 수 없어도 규칙과 비교.
-    채택되면 평가 구간까지 포함한 전체 구매로 다시 학습해 out/{source}에 저장한다 (수동 ranker_train과 같은 방식).
-    """
+
+def _nested_ranker(cat, train_ev):
+    """평가 구간 전 이력만으로 학습한 랭커 (ranker_eval과 같은 중첩 분할). (모델, 열, 학습 고객 수, 양성 수, AUC)."""
     rng = np.random.default_rng(SEED)
+    X, y, _, n_users = build_training(cat, train_ev, "time_week", rng)
+    if n_users < MIN_LABEL_USERS or y.sum() == 0 or y.sum() == len(y):
+        return None, None, n_users, int(y.sum()), None
+    model, keep, _, auc, _ = fit(X, y, rng)
+    return model, keep, n_users, int(y.sum()), auc
+
+
+def retrain_ranker(db, ix, source: str, tower_dir, base_ranker: str | None, out: Path, tolerance: float = 0.02,
+                   base_tower_dir=None) -> dict:
+    """후보 타워(tower_dir) 기준으로 랭커를 다시 학습하고, **서빙 조합 전체**를 기준과 같은 평가 구간에서 비교한다.
+
+    평가 구간: 서비스 구매의 마지막 7일을 정답으로 뗀다 (고객 최대 5,000명). 학습은 그 전 이력만 (중첩 분할).
+    후보 조합: 후보 타워 + 새 랭커 (new). 참고로 후보 타워의 규칙 순 (rule).
+    기준 조합 (compared_with):
+      base        기준 타워 + 기준 랭커 그대로 — 기준 랭커가 평가 구간을 학습에 쓰지 않았을 때
+      base_refit  기준 타워 + 같은 중첩 분할로 다시 학습한 랭커 — 기준 랭커가 평가 구간을 이미 봤을 때
+                  (meta label_end ≥ 평가 구간 시작. 새 구매 없이 다시 돌린 경우 — 그대로 재면 정답을 본 값이라 이긴다:
+                   11-26 실측 기준 0.0560 vs 새 0.0495). 이때 base_map@12(정답을 본 값)는 참고로만 남긴다.
+      base_rule   기준 타워 규칙 순 — 기준 랭커 파일이 없거나 읽을 수 없을 때 (서빙도 그 데이터셋을 규칙으로 둔다)
+    채택: new ≥ 기준 조합 × (1 − tolerance) (UME 재학습과 같은 허용 폭). 통과하면 평가 구간까지 넣어 전체 구매로 다시 학습해
+    out/{source}에 저장한다 (수동 ranker_train과 같은 방식). 운영 중인 랭커 폴더는 건드리지 않는다.
+    """
+    base_tower_dir = base_tower_dir or tower_dir
     cat = Catalog(db, ix, source, tower_dir)
     ev = service_purchases(db, cat.ids)
-    report = {"status": "skipped", "tower_dir": str(tower_dir), "base_ranker": base_ranker}
+    report = {"status": "skipped", "tower_dir": str(tower_dir), "base_tower_dir": str(base_tower_dir), "base_ranker": base_ranker}
     if len(ev) == 0:
         return {**report, "reason": "서비스 범위 구매 없음"}
     train_ev, users, truth = split(ev, "time_week")
     if len(users) < MIN_LABEL_USERS:
         return {**report, "reason": f"평가 구간 고객 {len(users)} < {MIN_LABEL_USERS}"}
-    X, y, _, n_train_users = build_training(cat, train_ev, "time_week", rng)
-    if n_train_users < MIN_LABEL_USERS or y.sum() == 0 or y.sum() == len(y):
-        return {**report, "reason": f"학습 라벨 부족 (고객 {n_train_users}, 양성 {int(y.sum())})"}
-    model, keep, _, auc, _ = fit(X, y, rng)
+    model, keep, n_tr, n_pos, auc = _nested_ranker(cat, train_ev)
+    if model is None:
+        return {**report, "reason": f"학습 라벨 부족 (고객 {n_tr}, 양성 {n_pos})"}
     base_ok = bool(base_ranker) and ranker_problem(base_ranker) is None
     cut = ev.ts.max() - pd.Timedelta(days=7)                       # pop_eval.split time_week와 같은 평가 구간 시작
     base_end = load_ranker(base_ranker)[2].get("label_end") if base_ok else None
     base_seen_eval = base_end is not None and pd.Timestamp(base_end) >= cut
 
-    us = Users(cat, train_ev, users)
-    recs = {"rule": [], "new": [], "base": []}
-    for s in range(0, len(users), CHUNK):
-        sl = slice(s, s + CHUNK)
-        top, F = candidates(cat, us, sl)
-        flat = F.reshape(-1, len(FEATURES))
-        recs["rule"].append(top[:, :K])
-        for name, prob in (("new", model.predict_proba(flat[:, keep])[:, 1]),
-                           ("base", predict(base_ranker, flat) if base_ok else None)):
-            if prob is not None:
-                recs[name].append(np.take_along_axis(top, np.argsort(-prob.reshape(top.shape), 1, kind="stable")[:, :K], 1))
-    maps = {name: round(float(accuracy_at_k(np.concatenate(r), users, truth, ks=(K,))[0][f"map@{K}"]), 5)
-            for name, r in recs.items() if r}
-    ref = "base" if base_ok and not base_seen_eval else "rule"
+    maps = _ranked(cat, Users(cat, train_ev, users), users, truth,
+                   {"rule": None, "new": lambda f: model.predict_proba(f[:, keep])[:, 1]})
+    same_tower = str(base_tower_dir) == str(tower_dir)
+    bcat = cat if same_tower else Catalog(db, ix, source, base_tower_dir)
+    bus = Users(bcat, train_ev, users)
+    base_scorers = {}
+    if base_ok:
+        base_scorers["base"] = lambda f: predict(base_ranker, f)
+    if base_ok and base_seen_eval:
+        bmodel, bkeep, _, _, _ = _nested_ranker(bcat, train_ev)
+        if bmodel is not None:
+            base_scorers["base_refit"] = lambda f: bmodel.predict_proba(f[:, bkeep])[:, 1]
+    if not base_ok:
+        base_scorers["base_rule"] = None
+    maps.update(_ranked(bcat, bus, users, truth, base_scorers))
+    ref = "base_rule" if not base_ok else ("base_refit" if "base_refit" in maps else "base")
     accepted = bool(maps["new"] >= maps[ref] * (1 - tolerance))
     report.update(status="trained", accepted=accepted, compared_with=ref, eval_users=int(len(users)),
                   evaluation_key=f"ranker:time_week:until={ev.ts.max()}:users={len(users)}", val_auc=round(auc, 4),

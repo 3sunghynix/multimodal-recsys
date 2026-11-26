@@ -130,7 +130,9 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
 
     Per dataset: re-check the trainer's decision with the same rule, hash text/image weights of accepted
     datasets. Learned rankers (report["rankers"], B1): same MAP@12 rule against the trainer's comparison target
-    (base ranker, or rule scores when the base ranker had seen the evaluation window), hash model.joblib/meta.json
+    (compared_with: base = base towers + base ranker / base_refit = base towers + ranker refit on the same nested split,
+    used when the base ranker had seen the evaluation window / base_rule = base towers' rule order when the base ranker
+    is missing), hash model.joblib/meta.json
     of accepted rankers. Job status: candidate_pending_review if the trainer registered a candidate version,
     rejected if it trained but accepted nothing, skipped if it did not train. Never activates.
     path_map maps trainer container paths to local ones, e.g. {"/data/": "data/"}.

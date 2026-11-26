@@ -6,8 +6,9 @@
   3. 최근 비 setup 이벤트 --holdout 비율을 평가용으로 떼고, 나머지로 기준 가중치에서 이어서 학습 (warm start)
   4. 평가용 이벤트를 맞히는지 MAP@12 · Recall@k를 기준 모델과 새 모델로 같은 방식(타워 점수 z 합)으로 비교
   5. 새 가중치 저장 → 채택 규칙(accept)을 통과하면 model_versions에 status="candidate"로 등록 + metric_snapshots에 두 모델 지표
-  6. 기준 버전에 학습형 랭커(params "ranker", B1)가 있으면: 후보 타워 기준으로 랭커도 다시 학습해 기준 랭커와 비교
-     (recsys.ranker_train.retrain_ranker). 통과하면 후보의 ranker를 새 폴더(retrain_{시각}/ranker/{source})로, 아니면 기준 랭커 유지.
+  6. 기준 버전에 학습형 랭커(params "ranker", B1)가 있으면: 후보 타워 기준으로 랭커도 다시 학습해 서빙 조합 전체를 비교
+     (후보 타워 + 새 랭커 vs 기준 타워 + 기준 랭커, recsys.ranker_train.retrain_ranker).
+     통과하면 후보의 ranker를 새 폴더(retrain_{시각}/ranker/{source})로, 아니면 기준 랭커 유지.
      랭커 특성(텍스트 · 이미지 점수 · 규칙 순위)이 타워 점수라 타워만 바꾸면 랭커가 옛 타워 기준으로 남기 때문.
   운영 교체(activate)는 하지 않는다 — 관리자가 대시보드 · POST /models/{id}/activate로 결정.
 
@@ -205,7 +206,8 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
                 continue
             log(f"[{source}] 랭커 재학습 (타워 {dirs[source]})")
             try:
-                rr = retrain_ranker(db, ix, source, dirs[source], base_rk, out / "ranker", tolerance)
+                rr = retrain_ranker(db, ix, source, dirs[source], base_rk, out / "ranker", tolerance,
+                                    base_tower_dir=base.params["artifact_dirs"][source])
             except Exception as e:                                         # 랭커 실패가 타워 재학습 결과를 막지 않게
                 rr = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
             rankers[source] = rr
@@ -226,10 +228,11 @@ def run(db, out_root: Path, base_id: int | None = None, min_new_logs: int = 1000
                 for vid, key in ((base.id, f"base_{metric}"), (mv.id, f"new_{metric}")):
                     if r[key] is not None:
                         db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/holdout/{metric}", value=r[key], n=r["eval_users"]))
-        for s in improved_rk:
-            r = rankers[s]
-            for vid, key in ((base.id, f"{r['compared_with']}_map@{MAP_K}"), (mv.id, f"new_map@{MAP_K}")):
-                db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/ranker/map@{MAP_K}", value=r[key], n=r["eval_users"]))
+        for s in improved_rk:                                         # 기준 쪽 값의 뜻이 비교 대상마다 달라 이름을 나눈다
+            r, ref = rankers[s], rankers[s]["compared_with"]
+            name = {"base": "ranker", "base_refit": "ranker_refit", "base_rule": "ranker_vs_rule"}[ref]
+            for vid, key in ((base.id, f"{ref}_map@{MAP_K}"), (mv.id, f"new_map@{MAP_K}")):
+                db.add(MetricSnapshot(model_version_id=vid, metric=f"{s}/{name}/map@{MAP_K}", value=r[key], n=r["eval_users"]))
         db.commit()
         report["registered_version_id"] = mv.id
     out.mkdir(parents=True, exist_ok=True)

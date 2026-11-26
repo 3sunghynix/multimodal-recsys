@@ -206,7 +206,7 @@ def test_ranker_retrained_on_candidate_towers_and_registered(rk_env):
         r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
         rr = r["rankers"]["hm"]
         assert rr["status"] == "trained", rr
-        assert rr["accepted"] and rr["compared_with"] == "base"
+        assert rr["accepted"] and rr["compared_with"] == "base" and rr["base_tower_dir"] != rr["tower_dir"]   # 기준 조합은 기준 타워로
         assert {"rule_map@12", "new_map@12", "base_map@12"} <= set(rr) and rr["evaluation_key"].startswith("ranker:time_week:")
         new = db.get(ModelVersion, r["registered_version_id"])
         path = new.params["ranker"]["hm"]
@@ -266,11 +266,25 @@ def test_no_ranker_flag_skips(rk_env):
         assert "rankers" not in r
 
 
-def test_ranker_compared_with_rule_when_base_saw_eval_window(rk_env):
-    """기준 랭커가 평가 구간을 라벨로 학습했으면(label_end ≥ 평가 구간 시작) 정답을 본 모델이라 규칙과 비교한다."""
+def test_ranker_compared_with_refit_base_when_base_saw_eval_window(rk_env):
+    """기준 랭커가 평가 구간을 라벨로 학습했으면(label_end ≥ 평가 구간 시작) 정답을 본 모델이라, 기준 타워로 같은 중첩 분할에서
+    다시 학습한 랭커(base_refit)와 비교한다. 정답을 본 값(base_map@12)은 참고로 남는다."""
     Session, tmp = rk_env
     _fake_ranker(tmp / "ranker" / "hm", label_end="2026-02-01 00:00:00")             # 마지막 구매(1월 말) 이후
     with Session() as db:
         r = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)
         rr = r["rankers"]["hm"]
-        assert rr["compared_with"] == "rule" and rr["base_seen_eval_window"].startswith("2026-02-01")
+        assert rr["compared_with"] == "base_refit" and rr["base_seen_eval_window"].startswith("2026-02-01")
+        assert {"base_refit_map@12", "base_map@12", "rule_map@12"} <= set(rr)
+        metrics = {x.metric for x in db.query(MetricSnapshot).all()}
+        assert "hm/ranker_refit/map@12" in metrics and "hm/ranker/map@12" not in metrics      # 기준 랭커 값으로 읽히지 않게
+
+
+def test_ranker_compared_with_base_tower_rule_when_base_ranker_missing(rk_env):
+    """기준 랭커 파일이 없으면 서빙도 규칙 순이므로 기준 조합 = 기준 타워 규칙 순 (base_rule)."""
+    import shutil
+    Session, tmp = rk_env
+    shutil.rmtree(tmp / "ranker" / "hm")
+    with Session() as db:
+        rr = _run(db, tmp, tolerance=1.0, recall_tolerance=1.0)["rankers"]["hm"]
+        assert rr["compared_with"] == "base_rule" and "base_rule_map@12" in rr and rr["base_problem"]

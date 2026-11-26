@@ -154,14 +154,14 @@ def test_real_run_after_dry_run_clears_flag(tmp_path,policy):
     assert s['jobs'][0]['status']=='candidate_pending_review' and 'dry_run' not in s['jobs'][0]
 
 
-def ranker_report(tmp_path,accepted=True,new_map=0.0495,ref='rule'):
+def ranker_report(tmp_path,accepted=True,new_map=0.0495,ref='base_refit'):
     r=report(tmp_path)
     d=tmp_path/'data/models/ume/retrain_x/ranker/hm'
     if accepted:
         d.mkdir(parents=True,exist_ok=True);(d/'model.joblib').write_bytes(b'm');(d/'meta.json').write_text('{}')
     rk={'status':'trained','accepted':accepted,'compared_with':ref,'eval_users':5000,'rule_map@12':0.0430,'new_map@12':new_map,
-        'base_map@12':0.0560,'evaluation_key':'ranker:time_week:until=2020-09-08:users=5000'}
-    if ref=='rule':rk['base_seen_eval_window']='2020-09-08 00:00:00'
+        'base_map@12':0.0560,'base_refit_map@12':0.0480,'evaluation_key':'ranker:time_week:until=2020-09-08:users=5000'}
+    if ref=='base_refit':rk['base_seen_eval_window']='2020-09-08 00:00:00'
     if accepted:rk['path']='/data/models/ume/retrain_x/ranker/hm'
     r['rankers']={'hm':rk,'amazon':{'status':'failed','error':'RuntimeError: x'}}
     return r
@@ -171,7 +171,7 @@ def test_ranker_entries_rechecked_and_hashed(tmp_path,policy):
     """B1 랭커 재학습: runner도 같은 MAP@12 규칙으로 다시 판정 (trainer의 비교 대상 기준), 채택된 랭커 파일 sha256."""
     s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(ranker_report(tmp_path),indent=2)))
     rk=s['jobs'][0]['rankers']
-    assert rk['hm']['accepted'] and rk['hm']['compared_with']=='rule' and rk['hm']['baseline_map12']==0.0430
+    assert rk['hm']['accepted'] and rk['hm']['compared_with']=='base_refit' and rk['hm']['baseline_map12']==0.0480
     assert len(rk['hm']['sha256']['model.joblib'])==64 and 'rule_mismatch' not in rk['hm'] and rk['hm']['base_seen_eval_window']
     assert rk['amazon']=={'status':'failed','reason':'RuntimeError: x'}
 
