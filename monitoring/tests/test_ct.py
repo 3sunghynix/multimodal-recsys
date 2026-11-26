@@ -186,3 +186,33 @@ def test_ranker_rule_mismatch_flagged(tmp_path,policy):
 def test_report_without_rankers_has_no_key(tmp_path,policy):
     s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(report(tmp_path),indent=2)))
     assert 'rankers' not in s['jobs'][0]
+
+
+def test_missing_artifact_is_recorded_not_retried(tmp_path,policy):
+    """후보 등록 뒤 산출물을 못 찾으면(경로 매핑 · 볼륨 문제) artifact_missing + 알림, 재시도 안 함 → 후보 중복 등록 없음."""
+    r=report(tmp_path);r['sources']['hm']['dir']='/data/models/ume/retrain_gone/hm'
+    calls=[];api=FakeAPI()
+    s=tick({},api,policy,NOW,run=trainer(json.dumps(r,indent=2),calls=calls))
+    job=s['jobs'][0]
+    assert job['status']=='artifact_missing' and job['registered_version_id']==7 and job['sources']['hm']['artifact_missing']
+    assert 'sha256' not in job['sources']['hm'] and s['alerts'][-1]['kind']=='artifact_missing'
+    assert s['since_event_id']==20000
+    s=tick(s,api,policy,NOW,run=trainer(json.dumps(r,indent=2),calls=calls))
+    assert len(calls)==1 and len(s['jobs'])==1
+
+
+def test_missing_ranker_artifact_is_recorded(tmp_path,policy):
+    r=ranker_report(tmp_path);r['rankers']['hm']['path']='/data/models/ume/retrain_gone/ranker/hm'
+    s=tick({},FakeAPI(),policy,NOW,run=trainer(json.dumps(r,indent=2)))
+    assert s['jobs'][0]['status']=='artifact_missing' and s['jobs'][0]['rankers']['hm']['artifact_missing']
+
+
+def test_bad_report_after_registration_is_not_retried(tmp_path,policy):
+    """보고 값이 이상해도(MAP 범위 밖) trainer는 이미 후보를 등록했으므로 record_failed + 알림, 기준점 이동, 재실행 없음."""
+    r=report(tmp_path);r['sources']['hm']['new_map@12']=1.5
+    calls=[];api=FakeAPI()
+    s=tick({},api,policy,NOW,run=trainer(json.dumps(r,indent=2),calls=calls))
+    job=s['jobs'][0]
+    assert job['status']=='record_failed' and job['registered_version_id']==7 and s['alerts'][-1]['kind']=='report_record_failed'
+    s=tick(s,api,policy,NOW,run=trainer(json.dumps(r,indent=2),calls=calls))
+    assert len(calls)==1 and s['since_event_id']==20000

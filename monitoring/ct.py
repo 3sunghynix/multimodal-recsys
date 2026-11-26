@@ -154,21 +154,33 @@ def tick(state: dict, api, policy: dict, now: datetime, run=run_command, dry_run
     job['attempts'] = job.get('attempts', 0) + 1
     job['started_at'] = _iso(now)
     code, out, err = run(cmd)
-    try:
+    try:                                           # 1) trainer 자체가 실패 → 재시도 대상
         if code != 0:
             raise RuntimeError(f'trainer exit {code}')
         report = parse_report(out)
-        version = job['version']
-        state = finish_training_report(state, version, report, policy.get('trainer_path_map'), policy)
-        job = next(j for j in state['jobs'] if j['version'] == version)
-        if job.get('trained_through_event_id') is not None:
-            state['since_event_id'] = max(state['since_event_id'], int(job['trained_through_event_id']))
-        elif report.get('since_event_id') is not None:
-            state['since_event_id'] = max(state['since_event_id'], int(report['since_event_id']))
     except (RuntimeError, ValueError) as e:
         job.update(status='failed', error=str(e), stderr_tail=(err or '')[-2000:], failed_at=_iso(now))
         if job['attempts'] >= max_attempts:
             state['alerts'].append({'kind': 'trainer_failed', 'version': job['version'], 'error': str(e), 'at': _iso(now)})
+        return state
+    # 2) trainer는 끝났다 (후보가 이미 등록됐을 수 있음) → 기록 문제는 재시도하지 않는다. 재시도하면 같은 로그로 후보가 또 생긴다
+    version = job['version']
+    try:
+        state = finish_training_report(state, version, report, policy.get('trainer_path_map'), policy)
+        job = next(j for j in state['jobs'] if j['version'] == version)
+        if job['status'] == 'artifact_missing':
+            state['alerts'].append({'kind': 'artifact_missing', 'version': version, 'registered_version_id': job.get('registered_version_id'),
+                                    'at': _iso(now)})
+    except ValueError as e:                        # 보고 형식 이상 등
+        job.update(status='record_failed', error=str(e), registered_version_id=report.get('registered_version_id'),
+                   trained_through_event_id=report.get('max_event_id'), active_model_unchanged=True)
+        state['alerts'].append({'kind': 'report_record_failed', 'version': version, 'error': str(e),
+                                'registered_version_id': report.get('registered_version_id'), 'at': _iso(now)})
+    through = job.get('trained_through_event_id')
+    if through is None and report.get('status') != 'trained':
+        through = report.get('since_event_id')
+    if through is not None:
+        state['since_event_id'] = max(state['since_event_id'], int(through))
     return state
 
 

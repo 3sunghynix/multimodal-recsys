@@ -134,7 +134,9 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
     used when the base ranker had seen the evaluation window / base_rule = base towers' rule order when the base ranker
     is missing), hash model.joblib/meta.json
     of accepted rankers. Job status: candidate_pending_review if the trainer registered a candidate version,
-    rejected if it trained but accepted nothing, skipped if it did not train. Never activates.
+    rejected if it trained but accepted nothing, skipped if it did not train, artifact_missing if an accepted
+    artifact could not be found locally (recorded per entry; never raises, so the caller does not retry a trainer run
+    that already registered a candidate). Never activates.
     path_map maps trainer container paths to local ones, e.g. {"/data/": "data/"}.
     """
     map_tol,recall_tol=tolerances(policy)
@@ -163,8 +165,9 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
             if r.get('accepted'):
                 files={m:Path(local(r['dir']))/m/'weights.npz' for m in ('text','image')}
                 missing=[str(f) for f in files.values() if not f.is_file()]
-                if missing:raise ValueError(f'Completed model artifact required: {missing}')
-                entry.update(artifact=local(r['dir']),sha256={m:_digest(f) for m,f in files.items()})
+                entry['artifact']=local(r['dir'])
+                if missing:entry['artifact_missing']=missing            # 기록만 — 재시도하면 trainer가 후보를 또 등록한다
+                else:entry['sha256']={m:_digest(f) for m,f in files.items()}
         else:
             entry['reason']=r.get('reason')
         sources[name]=entry
@@ -182,14 +185,19 @@ def finish_training_report(state, version, report, path_map=None, policy=None):
             if r.get('accepted'):
                 files={f:Path(local(r['path']))/f for f in ('model.joblib','meta.json')}
                 missing=[str(f) for f in files.values() if not f.is_file()]
-                if missing:raise ValueError(f'Completed ranker artifact required: {missing}')
-                entry.update(artifact=local(r['path']),sha256={f:_digest(p) for f,p in files.items()})
+                entry['artifact']=local(r['path'])
+                if missing:entry['artifact_missing']=missing
+                else:entry['sha256']={f:_digest(p) for f,p in files.items()}
         else:
             entry['reason']=r.get('reason') or r.get('error')
         rankers[name]=entry
     registered=report.get('registered_version_id')
     if rankers:job['rankers']=rankers
-    job.update(status='candidate_pending_review' if registered else 'rejected',registered_version_id=registered,
+    missing=[f for e in list(sources.values())+list(rankers.values()) for f in e.get('artifact_missing',[])]
+    status='candidate_pending_review' if registered else 'rejected'
+    if missing:
+        status='artifact_missing'                     # 후보는 등록됐을 수 있지만 파일을 확인 못 함 → 사람이 확인 (경로 매핑 · 볼륨)
+    job.update(status=status,registered_version_id=registered,
                trainer_out=local(report.get('out','')),trained_through_event_id=report.get('max_event_id'),
                sources=sources,map_tolerance=map_tol,recall_tolerance=recall_tol,active_model_unchanged=True)
     return result
