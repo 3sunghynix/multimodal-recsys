@@ -8,6 +8,14 @@ EventType = Literal["view", "click", "add_to_cart", "purchase", "search"]
 SearchType = Literal["text", "image", "hybrid"]
 
 
+class BadgeOut(BaseModel):
+    """상품 키워드 배지 (D4, services/badges.py). 화면은 label을 칩으로, evidence를 툴팁 · 상세에."""
+    label: str                             # 예: 작게 나와요 · 최근 인기
+    kind: str                              # trend · fit · good · caution · vibe · occasion
+    origin: str                            # review (리뷰) · log (구매 로그)
+    evidence: str                          # 근거 (예: 리뷰 412건 중 87건, 같은 카테고리의 2.3배)
+
+
 class ItemOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -18,6 +26,7 @@ class ItemOut(BaseModel):
     category: str
     price: float | None
     image_path: str | None
+    badges: list[BadgeOut] = []            # 카드용 최대 3개 (상세 GET /items/{id}는 전부)
 
 
 class ItemDetailOut(ItemOut):

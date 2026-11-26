@@ -11,16 +11,18 @@ from sqlalchemy.orm import Session
 from ..db import get_db
 from ..models import Brand, Item
 from ..schemas import ItemDetailOut, ItemOut
+from ..services.badges import badges_for
 
 router = APIRouter(prefix="/items", tags=["items"])
 
 MAX_BATCH = 500
 
 
-def _item_out(item: Item, brand_name: str | None) -> ItemOut:
+def _item_out(item: Item, brand_name: str | None, badges: list | None = None) -> ItemOut:
     return ItemOut(
         id=item.id, source=item.source, brand_id=item.brand_id, brand_name=brand_name,
         title=item.title, category=item.category, price=item.price, image_path=item.image_path,
+        badges=badges or [],
     )
 
 
@@ -40,8 +42,9 @@ def get_items(ids: str = Query(..., description="쉼표로 구분한 item id 목
         .where(Item.id.in_(id_list))
     ).all()
     by_id = {item.id: (item, brand_name) for item, brand_name in rows}
+    badges = badges_for(db, list(by_id))
     # 입력 순서 유지 (추천/검색 결과 순서가 중요)
-    return [_item_out(*by_id[i]) for i in id_list if i in by_id]
+    return [_item_out(*by_id[i], badges.get(i)) for i in id_list if i in by_id]
 
 
 # 주의: /items/{item_id} 보다 먼저 선언해야 "version" 이 int 로 파싱되지 않고 이 핸들러가 잡힌다.
@@ -68,4 +71,5 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
         brand_id=item.brand_id, brand_name=brand.name if brand else None,
         title=item.title, category=item.category, price=item.price,
         image_path=item.image_path, description=item.description or "",
+        badges=badges_for(db, [item.id], limit=None).get(item.id, []),
     )

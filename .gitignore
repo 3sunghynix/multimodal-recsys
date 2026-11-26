@@ -16,6 +16,7 @@ data/processed/
 data/dev_subset/
 data/embeddings/
 data/models/
+data/badges/
 models_store/
 
 # 편집기

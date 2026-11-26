@@ -26,6 +26,7 @@ from ..db import get_db
 from ..models import Brand, Item
 from ..schemas import ItemOut, SearchHit, SearchOut, SearchResultOut
 from ..services import search_core
+from ..services.badges import badges_for
 from ..services.catalog_index import get_index
 from ..services.translate_ko import HANGUL, translate_ko
 
@@ -122,6 +123,7 @@ async def search(
         rows = db.execute(select(Item, Brand.name).outerjoin(Brand, Item.brand_id == Brand.id)
                           .where(Item.id.in_(ids))).all()
         by_id = {item.id: (item, brand_name) for item, brand_name in rows}
+        badges = badges_for(db, list(by_id))
         hits = []
         for i, s in zip(ids, scores[0]):
             if i not in by_id:
@@ -130,7 +132,7 @@ async def search(
             hits.append(SearchHit(
                 id=item.id, source=item.source, brand_id=item.brand_id, brand_name=brand_name,
                 title=item.title, category=item.category, price=item.price,
-                image_path=item.image_path, score=float(s),
+                image_path=item.image_path, score=float(s), badges=badges.get(i, []),
             ))
 
     # 명세 2-5 필수 필드: results[] (product_id · name · score · price), latency_ms, total_count, search_type.
