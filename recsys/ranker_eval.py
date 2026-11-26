@@ -41,6 +41,59 @@ CHUNK, NEG_PER_USER, SEED = 250, 50, 42
 GAMMA = 1.0
 EXCLUDE = {"amazon"}
 DECAY = {"hm": 0.9}
+EXTRA = 0          # 후보 경로 확장 실험 (11-26, 효과 없음 → 서빙 미적용): 규칙 상위 C개 + 추가 경로 최대 EXTRA개 (0 = 끔)
+EXPAND = True      # False면 같은 후보 수(C + EXTRA)를 규칙 순위로만 채운다 (대조군)
+
+
+def variant_groups(variants: np.ndarray) -> dict:
+    """같은 옷(색상 변형 묶음 키) → 상품 순번 배열. 키 ""(없음)는 뺀다."""
+    keys = np.asarray(variants, object)
+    idx = np.flatnonzero(keys != "")
+    if len(idx) == 0:
+        return {}
+    order = idx[np.argsort(keys[idx], kind="stable")]
+    k = keys[order]
+    starts = np.r_[0, np.flatnonzero(k[1:] != k[:-1]) + 1]
+    ends = np.r_[starts[1:], len(k)]
+    return {k[a]: order[a:b] for a, b in zip(starts, ends)}
+
+
+def expand_candidates(rule: np.ndarray, n_rule: int, n_total: int, bought: np.ndarray, bought_ts: np.ndarray,
+                      variants: np.ndarray, groups: dict) -> np.ndarray:
+    """후보 경로 확장 (규칙 점수 내림차순, 길이 n_total — 상품이 적으면 그만큼).
+
+    = 규칙 상위 n_rule개 + 추가 경로 (최근 산 상품부터: 그 상품 → 같은 옷 다른 색) 최대 n_total − n_rule개,
+      남는 자리는 규칙 다음 순위로 채운다 (후보 수가 같아 "후보를 늘린 효과"와 "경로 효과"를 나눠 본다).
+    rule: 데이터셋 상품 전체 규칙 점수 (뺀 상품은 −inf, 후보가 되지 않는다). bought · bought_ts: 고객 구매 (순번, 시각).
+    """
+    n_total = int(min(n_total, np.isfinite(rule).sum()))
+    if n_total == 0:
+        return np.zeros(0, np.int64)
+    top = np.argpartition(-rule, n_total - 1)[:n_total]
+    top = top[np.argsort(-rule[top], kind="stable")]
+    n_rule = min(n_rule, n_total)
+    chosen = [int(j) for j in top[:n_rule]]
+    seen = set(chosen)
+    room = n_total - n_rule
+    if room and len(bought):
+        for i in np.asarray(bought, np.int64)[np.argsort(np.asarray(bought_ts, "datetime64[ns]"), kind="stable")[::-1]]:
+            v = variants[i]
+            for j in [int(i)] + (groups.get(v, np.zeros(0, np.int64)).tolist() if v else []):
+                if room and j not in seen and np.isfinite(rule[j]):
+                    seen.add(j)
+                    chosen.append(j)
+                    room -= 1
+            if not room:
+                break
+    for j in top[n_rule:]:
+        if not room:
+            break
+        if int(j) not in seen:
+            seen.add(int(j))
+            chosen.append(int(j))
+            room -= 1
+    cand = np.asarray(chosen, np.int64)
+    return cand[np.argsort(-rule[cand], kind="stable")]
 
 
 class Catalog:
@@ -62,6 +115,7 @@ class Catalog:
         base = Path(tower_dir) if tower_dir else Path(f"/data/models/ume/{source}_test_pca")
         cfg = json.loads((base / "text/config.json").read_text())
         self.p = {**DEFAULT, **{k: v for k, v in cfg.items() if k in DEFAULT}}
+        self.groups = variant_groups(self.variants)
         self.models = {m: _tower_from_npz(dict(np.load(base / m / "weights.npz")), self.p, "cpu") for m in ("text", "image")}
         with torch.no_grad():
             self.V = {m: F.normalize(self.models[m]["item"](torch.from_numpy(self.X[m])), dim=1).numpy() for m in self.X}
@@ -112,8 +166,13 @@ def candidates(cat: Catalog, us: Users, sl: slice):
     if cat.source in EXCLUDE:
         for r, u in enumerate(rows):
             rule[r, us.bought.get(u, empty)[0]] = -np.inf
-    top = np.argpartition(-rule, C, axis=1)[:, :C]
-    top = np.take_along_axis(top, np.argsort(-np.take_along_axis(rule, top, 1), 1, kind="stable"), 1)
+    n_total = min(C + EXTRA, cat.n)
+    if EXTRA and EXPAND:
+        top = np.stack([expand_candidates(rule[r], C, n_total, *us.bought.get(u, empty), cat.variants, cat.groups)
+                        for r, u in enumerate(rows)])
+    else:
+        top = np.argpartition(-rule, n_total - 1, axis=1)[:, :n_total]
+        top = np.take_along_axis(top, np.argsort(-np.take_along_axis(rule, top, 1), 1, kind="stable"), 1)
     F = np.stack([candidate_features(top[r], st[r], si[r], us.pz, cat.brands, cat.cats, cat.variants, cat.log_price,
                                      *us.bought.get(u, empty), us.t_ref, int(us.hist_len[u])) for r, u in enumerate(rows)])
     return top, F
