@@ -25,7 +25,34 @@ python -m simulator.server_run --base-url http://... --customers 10000 --session
 - **`run_id` 길이 제한**: `session_id = {run_id}:c{customer_idx}:s{session_idx}` 가 서버 제한 **64자** 를 넘지 않아야 한다 (안 그러면 `/events` 전부 422). 시뮬레이터가 실행 시작 전에 미리 검증 — 넘으면 바로 에러로 멈춘다. 참고: 고객 1만 · 세션 10 이면 접미사 9자, `--run-id` 는 **55자 이하** 로.
 - **재실행은 지원 X**: 추천 호출 시 서버가 **새 `request_id`** 를 발급하므로, 같은 `event_id` + 다른 `request_id` → 톡방 결정 2 에 의해 **409 error**. 중간에 죽거나 대량 데이터가 더 필요하면 **새 `--run-id`** 로 처음부터 다시 돌린다 (이어서 돌리는 체크포인트 기능 없음). 네트워크 재시도 중단 복구는 batch 안에서만 작동.
 - **A/B 참여**: 서버에 running 실험이 있으면 자동으로 세션 격리 + variant 배정. 시뮬레이터는 variant 선택 안 함.
-- **행동 모델**: 지금은 최소 랜덤 — `click_rate` · `purchase_rate` 파라미터. persona · 카테고리 선호 등 풍부한 행동은 `engine.py` 를 `server_run.py` 에 교체 삽입하는 후속 PR (김광석 담당).
+- **행동 모델**: 두 가지.
+  - 기본 = 고정 확률 (`--click-rate` · `--purchase-rate`). 상품과 무관해서 **연결 점검용** — 이 로그로 A/B를 보면 두 모델 CTR 차이가 구조적으로 0이고, 재학습하면 모델이 자기 추천을 다시 배운다 (#71 리뷰).
+  - **페르소나 (`--catalog` · `--item-snapshot`)**: 아래 "페르소나 행동" 절. A/B · 재학습(A4)은 이 모드로.
+
+### 페르소나 행동 (A1 후속, `simulator/persona_behavior.py`)
+
+로컬 파일럿(`engine.py`, 페르소나 v0.3)과 **같은 고객 · 같은 확률식**을 서버 추천 응답에 적용한다.
+
+| 단계 | 내용 |
+|---|---|
+| 고객 | `engine.make_customers`: 페르소나 7종(비율 = `sampling_weight`) · 선호 소분류 · 선호 브랜드 1 ~ 3개 · 예산 · 초기 이력 (train 구매에서만). 페르소나가 고르게 섞이도록 순서를 섞는다. `POST /users`에 `persona` 저장 |
+| 초기 이력 | 고객마다 첫 추천 전에 `is_setup=True` 구매로 한 번 보낸다 → 서버 추천의 개인화 출발점. 집계 · 인기 · 재학습 카운터에서는 빠진다 (이벤트연결규약 6절) |
+| 행동 | 노출마다 선호 점수(브랜드 · 소분류 · 가격 · 재구매 · 새로움 · 인기, 페르소나별 가중) → 클릭 확률 `clip(base × exp(2(score − 0.5)))`, 클릭 → 장바구니 → 구매 조건부 (`personas.yaml`). 추천 응답의 `source` · `source_item_id`로 상품 특성을 찾는다 |
+| 세션 | 세션마다 이벤트를 먼저 보내고 다음 세션 추천을 받는다 → 서버의 세션 반영(최근 클릭)이 실제로 작동 |
+| 공정성 | 추첨은 (seed, 고객, 세션, 순위, 행동)만으로 정해진다. 모델 · 점수 · 실험 그룹은 행동에 쓰지 않으므로, 그룹 차이는 "무엇을 보여 줬는가"에서만 나온다 (공통 난수) |
+| 결과 | `summary.json`의 `behavior.by_persona`: 페르소나별 노출 · 클릭 · 장바구니 · 구매 · CTR, `unknown_items`(카탈로그에 없거나 가격 · 브랜드 · 소분류가 빠져 보기만 한 상품) |
+
+API 컨테이너 안에서 실행한다 (pandas · 카탈로그 파일 필요). 상품 id 표는 적재가 바뀔 때만 다시 만든다:
+
+```bash
+docker compose exec api python -m scripts.export_simulator_items --out /data/db_items.json
+docker compose run --rm --no-deps -v "$PWD/simulator:/app/simulator" -v "$PWD/recsys:/app/recsys:ro" api \
+  python -m simulator.server_run --base-url http://api:8000 \
+    --catalog /data/full_catalog --item-snapshot /data/db_items.json \
+    --customers 100 --sessions 3 --k 10 --run-id p100 --out /app/simulator/runs/server_p100
+```
+
+주의: 확률은 시험용 설정이다 (`personas.yaml` `behavior.status: synthetic_uncalibrated_proposal`). 실제 고객 행동으로 보정하는 것은 중간발표 피드백 후속.
 
 결과 `--out/summary.json`:
 ```json
@@ -33,7 +60,7 @@ python -m simulator.server_run --base-url http://... --customers 10000 --session
 ```
 `/metrics/window` 로 바로 집계 — views · clicks · CTR 이 노출 기준으로 나옴.
 
-테스트: `python -m pytest simulator/tests/test_server_adapter.py -v` → 8 passed (mocked HTTP).
+테스트: `python -m pytest simulator/tests/test_server_adapter.py simulator/tests/test_persona_behavior.py -v` (mocked HTTP · 작은 카탈로그).
 
 ---
 

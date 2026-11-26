@@ -38,6 +38,8 @@ class RecommendResponse:
     variant: str | None
     # (position, item_id) 쌍 — position 은 1-based, 추천 목록 순서 그대로
     impressions: list[tuple[int, int]]
+    # (position, source, source_item_id) — 페르소나 행동이 상품 특성(브랜드 · 소분류 · 가격)을 찾는 키 (A1 후속)
+    products: list[tuple[int, str, str]] | None = None
 
 
 class ServerClient:
@@ -65,14 +67,14 @@ class ServerClient:
 
     # ───── 고객 생성 ─────
 
-    def ensure_customer(self, run_id: str, idx: int) -> int:
+    def ensure_customer(self, run_id: str, idx: int, persona: str | None = None) -> int:
         """`source_user_id = uuid5(run_id, "customer", idx)` 로 멱등 생성.
         같은 run_id · idx 재호출 시 서버가 같은 user.id 돌려줌 (POST /users 는 (source, source_user_id) 멱등).
-
-        persona 는 드라이버가 아직 전달하지 않으므로 argument 에서도 뺐다 — 페르소나 엔진을 붙이는
-        후속 PR 에서 함께 추가한다 (PR #71 리뷰 반영)."""
+        persona: 페르소나 행동(--catalog)일 때 저장 — 서버가 다른 persona로 이미 저장돼 있으면 409."""
         source_user_id = str(uuid.uuid5(_NS, f"{run_id}:customer:{idx}"))
         body = {"source": "sim", "source_user_id": source_user_id}
+        if persona is not None:
+            body["persona"] = persona
         row = self._request("POST", "/users", body)
         if "id" not in row:
             raise RuntimeError(f"POST /users returned no id: {row!r}")
@@ -97,6 +99,7 @@ class ServerClient:
             experiment_id=r.get("experiment_id"),
             variant=r.get("variant"),
             impressions=impressions,
+            products=[(int(x["position"]), str(x.get("source", "")), str(x.get("source_item_id", ""))) for x in recs],
         )
 
     # ───── 이벤트 전송 ─────
