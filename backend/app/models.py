@@ -50,6 +50,21 @@ class Item(Base):
     image_embedding: Mapped[list[float] | None] = mapped_column(EmbeddingVector(EMBEDDING_DIM), nullable=True)
 
 
+class ItemBadge(Base):
+    """상품 키워드 배지 (D4). 리뷰에서 뽑은 배지(origin="review", recsys/review_badges.py → scripts/load_badges.py)를 저장한다.
+    구매 로그 배지(최근 인기 · 급상승)는 로그가 쌓이면 바뀌므로 저장하지 않고 요청 때 계산한다 (services/badges.py)."""
+    __tablename__ = "item_badges"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("items.id", ondelete="CASCADE"), index=True)
+    label: Mapped[str] = mapped_column(String(40))                 # 화면에 보이는 키워드 (예: 작게 나와요)
+    kind: Mapped[str] = mapped_column(String(16))                  # fit · good · caution · vibe · occasion
+    origin: Mapped[str] = mapped_column(String(16), default="review")
+    rank: Mapped[int] = mapped_column(Integer, default=0)          # 상품 안 표시 순서 (0 = 먼저)
+    n_mention: Mapped[int] = mapped_column(Integer, default=0)     # 근거: 언급 리뷰 수
+    n_reviews: Mapped[int] = mapped_column(Integer, default=0)     # 근거: 상품 리뷰 수
+    lift: Mapped[float | None] = mapped_column(Float, nullable=True)   # 같은 카테고리 평균 언급 비율 대비 배수
+
+
 class User(Base):
     __tablename__ = "users"
     # (source, source_user_id) 는 "같은 외부 고객 재등록 시 같은 user를 돌려준다"는 계약을 위해 UNIQUE.
