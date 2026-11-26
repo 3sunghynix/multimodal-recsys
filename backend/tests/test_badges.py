@@ -24,7 +24,8 @@ def _no_encoders(monkeypatch):
 
 @pytest.fixture()
 def env(tmp_path):
-    """H&M 같은 카테고리 상품 20개. 상품 0: 최근 7일 6건 (그 전 7일 1건) → 최근 인기 · 급상승. 상품 1: 최근 3건 · 그 전 3건.
+    """H&M 같은 카테고리 상품 20개. 상품 0: 최근 7일 9건 (그 전 7일 1건) → 최근 인기 · 급상승. 상품 1: 최근 5건 · 그 전 3건 → 없음
+    (카테고리 상위 3% 아님).
     시뮬레이터 고객 구매(상품 2, 10건)는 세지 않는다. Amazon 상품 1개에는 리뷰 배지 4개."""
     engine = app_db.make_engine(f"sqlite:///{tmp_path / 'b.db'}")
     Session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
@@ -35,7 +36,7 @@ def env(tmp_path):
         u, sim = User(source="hm"), User(source="sim")
         s.add_all(hm + [az, u, sim])
         s.flush()
-        buys = [(hm[0], d) for d in (1, 2, 3, 4, 5, 6)] + [(hm[0], 10)] + [(hm[1], d) for d in (1, 2, 3, 8, 9, 10)]
+        buys = [(hm[0], d) for d in (1, 2, 3, 4, 5, 6, 1.5, 2.5, 3.5)] + [(hm[0], 10)] + [(hm[1], d) for d in (1, 2, 3, 4, 5, 8, 9, 10)]
         s.add_all([Event(user_id=u.id, item_id=it.id, type="purchase", created_at=T0 - timedelta(days=d)) for it, d in buys])
         s.add_all([Event(user_id=sim.id, item_id=hm[2].id, type="purchase", created_at=T0) for _ in range(10)])
         s.add_all([ItemBadge(item_id=az.id, label=lab, kind=k, origin="review", rank=r, n_mention=40 + r, n_reviews=400, lift=2.5)
@@ -61,10 +62,10 @@ def test_log_badges_hot_and_rising_service_scope_only(env):
     with Session() as db:
         b = badges_mod.log_badges(db, ids["hm"])
     labels = {i: [x["label"] for x in v] for i, v in b.items()}
-    assert labels[ids["hm"][0]] == ["최근 인기", "급상승"]                     # 최근 7일 6건 · 그 전 1건
-    assert labels[ids["hm"][1]] == ["최근 인기"]                               # 3건 = 하한, 그 전 3건이라 급상승 아님
+    assert labels[ids["hm"][0]] == ["최근 인기", "급상승"]                     # 최근 7일 9건 · 그 전 1건
+    assert ids["hm"][1] not in b                                               # 5건이지만 카테고리 상위 3% 아님, 그 전 3건
     assert ids["hm"][2] not in b                                               # 시뮬레이터 구매는 세지 않음
-    assert b[ids["hm"][0]][1]["evidence"] == "최근 7일 구매 6건 (그 전 7일 1건)"
+    assert b[ids["hm"][0]][1]["evidence"] == "최근 7일 구매 9건 (그 전 7일 1건)"
 
 
 def test_review_badges_ordered_with_evidence_and_card_limit(env):
@@ -91,7 +92,7 @@ def test_cache_refreshes_when_new_purchase_arrives(env):
     with Session() as db:
         assert h5 not in badges_mod.log_badges(db, [h5])
         u = db.query(User).filter_by(source="hm").first()
-        db.add_all([Event(user_id=u.id, item_id=h5, type="purchase", created_at=T0 - timedelta(hours=h)) for h in range(6)])
+        db.add_all([Event(user_id=u.id, item_id=h5, type="purchase", created_at=T0 - timedelta(hours=h)) for h in range(10)])
         db.commit()
         assert [x["label"] for x in badges_mod.log_badges(db, [h5])[h5]] == ["최근 인기", "급상승"]
 

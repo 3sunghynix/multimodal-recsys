@@ -3,8 +3,8 @@
 - 리뷰 배지 (Amazon): item_badges 테이블 (recsys/review_badges.py가 리뷰 429만 건에서 계산 → scripts/load_badges.py).
   예: 작게 나와요 · 착용감 좋음 · 비침 주의 · 체형 보정 · 출근룩. 근거 = 리뷰 N건 중 M건, 같은 카테고리 평균의 몇 배.
 - 구매 로그 배지 (두 데이터셋): 요청 때 계산 · 캐시. 로그가 쌓이면 바뀐다 (시뮬레이터 고객 제외 — 인기 통계와 같은 범위).
-  최근 인기 = 최근 창(그 데이터셋 서비스 구매의 마지막 시각 기준 H&M 7일 · Amazon 28일) 구매 3건 이상이고 같은 카테고리 상위 10%.
-  급상승   = 최근 창 구매 5건 이상이고 직전 같은 길이 창의 2배 이상.
+  최근 인기 = 최근 창(그 데이터셋 서비스 구매의 마지막 시각 기준 H&M 7일 · Amazon 28일) 구매 5건 이상이고 같은 카테고리 상위 3%.
+  급상승   = 최근 창 구매 8건 이상이고 직전 같은 길이 창의 3배 이상.
 카드에는 최대 MAX_CARD개: 구매 로그 배지 → 리뷰 배지(주의 먼저, 카테고리 대비 배수 순 — 적재 때 정한 rank).
 """
 from datetime import timedelta
@@ -19,7 +19,7 @@ from .event_scope import service_users
 
 MAX_CARD = 3
 WINDOW_DAYS = {"hm": 7, "amazon": 28}
-HOT_TOP, HOT_MIN, RISING_MIN, RISING_X = 0.10, 3, 5, 2.0
+HOT_TOP, HOT_MIN, RISING_MIN, RISING_X = 0.03, 5, 8, 3.0     # 11-26: 상위 10% · 3건이면 상품의 11%에 붙어 추천 목록 전부가 '최근 인기'
 _log_cache: dict = {}
 
 
@@ -75,19 +75,30 @@ def _log_badges_for_source(db: Session, source: str) -> dict[int, list[dict]]:
 
 
 def log_badges(db: Session, ids: list[int]) -> dict[int, list[dict]]:
-    """구매 로그 배지. 데이터셋별로 계산해 두고, 서비스 범위 마지막 구매 행이 바뀌면 다시 계산한다."""
+    """구매 로그 배지. 데이터셋별로 계산해 두고, 집계에 쓰이는 이벤트가 바뀌면 다시 계산한다.
+
+    캐시 확인은 ume._popularity_z와 같은 두 단계 (검색 · 카드 요청마다 돌므로 가볍게):
+    1) 가장 큰 id 이벤트 한 행(기본 키 역순, 1ms 안팎)이 그대로면 바로 캐시.
+    2) 바뀌었으면 그 데이터셋 서비스 범위 마지막 구매 행을 본다 — 그것도 그대로면(조회 · 클릭만 늘었음) 다시 계산하지 않는다."""
     if not ids:
         return {}
+    raw = db.execute(select(Event.id, Event.user_id, Event.item_id, Event.created_at).order_by(Event.id.desc()).limit(1)).first()
+    raw = tuple(raw) if raw is not None else None
+    scope = (str(db.bind.url), catalog_signature(db))
     sources = [s for (s,) in db.execute(select(Item.source).where(Item.id.in_(ids)).distinct()).all()]
     out: dict[int, list[dict]] = {}
     for source in sources:
-        sig = db.execute(service_users(select(Event.id, Event.item_id, Event.created_at).join(Item, Item.id == Event.item_id)
-                                       .where(Event.type == "purchase", Item.source == source, Event.is_setup == False))  # noqa: E712
-                         .order_by(Event.id.desc()).limit(1)).first()
-        key = (str(db.bind.url), catalog_signature(db), tuple(sig) if sig is not None else None)
         cached = _log_cache.get(source)
-        if cached is None or cached["key"] != key:
-            cached = _log_cache[source] = {"key": key, "badges": _log_badges_for_source(db, source)}
+        if cached is None or cached["scope"] != scope or cached["raw"] != raw:
+            sig = db.execute(service_users(select(Event.id, Event.item_id, Event.created_at).join(Item, Item.id == Event.item_id)
+                                           .where(Event.type == "purchase", Item.source == source, Event.is_setup == False))  # noqa: E712
+                             .order_by(Event.id.desc()).limit(1)).first()
+            sig = tuple(sig) if sig is not None else None
+            if cached is not None and cached["scope"] == scope and cached["sig"] == sig:
+                cached["raw"] = raw
+            else:
+                cached = _log_cache[source] = {"scope": scope, "raw": raw, "sig": sig,
+                                               "badges": _log_badges_for_source(db, source)}
         for i in ids:
             if i in cached["badges"]:
                 out[i] = cached["badges"][i]
